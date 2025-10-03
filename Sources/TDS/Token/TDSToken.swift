@@ -124,6 +124,11 @@ public enum TDSTokens {
         }
     }
 
+    public struct SSPIToken: TDSToken {
+        public var type: TokenType = .sspi
+        var payload: ByteBuffer
+    }
+
     public struct DoneToken: TDSToken {
         public var type: TokenType = .done
         var status: UShort

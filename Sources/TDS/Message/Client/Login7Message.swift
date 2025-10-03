@@ -16,13 +16,18 @@ extension TDSMessages {
         var password: String
         var serverName: String
         var database: String
+        var useIntegratedSecurity: Bool = false
+        var sspiData: Data?
         
         public func serialize(into buffer: inout ByteBuffer) throws {
+            let passwordField = useIntegratedSecurity ? "" : password
+            let optionFlags2: UInt8 = useIntegratedSecurity ? 0x83 : 0x03
+
             // Each basic field needs to serialize the length & offset
             let basicFields = [
                 (Host.current().name ?? "", false),
                 (username, false),
-                (password, true),
+                (passwordField, true),
                 ("", false),
                 (serverName, false),
                 ("", false), // unused field
@@ -54,7 +59,7 @@ extension TDSMessages {
             buffer.writeInteger(Self.clientPID)
             buffer.writeInteger(0 as UInt32) // Connection ID
             buffer.writeInteger(0xE0 as UInt8) // Flags1
-            buffer.writeInteger(0x03 as UInt8) // Flags2
+            buffer.writeInteger(optionFlags2) // Flags2
             buffer.writeInteger(0 as UInt8) // Flags
             buffer.writeInteger(0 as UInt8) // Flags3
             buffer.writeInteger(0 as UInt32) // Timezone
@@ -65,8 +70,9 @@ extension TDSMessages {
             buffer.writeBytes(clientId)
             
             buffer.moveWriterIndex(forwardBy: extendedFields.count * 4)
-            
-            buffer.writeInteger(0 as UInt32) // SSPI
+
+            let sspiOffsetPosition = buffer.writerIndex
+            buffer.moveWriterIndex(forwardBy: 4)
             
             func writeField(_ string: String, isPassword: Bool) {
                 let utf16 = string.utf16
@@ -101,6 +107,16 @@ extension TDSMessages {
                 writeField(field, isPassword: isPassword)
             }
             
+            if let sspiData, !sspiData.isEmpty {
+                let offset = UInt16(buffer.writerIndex - login7HeaderPosition)
+                buffer.setInteger(offset, at: sspiOffsetPosition, endianness: .little)
+                buffer.setInteger(UInt16(sspiData.count), at: sspiOffsetPosition + 2, endianness: .little)
+                buffer.writeBytes(sspiData)
+            } else {
+                buffer.setInteger(UInt16(0), at: sspiOffsetPosition, endianness: .little)
+                buffer.setInteger(UInt16(0), at: sspiOffsetPosition + 2, endianness: .little)
+            }
+
             buffer.setInteger(UInt32(buffer.writerIndex - login7HeaderPosition), at: login7HeaderPosition, endianness: .little)
             return
         }
