@@ -45,10 +45,12 @@ public class TDSTokenParser {
                         throw TDSError.protocolError("Error while parsing row data: no COLMETADATA recieved")
                     }
                     token = try TDSTokenParser.parseRowToken(from: &buffer, with: colMetadata)
+                case .sspi:
+                    token = try TDSTokenParser.parseSSPIToken(from: &buffer)
                 default:
                     throw TDSError.protocolError("Parsing implementation incomplete")
                 }
-                
+
                 parsedTokens.append(token)
                 
             } catch {
@@ -60,5 +62,17 @@ public class TDSTokenParser {
         }
         
         return parsedTokens
+    }
+}
+
+extension TDSTokenParser {
+    static func parseSSPIToken(from buffer: inout ByteBuffer) throws -> TDSTokens.SSPIToken {
+        guard let length = buffer.readInteger(as: UInt16.self) else {
+            throw TDSError.protocolError("Invalid SSPI token length")
+        }
+        guard let slice = buffer.readSlice(length: Int(length)) else {
+            throw TDSError.protocolError("Incomplete SSPI token")
+        }
+        return TDSTokens.SSPIToken(payload: slice)
     }
 }

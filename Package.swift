@@ -21,6 +21,8 @@ let package = Package(
             .product(name: "Metrics", package: "swift-metrics"),
             .product(name: "NIO", package: "swift-nio"),
             .product(name: "NIOSSL", package: "swift-nio-ssl"),
+        ], linkerSettings: [
+            .linkedFramework("GSS")
         ]),
         .testTarget(name: "TDSTests", dependencies: [
             .target(name: "TDS"),
