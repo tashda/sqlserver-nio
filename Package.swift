@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "swift-tds",
+    name: "sqlserver-nio",
     platforms: [
        .macOS(.v10_15)
     ],
     products: [
-        .library(name: "TDS", targets: ["TDS"]),
+        .library(name: "SQLServerNIO", targets: ["SQLServerNIO"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.0.0"),
@@ -16,7 +16,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-log.git", from: "1.0.0"),
     ],
     targets: [
-        .target(name: "TDS", dependencies: [
+        .target(name: "SQLServerNIO", dependencies: [
             .product(name: "Logging", package: "swift-log"),
             .product(name: "Metrics", package: "swift-metrics"),
             .product(name: "NIO", package: "swift-nio"),
@@ -24,8 +24,8 @@ let package = Package(
         ], linkerSettings: [
             .linkedFramework("GSS")
         ]),
-        .testTarget(name: "TDSTests", dependencies: [
-            .target(name: "TDS"),
+        .testTarget(name: "SQLServerNIOTests", dependencies: [
+            .target(name: "SQLServerNIO"),
             .product(name: "NIOTestUtils", package: "swift-nio"),
         ]),
     ]
