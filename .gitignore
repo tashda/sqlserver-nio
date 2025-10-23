@@ -7,3 +7,4 @@ xcuserdata/
 /.swiftpm
 Package.Resolved
 Tests/LinuxMain.swift
+.env
