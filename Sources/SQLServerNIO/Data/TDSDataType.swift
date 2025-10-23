@@ -1,7 +1,7 @@
 import NIO
 
 
-public enum TDSDataType: UInt8 {
+public enum TDSDataType: UInt8, Sendable {
     /// Fixed-Length Data Types
     /// https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/859eb3d2-80d3-40f6-a637-414552c9c552
 
