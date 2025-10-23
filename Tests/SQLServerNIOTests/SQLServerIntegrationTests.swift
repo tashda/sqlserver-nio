@@ -53,17 +53,22 @@ final class SQLServerIntegrationTests: XCTestCase {
         defer { _ = try? waitForResult(conn.close(), timeout: TIMEOUT, description: "close") }
         
         let tableName = makeTempTableName(prefix: "crud")
-        _ = try waitForResult(conn.query("CREATE TABLE \(tableName) (id INT PRIMARY KEY, name NVARCHAR(100));"), timeout: TIMEOUT, description: "create temp table")
+        let createResult = try waitForResult(conn.execute("CREATE TABLE \(tableName) (id INT PRIMARY KEY, name NVARCHAR(100));"), timeout: TIMEOUT, description: "create temp table")
+        XCTAssertEqual(createResult.rowCount, 0)
         defer { _ = try? waitForResult(conn.query("IF OBJECT_ID('tempdb..\(tableName)', 'U') IS NOT NULL DROP TABLE \(tableName);"), timeout: TIMEOUT, description: "drop temp table") }
-        
-        _ = try waitForResult(conn.query("INSERT INTO \(tableName) (id, name) VALUES (1, N'original');"), timeout: TIMEOUT, description: "insert row")
-        _ = try waitForResult(conn.query("UPDATE \(tableName) SET name = N'updated' WHERE id = 1;"), timeout: TIMEOUT, description: "update row")
-        
+
+        let insertResult = try waitForResult(conn.execute("INSERT INTO \(tableName) (id, name) VALUES (1, N'original');"), timeout: TIMEOUT, description: "insert row")
+        XCTAssertEqual(insertResult.rowCount, 1)
+
+        let updateResult = try waitForResult(conn.execute("UPDATE \(tableName) SET name = N'updated' WHERE id = 1;"), timeout: TIMEOUT, description: "update row")
+        XCTAssertEqual(updateResult.rowCount, 1)
+
         let rows = try waitForResult(conn.query("SELECT name FROM \(tableName) WHERE id = 1;"), timeout: TIMEOUT, description: "select row")
         XCTAssertEqual(rows.count, 1)
         XCTAssertEqual(rows[0].column("name")?.string, "updated")
-        
-        _ = try waitForResult(conn.query("DELETE FROM \(tableName) WHERE id = 1;"), timeout: TIMEOUT, description: "delete row")
+
+        let deleteResult = try waitForResult(conn.execute("DELETE FROM \(tableName) WHERE id = 1;"), timeout: TIMEOUT, description: "delete row")
+        XCTAssertEqual(deleteResult.rowCount, 1)
         let remaining = try waitForResult(conn.query("SELECT COUNT(*) AS row_count FROM \(tableName);"), timeout: TIMEOUT, description: "count rows")
         XCTAssertEqual(remaining.first?.column("row_count")?.int, 0)
     }
@@ -90,6 +95,35 @@ final class SQLServerIntegrationTests: XCTestCase {
         defer {
             _ = try? waitForResult(conn.query("DROP PROCEDURE \(names.bracketed);"), timeout: TIMEOUT, description: "drop proc")
         }
+
+        let parameters = try waitForResult(
+            conn.listParameters(schema: "dbo", object: names.nameOnly),
+            timeout: TIMEOUT,
+            description: "procedure metadata parameters"
+        )
+        XCTAssertEqual(parameters.count, 2, "Expected stored procedure to surface two parameters")
+
+        guard let inputParam = parameters.first(where: { $0.name.caseInsensitiveCompare("@Input") == .orderedSame }) else {
+            XCTFail("Missing @Input parameter metadata")
+            return
+        }
+        XCTAssertEqual(inputParam.typeName.lowercased(), "int")
+        XCTAssertFalse(inputParam.isOutput)
+        XCTAssertFalse(inputParam.hasDefaultValue)
+
+        guard let outputParam = parameters.first(where: { $0.name.caseInsensitiveCompare("@Output") == .orderedSame }) else {
+            XCTFail("Missing @Output parameter metadata")
+            return
+        }
+        XCTAssertTrue(outputParam.isOutput)
+        XCTAssertFalse(outputParam.isReturnValue)
+
+        let procedures = try waitForResult(
+            conn.listProcedures(schema: "dbo"),
+            timeout: TIMEOUT,
+            description: "list procedures metadata"
+        )
+        XCTAssertTrue(procedures.contains(where: { $0.name.caseInsensitiveCompare(names.nameOnly) == .orderedSame }), "Expected stored procedure to appear in metadata listing")
         
         let execSql = """
         DECLARE @out INT;
@@ -132,6 +166,18 @@ final class SQLServerIntegrationTests: XCTestCase {
             return
         }
         XCTAssertGreaterThan(count, 0)
+
+        let viewColumns = try waitForResult(
+            conn.listColumns(schema: "dbo", table: names.nameOnly),
+            timeout: TIMEOUT,
+            description: "metadata list view columns"
+        )
+        XCTAssertFalse(viewColumns.isEmpty, "Expected metadata columns for view")
+        guard let firstColumn = viewColumns.first else {
+            XCTFail("Expected at least one column for the view")
+            return
+        }
+        XCTAssertEqual(firstColumn.name.caseInsensitiveCompare("database_name"), .orderedSame)
         
         let definitionRows = try waitForResult(
             conn.query("SELECT OBJECT_DEFINITION(OBJECT_ID(N'\(names.bare)')) AS definition;"),
@@ -172,6 +218,145 @@ final class SQLServerIntegrationTests: XCTestCase {
         XCTAssertGreaterThan(count, 0)
     }
 
+    func testFetchObjectDefinitions() throws {
+        let conn = try waitForResult(connectSQLServer(on: eventLoop), timeout: TIMEOUT, description: "connect")
+        defer { _ = try? waitForResult(conn.close(), timeout: TIMEOUT, description: "close") }
+
+        let proc = makeSchemaQualifiedName(prefix: "def_proc")
+        let view = makeSchemaQualifiedName(prefix: "def_view")
+
+        let createProc = """
+        CREATE PROCEDURE \(proc.bracketed)
+        AS
+        BEGIN
+            SET NOCOUNT ON;
+            SELECT 1 AS Value;
+        END;
+        """
+        _ = try waitForResult(conn.execute(createProc), timeout: TIMEOUT, description: "create definition proc")
+        defer { _ = try? waitForResult(conn.execute("IF OBJECT_ID(N'\(proc.bare)', 'P') IS NOT NULL DROP PROCEDURE \(proc.bracketed);"), timeout: TIMEOUT, description: "drop definition proc") }
+
+        let createView = """
+        CREATE VIEW \(view.bracketed)
+        AS
+        SELECT N'DefinitionMarker' AS Marker;
+        """
+        _ = try waitForResult(conn.execute(createView), timeout: TIMEOUT, description: "create definition view")
+        defer { _ = try? waitForResult(conn.execute("IF OBJECT_ID(N'\(view.bare)', 'V') IS NOT NULL DROP VIEW \(view.bracketed);"), timeout: TIMEOUT, description: "drop definition view") }
+
+        let identifiers = [
+            SQLServerMetadataObjectIdentifier(database: nil, schema: "dbo", name: proc.nameOnly, kind: .procedure),
+            SQLServerMetadataObjectIdentifier(database: nil, schema: "dbo", name: view.nameOnly, kind: .view)
+        ]
+
+        let definitions = try waitForResult(
+            conn.fetchObjectDefinitions(identifiers),
+            timeout: TIMEOUT,
+            description: "fetch definitions"
+        )
+
+        guard let procDefinition = definitions.first(where: { $0.name.caseInsensitiveCompare(proc.nameOnly) == .orderedSame }) else {
+            XCTFail("Expected stored procedure definition")
+            return
+        }
+        XCTAssertEqual(procDefinition.type, .procedure)
+        XCTAssertFalse(procDefinition.isSystemObject)
+        XCTAssertEqual(procDefinition.definition?.uppercased().contains("SELECT 1"), true)
+
+        let singleView = try waitForResult(
+            conn.fetchObjectDefinition(schema: "dbo", name: view.nameOnly, kind: .view),
+            timeout: TIMEOUT,
+            description: "fetch single definition"
+        )
+        XCTAssertEqual(singleView?.type, .view)
+        XCTAssertEqual(singleView?.definition?.contains("DefinitionMarker"), true)
+    }
+
+    func testMetadataSearchReturnsMatches() throws {
+        let conn = try waitForResult(connectSQLServer(on: eventLoop), timeout: TIMEOUT, description: "connect")
+        defer { _ = try? waitForResult(conn.close(), timeout: TIMEOUT, description: "close") }
+
+        let table = makeSchemaQualifiedName(prefix: "search_table")
+        let related = makeSchemaQualifiedName(prefix: "search_related")
+
+        _ = try waitForResult(conn.execute("IF OBJECT_ID(N'\(table.bare)', 'U') IS NOT NULL DROP TABLE \(table.bracketed);"), timeout: TIMEOUT, description: "drop search table pre")
+        _ = try waitForResult(conn.execute("IF OBJECT_ID(N'\(related.bare)', 'U') IS NOT NULL DROP TABLE \(related.bracketed);"), timeout: TIMEOUT, description: "drop related table pre")
+        defer {
+            _ = try? waitForResult(conn.execute("IF OBJECT_ID(N'\(table.bare)', 'U') IS NOT NULL DROP TABLE \(table.bracketed);"), timeout: TIMEOUT, description: "drop search table")
+            _ = try? waitForResult(conn.execute("IF OBJECT_ID(N'\(related.bare)', 'U') IS NOT NULL DROP TABLE \(related.bracketed);"), timeout: TIMEOUT, description: "drop related table")
+        }
+
+        let createRelated = """
+        CREATE TABLE \(related.bracketed) (
+            Id INT PRIMARY KEY,
+            Note NVARCHAR(50)
+        );
+        """
+        _ = try waitForResult(conn.execute(createRelated), timeout: TIMEOUT, description: "create related table")
+
+        let createTable = """
+        CREATE TABLE \(table.bracketed) (
+            Id INT PRIMARY KEY,
+            SearchColumn NVARCHAR(50) NOT NULL,
+            RelatedId INT NULL,
+            CONSTRAINT FK_\(table.nameOnly)_Related FOREIGN KEY (RelatedId) REFERENCES \(related.bracketed)(Id)
+        );
+        CREATE INDEX IX_\(table.nameOnly)_SearchColumn ON \(table.bracketed)(SearchColumn);
+        """
+        _ = try waitForResult(conn.execute(createTable), timeout: TIMEOUT, description: "create search table")
+
+        let columnHits = try waitForResult(
+            conn.searchMetadata(query: "SearchColumn", scopes: [.columns]),
+            timeout: TIMEOUT,
+            description: "search columns"
+        )
+        XCTAssertTrue(columnHits.contains(where: { $0.matchKind == .column && $0.name.caseInsensitiveCompare(table.nameOnly) == .orderedSame }))
+
+        let indexHits = try waitForResult(
+            conn.searchMetadata(query: "IX_\(table.nameOnly)_SearchColumn", scopes: [.indexes]),
+            timeout: TIMEOUT,
+            description: "search indexes"
+        )
+        XCTAssertTrue(indexHits.contains(where: { $0.matchKind == .index && $0.detail?.contains("IX_\(table.nameOnly)_SearchColumn") == true }))
+
+        let constraintHits = try waitForResult(
+            conn.searchMetadata(query: "FK_\(table.nameOnly)_Related", scopes: [.constraints]),
+            timeout: TIMEOUT,
+            description: "search constraints"
+        )
+        XCTAssertTrue(constraintHits.contains(where: { $0.matchKind == .constraint && $0.detail?.contains("FK_\(table.nameOnly)_Related") == true }))
+    }
+
+    func testChangeDatabaseAndScalarHelpers() throws {
+        let conn = try waitForResult(connectSQLServer(on: eventLoop), timeout: TIMEOUT, description: "connect")
+        defer { _ = try? waitForResult(conn.close(), timeout: TIMEOUT, description: "close") }
+
+        let defaultConfig = makeSQLServerConnectionConfiguration()
+        let defaultDatabase = defaultConfig.login.database
+
+        XCTAssertEqual(conn.currentDatabase.lowercased(), defaultDatabase.lowercased())
+
+        let masterName: String? = try waitForResult(
+            conn.queryScalar("SELECT DB_NAME();", as: String.self),
+            timeout: TIMEOUT,
+            description: "scalar db_name"
+        )
+        XCTAssertEqual(masterName?.lowercased(), defaultDatabase.lowercased())
+
+        let targetDatabase = "msdb"
+        _ = try waitForResult(conn.changeDatabase(targetDatabase), timeout: TIMEOUT, description: "change database")
+        XCTAssertEqual(conn.currentDatabase.lowercased(), targetDatabase)
+
+        let scalarAfterChange: String? = try waitForResult(
+            conn.queryScalar("SELECT DB_NAME();", as: String.self),
+            timeout: TIMEOUT,
+            description: "scalar in msdb"
+        )
+        XCTAssertEqual(scalarAfterChange?.lowercased(), targetDatabase)
+
+        _ = try waitForResult(conn.changeDatabase(defaultDatabase), timeout: TIMEOUT, description: "reset database")
+    }
+
     func testColumnPropertyIsComputedSingle() throws {
         let conn = try waitForResult(connectSQLServer(on: eventLoop), timeout: TIMEOUT, description: "connect")
         defer { _ = try? waitForResult(conn.close(), timeout: TIMEOUT, description: "close") }
@@ -195,10 +380,11 @@ final class SQLServerIntegrationTests: XCTestCase {
         _ = try waitForResult(conn.query("IF OBJECT_ID(N'\(table.bare)', 'U') IS NOT NULL DROP TABLE \(table.bracketed);"), timeout: TIMEOUT, description: "drop meta table")
         defer { _ = try? waitForResult(conn.query("IF OBJECT_ID(N'\(table.bare)', 'U') IS NOT NULL DROP TABLE \(table.bracketed);"), timeout: TIMEOUT, description: "drop meta table") }
 
+        let defaultConstraint = "DF_\(table.nameOnly)_Name"
         let create = """
         CREATE TABLE \(table.bracketed) (
             Id INT IDENTITY(1,1) PRIMARY KEY,
-            Name NVARCHAR(50) NULL,
+            Name NVARCHAR(50) NULL CONSTRAINT \(defaultConstraint) DEFAULT (N'fallback'),
             Computed AS Id + 1
         );
         """
@@ -234,6 +420,235 @@ final class SQLServerIntegrationTests: XCTestCase {
         XCTAssertEqual(computedColumn.column("is_identity")?.bool, false)
         XCTAssertEqual(computedColumn.column("is_nullable")?.bool, true)
         XCTAssertEqual(computedColumn.column("is_computed")?.bool, true)
+
+        let metadataColumns = try waitForResult(
+            conn.listColumns(schema: "dbo", table: table.nameOnly),
+            timeout: TIMEOUT,
+            description: "metadata columns for custom table"
+        )
+        XCTAssertEqual(metadataColumns.count, 3)
+
+        guard let metadataName = metadataColumns.first(where: { $0.name == "Name" }) else {
+            XCTFail("Expected Name column metadata")
+            return
+        }
+        XCTAssertTrue(metadataName.hasDefaultValue)
+        XCTAssertEqual(metadataName.defaultDefinition?.contains("fallback"), true)
+
+        guard let metadataComputed = metadataColumns.first(where: { $0.name == "Computed" }) else {
+            XCTFail("Expected Computed column metadata")
+            return
+        }
+        XCTAssertEqual(metadataComputed.name, "Computed")
+        XCTAssertGreaterThan(metadataComputed.ordinalPosition, metadataName.ordinalPosition)
+    }
+
+    func testMetadataCoversKeysIndexesForeignKeysAndTriggers() throws {
+        let conn = try waitForResult(connectSQLServer(on: eventLoop), timeout: TIMEOUT, description: "connect")
+        defer { _ = try? waitForResult(conn.close(), timeout: TIMEOUT, description: "close") }
+
+        let parent = makeSchemaQualifiedName(prefix: "meta_parent")
+        let child = makeSchemaQualifiedName(prefix: "meta_child")
+        let view = makeSchemaQualifiedName(prefix: "meta_view")
+        let triggerName = "TR_\(child.nameOnly)_Audit"
+        let triggerQualified = "[dbo].[\(triggerName)]"
+
+        let parentPKName = "PK_\(parent.nameOnly)"
+        let parentUniqueName = "UQ_\(parent.nameOnly)_Code"
+        let parentDefaultName = "DF_\(parent.nameOnly)_Created"
+        let childPKName = "PK_\(child.nameOnly)"
+        let fkName = "FK_\(child.nameOnly)_Parent"
+        let indexName = "IX_\(child.nameOnly)_Note"
+
+        _ = try waitForResult(conn.query("""
+        IF OBJECT_ID(N'\(view.bare)', 'V') IS NOT NULL DROP VIEW \(view.bracketed);
+        IF OBJECT_ID(N'\(child.bare)', 'U') IS NOT NULL DROP TABLE \(child.bracketed);
+        IF OBJECT_ID(N'\(parent.bare)', 'U') IS NOT NULL DROP TABLE \(parent.bracketed);
+        """), timeout: TIMEOUT, description: "pre-clean metadata tables")
+
+        defer {
+            _ = try? waitForResult(conn.query("""
+            IF OBJECT_ID(N'\(view.bare)', 'V') IS NOT NULL DROP VIEW \(view.bracketed);
+            IF OBJECT_ID(N'\(child.bare)', 'U') IS NOT NULL DROP TABLE \(child.bracketed);
+            IF OBJECT_ID(N'\(parent.bare)', 'U') IS NOT NULL DROP TABLE \(parent.bracketed);
+            """), timeout: TIMEOUT, description: "cleanup metadata tables")
+        }
+
+        let createParent = """
+        CREATE TABLE \(parent.bracketed) (
+            ParentId INT IDENTITY(1,1) NOT NULL,
+            Code NVARCHAR(50) NOT NULL,
+            Created DATETIME2 NOT NULL CONSTRAINT [\(parentDefaultName)] DEFAULT SYSUTCDATETIME(),
+            Description NVARCHAR(100) NULL,
+            CONSTRAINT [\(parentPKName)] PRIMARY KEY CLUSTERED (ParentId ASC),
+            CONSTRAINT [\(parentUniqueName)] UNIQUE (Code)
+        );
+        """
+        _ = try waitForResult(conn.query(createParent), timeout: TIMEOUT, description: "create parent table")
+
+        let createChild = """
+        CREATE TABLE \(child.bracketed) (
+            ChildId INT IDENTITY(1,1) NOT NULL,
+            ParentId INT NOT NULL,
+            Note NVARCHAR(50) NULL,
+            Extra NVARCHAR(20) NULL,
+            CONSTRAINT [\(childPKName)] PRIMARY KEY CLUSTERED (ChildId ASC),
+            CONSTRAINT [\(fkName)] FOREIGN KEY (ParentId)
+                REFERENCES \(parent.bracketed)(ParentId)
+                ON DELETE CASCADE
+        );
+        """
+        _ = try waitForResult(conn.query(createChild), timeout: TIMEOUT, description: "create child table")
+
+        let createIndex = """
+        CREATE NONCLUSTERED INDEX [\(indexName)]
+            ON \(child.bracketed) (Note DESC)
+            INCLUDE (Extra);
+        """
+        _ = try waitForResult(conn.query(createIndex), timeout: TIMEOUT, description: "create index")
+
+        let createTrigger = """
+        CREATE TRIGGER \(triggerQualified)
+        ON \(child.bracketed)
+        AFTER INSERT
+        AS
+        BEGIN
+            SET NOCOUNT ON;
+            SELECT TOP (0) 1;
+        END;
+        """
+        _ = try waitForResult(conn.query(createTrigger), timeout: TIMEOUT, description: "create trigger")
+
+        let createView = """
+        CREATE VIEW \(view.bracketed)
+        AS
+        SELECT p.ParentId, p.Code
+        FROM \(parent.bracketed) AS p;
+        """
+        _ = try waitForResult(conn.query(createView), timeout: TIMEOUT, description: "create view")
+
+        let primaryKeys = try waitForResult(
+            conn.listPrimaryKeys(schema: "dbo", table: parent.nameOnly),
+            timeout: TIMEOUT,
+            description: "metadata primary keys"
+        )
+        guard let parentPK = primaryKeys.first(where: { $0.name.caseInsensitiveCompare(parentPKName) == .orderedSame }) else {
+            XCTFail("Expected primary key metadata for parent table")
+            return
+        }
+        XCTAssertTrue(parentPK.isClustered)
+        XCTAssertEqual(parentPK.columns.count, 1)
+        XCTAssertEqual(parentPK.columns.first?.column, "ParentId")
+
+        let uniqueConstraints = try waitForResult(
+            conn.listUniqueConstraints(schema: "dbo", table: parent.nameOnly),
+            timeout: TIMEOUT,
+            description: "metadata unique constraints"
+        )
+        XCTAssertTrue(uniqueConstraints.contains(where: { constraint in
+            constraint.name.caseInsensitiveCompare(parentUniqueName) == .orderedSame &&
+            constraint.columns.first?.column == "Code"
+        }), "Expected unique constraint metadata for Code column")
+
+        let indexes = try waitForResult(
+            conn.listIndexes(schema: "dbo", table: child.nameOnly),
+            timeout: TIMEOUT,
+            description: "metadata indexes"
+        )
+        guard let customIndex = indexes.first(where: { $0.name.caseInsensitiveCompare(indexName) == .orderedSame }) else {
+            XCTFail("Expected non-clustered index metadata")
+            return
+        }
+        XCTAssertFalse(customIndex.isUnique)
+        XCTAssertFalse(customIndex.isPrimaryKey)
+        let indexColumns = customIndex.columns.map(\.column)
+        XCTAssertTrue(indexColumns.contains("Note"))
+
+        let foreignKeys = try waitForResult(
+            conn.listForeignKeys(schema: "dbo", table: child.nameOnly),
+            timeout: TIMEOUT,
+            description: "metadata foreign keys"
+        )
+        guard let fk = foreignKeys.first(where: { $0.name.caseInsensitiveCompare(fkName) == .orderedSame }) else {
+            XCTFail("Expected foreign key metadata")
+            return
+        }
+        XCTAssertEqual(fk.referencedTable.caseInsensitiveCompare(parent.nameOnly), .orderedSame)
+        XCTAssertEqual(fk.columns.first?.parentColumn, "ParentId")
+        XCTAssertEqual(fk.columns.first?.referencedColumn, "ParentId")
+        XCTAssertEqual(fk.deleteAction.uppercased(), "CASCADE")
+
+        let dependencies = try waitForResult(
+            conn.listDependencies(schema: "dbo", object: parent.nameOnly),
+            timeout: TIMEOUT,
+            description: "metadata dependencies"
+        )
+        XCTAssertTrue(dependencies.contains(where: { dependency in
+            dependency.referencingObject.caseInsensitiveCompare(view.nameOnly) == .orderedSame
+        }), "Expected dependency on view")
+
+        let triggers = try waitForResult(
+            conn.listTriggers(schema: "dbo", table: child.nameOnly),
+            timeout: TIMEOUT,
+            description: "metadata triggers"
+        )
+        guard let trigger = triggers.first(where: { $0.name.caseInsensitiveCompare(triggerName) == .orderedSame }) else {
+            XCTFail("Expected trigger metadata")
+            return
+        }
+        XCTAssertFalse(trigger.isInsteadOf)
+        XCTAssertFalse(trigger.isDisabled)
+        XCTAssertNotNil(trigger.definition)
+    }
+
+    func testFunctionMetadataIncludesReturnAndParameters() throws {
+        let conn = try waitForResult(connectSQLServer(on: eventLoop), timeout: TIMEOUT, description: "connect")
+        defer { _ = try? waitForResult(conn.close(), timeout: TIMEOUT, description: "close") }
+
+        let function = makeSchemaQualifiedName(prefix: "fn_meta")
+
+        _ = try waitForResult(conn.query("IF OBJECT_ID(N'\(function.bare)', 'FN') IS NOT NULL DROP FUNCTION \(function.bracketed);"), timeout: TIMEOUT, description: "drop function")
+        defer { _ = try? waitForResult(conn.query("IF OBJECT_ID(N'\(function.bare)', 'FN') IS NOT NULL DROP FUNCTION \(function.bracketed);"), timeout: TIMEOUT, description: "drop function") }
+
+        let createFunction = """
+        CREATE FUNCTION \(function.bracketed)
+        (
+            @Input INT,
+            @Category NVARCHAR(10) = N'default'
+        )
+        RETURNS NVARCHAR(100)
+        AS
+        BEGIN
+            RETURN CONCAT('value-', @Input, '-', @Category);
+        END;
+        """
+        _ = try waitForResult(conn.query(createFunction), timeout: TIMEOUT, description: "create function")
+
+        let functions = try waitForResult(
+            conn.listFunctions(schema: "dbo"),
+            timeout: TIMEOUT,
+            description: "list functions"
+        )
+        guard let metadata = functions.first(where: { $0.name.caseInsensitiveCompare(function.nameOnly) == .orderedSame }) else {
+            XCTFail("Expected function metadata entry")
+            return
+        }
+        XCTAssertEqual(metadata.type, .scalarFunction)
+        XCTAssertNotNil(metadata.definition)
+
+        let parameters = try waitForResult(
+            conn.listParameters(schema: "dbo", object: function.nameOnly),
+            timeout: TIMEOUT,
+            description: "function parameters metadata"
+        )
+        XCTAssertTrue(parameters.contains(where: { $0.isReturnValue && $0.typeName.lowercased() == "nvarchar" }))
+        guard let category = parameters.first(where: { $0.name.caseInsensitiveCompare("@Category") == .orderedSame }) else {
+            XCTFail("Expected @Category parameter")
+            return
+        }
+        XCTAssertTrue(category.hasDefaultValue)
+        XCTAssertEqual(category.defaultValue?.contains("default"), true)
+        XCTAssertFalse(category.isOutput)
     }
     
     func testMetadataClientColumnListing() throws {
@@ -243,6 +658,9 @@ final class SQLServerIntegrationTests: XCTestCase {
         let metadata = SQLServerMetadataClient(connection: conn)
         let databases = try waitForResult(metadata.listDatabases(), timeout: TIMEOUT, description: "metadata list databases")
         XCTAssertFalse(databases.isEmpty, "Expected at least one database")
+
+        let tables = try waitForResult(metadata.listTables(schema: "dbo"), timeout: TIMEOUT, description: "metadata list tables")
+        XCTAssertFalse(tables.contains(where: { $0.name.hasPrefix("meta_client_") }), "Driver-internal objects should be filtered")
 
         let columns = try waitForResult(metadata.listColumns(schema: "dbo", table: "MSreplication_options"), timeout: TIMEOUT, description: "metadata list columns")
         XCTAssertEqual(columns.count, 6, "Expected known system table to expose columns")
@@ -255,6 +673,7 @@ final class SQLServerIntegrationTests: XCTestCase {
         XCTAssertEqual(valueColumn.isNullable, false)
         XCTAssertEqual(valueColumn.isIdentity, false)
         XCTAssertEqual(valueColumn.isComputed, false)
+        XCTAssertGreaterThan(valueColumn.ordinalPosition, 0)
 
         guard let nameColumn = columns.first(where: { $0.name == "optname" }) else {
             XCTFail("Expected optname column metadata")
@@ -264,6 +683,108 @@ final class SQLServerIntegrationTests: XCTestCase {
         XCTAssertEqual(nameColumn.isNullable, false)
     }
     
+
+    func testStreamQueryEmitsMetadataAndRows() throws {
+        guard #available(macOS 12.0, *) else {
+            throw XCTSkip("Streaming API requires async/await")
+        }
+
+        let conn = try waitForResult(connectSQLServer(on: eventLoop), timeout: TIMEOUT, description: "connect")
+        defer { _ = try? waitForResult(conn.close(), timeout: TIMEOUT, description: "close") }
+
+        let sql = "SELECT TOP (3) name, database_id FROM sys.databases ORDER BY name;"
+
+        let finished = expectation(description: "stream finished")
+        var firstEvent: SQLServerStreamEvent?
+        var metadataColumns: [SQLServerColumnDescription] = []
+        var rowCount = 0
+        var doneEvents: [SQLServerStreamDone] = []
+        var infoMessages: [SQLServerStreamMessage] = []
+
+        let task = Task {
+            defer { finished.fulfill() }
+            do {
+                for try await event in conn.streamQuery(sql) {
+                    if firstEvent == nil {
+                        firstEvent = event
+                    }
+                    switch event {
+                    case .metadata(let columns):
+                        metadataColumns.append(contentsOf: columns)
+                    case .row:
+                        rowCount += 1
+                    case .done(let done):
+                        doneEvents.append(done)
+                    case .message(let message):
+                        infoMessages.append(message)
+                    }
+                }
+            } catch {
+                XCTFail("stream failed with error: \(error)")
+            }
+        }
+
+        wait(for: [finished], timeout: TIMEOUT)
+        task.cancel()
+
+        guard let first = firstEvent else {
+            XCTFail("Expected at least one stream event")
+            return
+        }
+        switch first {
+        case .metadata:
+            break
+        default:
+            XCTFail("Expected metadata to arrive before rows; got \(first)")
+        }
+
+        XCTAssertFalse(metadataColumns.isEmpty, "Expected metadata before rows")
+        XCTAssertGreaterThan(rowCount, 0, "Expected streamed rows")
+        XCTAssertGreaterThan(doneEvents.count, 0, "Expected DONE tokens")
+        XCTAssertNotNil(infoMessages) // allow empty; ensures compile
+    }
+
+    func testStreamQuerySupportsEarlyStop() throws {
+        guard #available(macOS 12.0, *) else {
+            throw XCTSkip("Streaming API requires async/await")
+        }
+
+        let conn = try waitForResult(connectSQLServer(on: eventLoop), timeout: TIMEOUT, description: "connect")
+        defer { _ = try? waitForResult(conn.close(), timeout: TIMEOUT, description: "close") }
+
+        let sql = "SELECT TOP (25) o.name FROM sys.objects AS o ORDER BY o.name;"
+
+        let firstRowExpectation = expectation(description: "received first streamed row")
+        let completionExpectation = expectation(description: "stream task completed")
+
+        var seenRows: [TDSRow] = []
+        let task = Task {
+            defer { completionExpectation.fulfill() }
+            do {
+                for try await event in conn.streamQuery(sql) {
+                    if case .row(let row) = event {
+                        seenRows.append(row)
+                        if seenRows.count == 1 {
+                            firstRowExpectation.fulfill()
+                            return
+                        }
+                    }
+                }
+            } catch {
+                XCTFail("streaming cancellation failure: \(error)")
+            }
+        }
+
+        wait(for: [firstRowExpectation], timeout: TIMEOUT)
+        task.cancel()
+        wait(for: [completionExpectation], timeout: TIMEOUT)
+
+        XCTAssertEqual(seenRows.count, 1, "Expected to capture exactly one streamed row before stopping")
+
+        let followUp = try waitForResult(conn.query("SELECT 1 AS value;"), timeout: TIMEOUT, description: "post-stream query")
+        XCTAssertEqual(followUp.first?.column("value")?.int, 1)
+    }
+
     func testConnectionPoolReusesConnections() throws {
         let loopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         defer { try? loopGroup.syncShutdownGracefully() }

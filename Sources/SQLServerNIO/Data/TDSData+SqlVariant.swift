@@ -143,7 +143,7 @@ extension TDSData {
         case .xml, .image, .nText, .text, .sqlVariant, .clrUdt, .null:
             return nil
 
-        default:
+        @unknown default:
             return nil
         }
     }

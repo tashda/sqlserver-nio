@@ -1,0 +1,25 @@
+import Foundation
+
+public struct SQLServerExecutionResult: Sendable {
+    public let rows: [TDSRow]
+    public let done: [SQLServerStreamDone]
+    public let messages: [SQLServerStreamMessage]
+
+    public init(rows: [TDSRow], done: [SQLServerStreamDone], messages: [SQLServerStreamMessage]) {
+        self.rows = rows
+        self.done = done
+        self.messages = messages
+    }
+
+    public var rowCount: UInt64? {
+        done.last?.rowCount
+    }
+
+    public var totalRowCount: UInt64 {
+        done.reduce(0) { $0 + $1.rowCount }
+    }
+
+    public var rowCounts: [UInt64] {
+        done.map { $0.rowCount }
+    }
+}

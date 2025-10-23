@@ -6,8 +6,8 @@ import NIOPosix
 import NIOSSL
 
 public final class SQLServerConnection {
-    public struct Configuration {
-        public struct Login {
+    public struct Configuration: Sendable {
+        public struct Login: Sendable {
             public var database: String
             public var authentication: TDSAuthentication
 
@@ -23,6 +23,7 @@ public final class SQLServerConnection {
         public var tlsConfiguration: TLSConfiguration?
         public var metadataConfiguration: SQLServerMetadataClient.Configuration
         public var retryConfiguration: SQLServerRetryConfiguration
+        public var sessionOptions: SessionOptions
 
         public init(
             hostname: String,
@@ -30,7 +31,8 @@ public final class SQLServerConnection {
             login: Login,
             tlsConfiguration: TLSConfiguration? = .makeClientConfiguration(),
             metadataConfiguration: SQLServerMetadataClient.Configuration = .init(),
-            retryConfiguration: SQLServerRetryConfiguration = .init()
+            retryConfiguration: SQLServerRetryConfiguration = .init(),
+            sessionOptions: SessionOptions = .ssmsDefaults
         ) {
             self.hostname = hostname
             self.port = port
@@ -38,6 +40,7 @@ public final class SQLServerConnection {
             self.tlsConfiguration = tlsConfiguration
             self.metadataConfiguration = metadataConfiguration
             self.retryConfiguration = retryConfiguration
+            self.sessionOptions = sessionOptions
         }
     }
 
@@ -110,8 +113,8 @@ public final class SQLServerConnection {
             connection.login(configuration: loginConfiguration).map { connection }.flatMapError { error in
                 connection.close().flatMapThrowing { throw error }
             }
-        }.map { connection in
-            SQLServerConnection(
+        }.flatMap { connection in
+            let sqlConnection = SQLServerConnection(
                 base: connection,
                 configuration: configuration,
                 metadataCache: nil,
@@ -125,6 +128,7 @@ public final class SQLServerConnection {
                     }
                 }
             )
+            return sqlConnection.bootstrapSession().map { sqlConnection }
         }
     }
 
@@ -136,27 +140,141 @@ public final class SQLServerConnection {
         base.logger
     }
 
-    public func close() -> EventLoopFuture<Void> {
-        let future = release(close: !reuseOnClose)
-        guard let group = ownsEventLoopGroup else {
-            return future
-        }
-        return future.flatMap {
-            SQLServerClient.shutdownEventLoopGroup(group)
-        }.map {
-            self.ownsEventLoopGroup = nil
-        }
+    public var currentDatabase: String {
+        stateLock.withLock { _currentDatabase }
     }
 
-    public func query(_ sql: String) -> EventLoopFuture<[TDSRow]> {
-        executeWithRetry(operationName: "query") {
-            self.base.rawSql(sql)
+    public func changeDatabase(_ database: String) -> EventLoopFuture<Void> {
+        let current = stateLock.withLock { _currentDatabase }
+        if Self.equalsIgnoreCase(current, database) {
+            return eventLoop.makeSucceededFuture(())
+        }
+        return executeWithRetry(operationName: "changeDatabase") {
+            let sql = "USE \(Self.escapeIdentifier(database));"
+            return self.base.rawSql(sql).map { _ in
+                self.setCurrentDatabase(database)
+            }
         }
     }
 
     @available(macOS 12.0, *)
+    public func changeDatabase(_ database: String) async throws {
+        try await changeDatabase(database).get()
+    }
+
+    public func close() -> EventLoopFuture<Void> {
+        if reuseOnClose {
+            return resetSessionState().flatMapError { error in
+                self.logger.warning("SQLServerConnection failed to reset session before reuse: \(error)")
+                return self.release(close: true).flatMap { _ in
+                    self.shutdownGroupIfNeeded().flatMapThrowing { throw error }
+                }
+            }.flatMap { _ in
+                self.release(close: false)
+            }.flatMap { _ in
+                self.shutdownGroupIfNeeded()
+            }
+        } else {
+            return release(close: true).flatMap { _ in
+                self.shutdownGroupIfNeeded()
+            }
+        }
+    }
+
+    public func execute(_ sql: String) -> EventLoopFuture<SQLServerExecutionResult> {
+        executeWithRetry(operationName: "execute") {
+            self.runBatch(sql)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func execute(_ sql: String) async throws -> SQLServerExecutionResult {
+        let future: EventLoopFuture<SQLServerExecutionResult> = execute(sql)
+        return try await future.get()
+    }
+
+    public func query(_ sql: String) -> EventLoopFuture<[TDSRow]> {
+        execute(sql).map(\.rows)
+    }
+
+    @available(macOS 12.0, *)
     public func query(_ sql: String) async throws -> [TDSRow] {
-        try await query(sql).get()
+        let result = try await execute(sql).get()
+        return result.rows
+    }
+
+    public func queryScalar<T: TDSDataConvertible>(_ sql: String, as type: T.Type = T.self) -> EventLoopFuture<T?> {
+        execute(sql).map { result in
+            guard
+                let row = result.rows.first,
+                let firstColumn = row.columnMetadata.colData.first?.colName,
+                let valueData = row.column(firstColumn),
+                let value = T(tdsData: valueData)
+            else {
+                return nil
+            }
+            return value
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func queryScalar<T: TDSDataConvertible>(_ sql: String, as type: T.Type = T.self) async throws -> T? {
+        try await queryScalar(sql, as: type).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func streamQuery(_ sql: String) -> AsyncThrowingStream<SQLServerStreamEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let message = TDSMessages.RawSqlBatchMessage(sqlText: sql)
+            let request = RawSqlBatchRequest(
+                sqlBatch: message,
+                logger: self.logger,
+                onRow: { row in
+                    _ = continuation.yield(.row(row))
+                },
+                onMetadata: { metadata in
+                    let columns = metadata.colData.map { column in
+                        SQLServerColumnDescription(
+                            name: column.colName,
+                            type: column.dataType,
+                            length: column.length,
+                            precision: column.precision,
+                            scale: column.scale,
+                            flags: column.flags
+                        )
+                    }
+                    _ = continuation.yield(.metadata(columns))
+                },
+                onDone: { done in
+                    let doneEvent = SQLServerStreamDone(status: done.status, rowCount: done.doneRowCount)
+                    _ = continuation.yield(.done(doneEvent))
+                },
+                onMessage: { token, isError in
+                    let message = SQLServerStreamMessage(
+                        kind: isError ? .error : .info,
+                        number: Int32(token.number),
+                        message: token.messageText,
+                        state: token.state,
+                        severity: token.classValue
+                    )
+                    _ = continuation.yield(.message(message))
+                }
+            )
+
+            let future = self.base.send(request, logger: self.logger)
+            future.whenComplete { result in
+                switch result {
+                case .success:
+                    continuation.finish()
+                case .failure(let error):
+                    continuation.finish(throwing: error)
+                }
+            }
+
+            continuation.onTermination = { _ in
+                // TODO: send ATTENTION token for graceful cancellation.
+            }
+        }
     }
 
     public func listDatabases() -> EventLoopFuture<[DatabaseMetadata]> {
@@ -203,6 +321,228 @@ public final class SQLServerConnection {
         try await listColumns(database: database, schema: schema, table: table).get()
     }
 
+    public func listParameters(
+        database: String? = nil,
+        schema: String,
+        object: String
+    ) -> EventLoopFuture<[ParameterMetadata]> {
+        executeWithRetry(operationName: "listParameters") {
+            self.metadataClient.listParameters(database: database, schema: schema, object: object)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listParameters(
+        database: String? = nil,
+        schema: String,
+        object: String
+    ) async throws -> [ParameterMetadata] {
+        try await listParameters(database: database, schema: schema, object: object).get()
+    }
+
+    public func listPrimaryKeys(
+        database: String? = nil,
+        schema: String? = nil,
+        table: String? = nil
+    ) -> EventLoopFuture<[KeyConstraintMetadata]> {
+        executeWithRetry(operationName: "listPrimaryKeys") {
+            self.metadataClient.listPrimaryKeys(database: database, schema: schema, table: table)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listPrimaryKeys(
+        database: String? = nil,
+        schema: String? = nil,
+        table: String? = nil
+    ) async throws -> [KeyConstraintMetadata] {
+        try await listPrimaryKeys(database: database, schema: schema, table: table).get()
+    }
+
+    public func listUniqueConstraints(
+        database: String? = nil,
+        schema: String? = nil,
+        table: String? = nil
+    ) -> EventLoopFuture<[KeyConstraintMetadata]> {
+        executeWithRetry(operationName: "listUniqueConstraints") {
+            self.metadataClient.listUniqueConstraints(database: database, schema: schema, table: table)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listUniqueConstraints(
+        database: String? = nil,
+        schema: String? = nil,
+        table: String? = nil
+    ) async throws -> [KeyConstraintMetadata] {
+        try await listUniqueConstraints(database: database, schema: schema, table: table).get()
+    }
+
+    public func listIndexes(
+        database: String? = nil,
+        schema: String,
+        table: String
+    ) -> EventLoopFuture<[IndexMetadata]> {
+        executeWithRetry(operationName: "listIndexes") {
+            self.metadataClient.listIndexes(database: database, schema: schema, table: table)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listIndexes(
+        database: String? = nil,
+        schema: String,
+        table: String
+    ) async throws -> [IndexMetadata] {
+        try await listIndexes(database: database, schema: schema, table: table).get()
+    }
+
+    public func listForeignKeys(
+        database: String? = nil,
+        schema: String,
+        table: String
+    ) -> EventLoopFuture<[ForeignKeyMetadata]> {
+        executeWithRetry(operationName: "listForeignKeys") {
+            self.metadataClient.listForeignKeys(database: database, schema: schema, table: table)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listForeignKeys(
+        database: String? = nil,
+        schema: String,
+        table: String
+    ) async throws -> [ForeignKeyMetadata] {
+        try await listForeignKeys(database: database, schema: schema, table: table).get()
+    }
+
+    public func listDependencies(
+        database: String? = nil,
+        schema: String,
+        object: String
+    ) -> EventLoopFuture<[DependencyMetadata]> {
+        executeWithRetry(operationName: "listDependencies") {
+            self.metadataClient.listDependencies(database: database, schema: schema, object: object)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listDependencies(
+        database: String? = nil,
+        schema: String,
+        object: String
+    ) async throws -> [DependencyMetadata] {
+        try await listDependencies(database: database, schema: schema, object: object).get()
+    }
+
+    public func listTriggers(
+        database: String? = nil,
+        schema: String? = nil,
+        table: String? = nil
+    ) -> EventLoopFuture<[TriggerMetadata]> {
+        executeWithRetry(operationName: "listTriggers") {
+            self.metadataClient.listTriggers(database: database, schema: schema, table: table)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listTriggers(
+        database: String? = nil,
+        schema: String? = nil,
+        table: String? = nil
+    ) async throws -> [TriggerMetadata] {
+        try await listTriggers(database: database, schema: schema, table: table).get()
+    }
+
+    public func listProcedures(
+        database: String? = nil,
+        schema: String? = nil
+    ) -> EventLoopFuture<[RoutineMetadata]> {
+        executeWithRetry(operationName: "listProcedures") {
+            self.metadataClient.listProcedures(database: database, schema: schema)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listProcedures(
+        database: String? = nil,
+        schema: String? = nil
+    ) async throws -> [RoutineMetadata] {
+        try await listProcedures(database: database, schema: schema).get()
+    }
+
+    public func listFunctions(
+        database: String? = nil,
+        schema: String? = nil
+    ) -> EventLoopFuture<[RoutineMetadata]> {
+        executeWithRetry(operationName: "listFunctions") {
+            self.metadataClient.listFunctions(database: database, schema: schema)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listFunctions(
+        database: String? = nil,
+        schema: String? = nil
+    ) async throws -> [RoutineMetadata] {
+        try await listFunctions(database: database, schema: schema).get()
+    }
+
+    public func fetchObjectDefinitions(
+        _ identifiers: [SQLServerMetadataObjectIdentifier]
+    ) -> EventLoopFuture<[ObjectDefinition]> {
+        metadataClient.fetchObjectDefinitions(identifiers)
+    }
+
+    @available(macOS 12.0, *)
+    public func fetchObjectDefinitions(
+        _ identifiers: [SQLServerMetadataObjectIdentifier]
+    ) async throws -> [ObjectDefinition] {
+        try await fetchObjectDefinitions(identifiers).get()
+    }
+
+    public func fetchObjectDefinition(
+        database: String? = nil,
+        schema: String,
+        name: String,
+        kind: SQLServerMetadataObjectIdentifier.Kind
+    ) -> EventLoopFuture<ObjectDefinition?> {
+        let identifier = SQLServerMetadataObjectIdentifier(database: database, schema: schema, name: name, kind: kind)
+        return metadataClient.fetchObjectDefinitions([identifier]).map { $0.first }
+    }
+
+    @available(macOS 12.0, *)
+    public func fetchObjectDefinition(
+        database: String? = nil,
+        schema: String,
+        name: String,
+        kind: SQLServerMetadataObjectIdentifier.Kind
+    ) async throws -> ObjectDefinition? {
+        try await fetchObjectDefinition(database: database, schema: schema, name: name, kind: kind).get()
+    }
+
+    public func searchMetadata(
+        query: String,
+        database: String? = nil,
+        schema: String? = nil,
+        scopes: MetadataSearchScope = .default
+    ) -> EventLoopFuture<[MetadataSearchHit]> {
+        executeWithRetry(operationName: "searchMetadata") {
+            self.metadataClient.searchMetadata(query: query, database: database, schema: schema, scopes: scopes)
+        }
+    }
+
+    
+    @available(macOS 12.0, *)
+    public func searchMetadata(
+        query: String,
+        database: String? = nil,
+        schema: String? = nil,
+        scopes: MetadataSearchScope = .default
+    ) async throws -> [MetadataSearchHit] {
+        try await searchMetadata(query: query, database: database, schema: schema, scopes: scopes).get()
+    }
+
     deinit {
         if let ownsGroup = ownsEventLoopGroup {
             _ = release(close: true)
@@ -222,12 +562,16 @@ public final class SQLServerConnection {
     ) {
         self.base = base
         self.base.logger = logger
+        self.configuration = configuration
+        self.sessionOptions = configuration.sessionOptions
         self.retryConfiguration = configuration.retryConfiguration
         self.metadataClient = SQLServerMetadataClient(
             connection: base,
             configuration: configuration.metadataConfiguration,
-            sharedCache: metadataCache
+            sharedCache: metadataCache,
+            defaultDatabase: configuration.login.database
         )
+        self._currentDatabase = configuration.login.database
         self.releaseClosure = releaseClosure
         self.reuseOnClose = reuseOnClose
     }
@@ -245,8 +589,13 @@ public final class SQLServerConnection {
     }
 
     private let base: TDSConnection
+    private let configuration: Configuration
+    private let sessionOptions: SessionOptions
     private let retryConfiguration: SQLServerRetryConfiguration
     private let metadataClient: SQLServerMetadataClient
+    private let stateLock = NIOLock()
+    private var _currentDatabase: String
+    private var didApplySessionOptions: Bool = false
     private let releaseClosure: @Sendable (_ close: Bool) -> EventLoopFuture<Void>
     private let releaseLock = NIOLock()
     private var didRelease = false
@@ -255,6 +604,104 @@ public final class SQLServerConnection {
 
     internal var underlying: TDSConnection {
         base
+    }
+
+    private func setCurrentDatabase(_ database: String) {
+        stateLock.withLock { _currentDatabase = database }
+        metadataClient.updateDefaultDatabase(database)
+    }
+
+    internal func bootstrapSession() -> EventLoopFuture<Void> {
+        applySessionOptions(force: true)
+    }
+
+    internal func markSessionPrimed() {
+        stateLock.withLock { didApplySessionOptions = true }
+    }
+
+    private func runBatch(_ sql: String) -> EventLoopFuture<SQLServerExecutionResult> {
+        var rows: [TDSRow] = []
+        var dones: [SQLServerStreamDone] = []
+        var messages: [SQLServerStreamMessage] = []
+        let request = RawSqlBatchRequest(
+            sqlBatch: TDSMessages.RawSqlBatchMessage(sqlText: sql),
+            logger: logger,
+            onRow: { row in rows.append(row) },
+            onMetadata: nil,
+            onDone: { token in
+                let doneEvent = SQLServerStreamDone(status: token.status, rowCount: token.doneRowCount)
+                dones.append(doneEvent)
+            },
+            onMessage: { token, isError in
+                let message = SQLServerStreamMessage(
+                    kind: isError ? .error : .info,
+                    number: Int32(token.number),
+                    message: token.messageText,
+                    state: token.state,
+                    severity: token.classValue
+                )
+                messages.append(message)
+            }
+        )
+        return base.send(request, logger: logger).map {
+            SQLServerExecutionResult(rows: rows, done: dones, messages: messages)
+        }
+    }
+
+    private func resetSessionState() -> EventLoopFuture<Void> {
+        resetDatabaseIfNeeded(to: configuration.login.database).flatMap {
+            self.applySessionOptions(force: true)
+        }
+    }
+
+    private func resetDatabaseIfNeeded(to database: String) -> EventLoopFuture<Void> {
+        let current = stateLock.withLock { _currentDatabase }
+        if Self.equalsIgnoreCase(current, database) {
+            return eventLoop.makeSucceededFuture(())
+        }
+        let sql = "USE \(Self.escapeIdentifier(database));"
+        return executeWithRetry(operationName: "resetDatabase") {
+            self.base.rawSql(sql).map { _ in
+                self.setCurrentDatabase(database)
+            }
+        }
+    }
+
+    private func applySessionOptions(force: Bool = false) -> EventLoopFuture<Void> {
+        if !force {
+            let alreadyApplied = stateLock.withLock { didApplySessionOptions }
+            if alreadyApplied {
+                return eventLoop.makeSucceededFuture(())
+            }
+        }
+        let statements = sessionOptions.buildStatements()
+        if statements.isEmpty {
+            stateLock.withLock { didApplySessionOptions = true }
+            return eventLoop.makeSucceededFuture(())
+        }
+        let batch = statements.joined(separator: " ")
+        return executeWithRetry(operationName: "applySessionOptions") {
+            self.base.rawSql(batch).map { _ in
+                self.stateLock.withLock { self.didApplySessionOptions = true }
+            }
+        }
+    }
+
+    private func shutdownGroupIfNeeded() -> EventLoopFuture<Void> {
+        guard let group = ownsEventLoopGroup else {
+            return eventLoop.makeSucceededFuture(())
+        }
+        return SQLServerClient.shutdownEventLoopGroup(group).map {
+            self.ownsEventLoopGroup = nil
+        }
+    }
+
+    private static func equalsIgnoreCase(_ lhs: String, _ rhs: String) -> Bool {
+        lhs.caseInsensitiveCompare(rhs) == .orderedSame
+    }
+
+    private static func escapeIdentifier(_ identifier: String) -> String {
+        "[\(identifier.replacingOccurrences(of: "]", with: "]]"))]"
     }
 
     private func executeWithRetry<Result>(
