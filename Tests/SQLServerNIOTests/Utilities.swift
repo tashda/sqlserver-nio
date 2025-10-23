@@ -10,13 +10,37 @@ func env(_ name: String) -> String? {
 
 private var hasLoadedEnvironmentFile = false
 
+private let packageRootPath: String = {
+    var url = URL(fileURLWithPath: #filePath)
+    // Utilities.swift -> SQLServerNIOTests -> Tests -> package root
+    for _ in 0..<3 {
+        url.deleteLastPathComponent()
+    }
+    return url.path
+}()
+
 func loadEnvFileIfPresent(path: String = ".env") {
     guard !hasLoadedEnvironmentFile else { return }
     hasLoadedEnvironmentFile = true
     
-    guard FileManager.default.fileExists(atPath: path) else { return }
+    let fileManager = FileManager.default
+    let candidatePaths: [String] = {
+        if path.hasPrefix("/") {
+            return [path]
+        }
+        let workingDirectory = fileManager.currentDirectoryPath
+        return [
+            path,
+            URL(fileURLWithPath: workingDirectory).appendingPathComponent(path).path,
+            URL(fileURLWithPath: packageRootPath).appendingPathComponent(path).path
+        ]
+    }()
     
-    guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else {
+    guard let locatedPath = candidatePaths.first(where: { fileManager.fileExists(atPath: $0) }) else {
+        return
+    }
+    
+    guard let contents = try? String(contentsOfFile: locatedPath, encoding: .utf8) else {
         return
     }
     
@@ -85,7 +109,8 @@ func makeSQLServerConnectionConfiguration() -> SQLServerConnection.Configuration
         tlsConfiguration: nil,
         metadataConfiguration: SQLServerMetadataClient.Configuration(
             includeSystemSchemas: false,
-            enableColumnCache: true
+            enableColumnCache: true,
+            includeRoutineDefinitions: true
         ),
         retryConfiguration: SQLServerRetryConfiguration()
     )

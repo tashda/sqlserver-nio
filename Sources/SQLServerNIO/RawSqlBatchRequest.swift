@@ -9,20 +9,27 @@ extension TDSConnection {
     }
     
     public func rawSql(_ sqlText: String, onRow: @escaping (TDSRow) throws -> ()) -> EventLoopFuture<Void> {
-        let request = RawSqlBatchRequest(sqlBatch: TDSMessages.RawSqlBatchMessage(sqlText: sqlText), logger: logger, onRow)
+        let request = RawSqlBatchRequest(
+            sqlBatch: TDSMessages.RawSqlBatchMessage(sqlText: sqlText),
+            logger: logger,
+            onRow: onRow
+        )
         return self.send(request, logger: logger)
     }
 
 
     func query(_ message: TDSMessages.RawSqlBatchMessage, _ onRow: @escaping (TDSRow) throws -> ()) -> EventLoopFuture<Void> {
-        let request = RawSqlBatchRequest(sqlBatch: message, logger: logger, onRow)
+        let request = RawSqlBatchRequest(sqlBatch: message, logger: logger, onRow: onRow)
         return self.send(request, logger: logger)
     }
 }
 
-class RawSqlBatchRequest: TDSRequest {
+final class RawSqlBatchRequest: TDSRequest {
     let sqlBatch: TDSMessages.RawSqlBatchMessage
-    var onRow: (TDSRow) throws -> ()
+    var onRow: ((TDSRow) throws -> ())?
+    var onMetadata: ((TDSTokens.ColMetadataToken) -> Void)?
+    var onDone: ((TDSTokens.DoneToken) -> Void)?
+    var onMessage: ((TDSTokens.ErrorInfoToken, Bool) -> Void)?
     var rowLookupTable: TDSRow.LookupTable?
 
     private let logger: Logger
@@ -30,9 +37,19 @@ class RawSqlBatchRequest: TDSRequest {
     private var expectMoreResults: Bool = false
     private var finalDoneHasArrived: Bool = false
 
-    init(sqlBatch: TDSMessages.RawSqlBatchMessage, logger: Logger, _ onRow: @escaping (TDSRow) throws -> ()) {
+    init(
+        sqlBatch: TDSMessages.RawSqlBatchMessage,
+        logger: Logger,
+        onRow: ((TDSRow) throws -> ())? = nil,
+        onMetadata: ((TDSTokens.ColMetadataToken) -> Void)? = nil,
+        onDone: ((TDSTokens.DoneToken) -> Void)? = nil,
+        onMessage: ((TDSTokens.ErrorInfoToken, Bool) -> Void)? = nil
+    ) {
         self.sqlBatch = sqlBatch
         self.onRow = onRow
+        self.onMetadata = onMetadata
+        self.onDone = onDone
+        self.onMessage = onMessage
         self.logger = logger
         self.tokenParser = TDSTokenParser(logger: logger)
     }
@@ -82,7 +99,9 @@ class RawSqlBatchRequest: TDSRequest {
                 guard let rowLookupTable = self.rowLookupTable else { fatalError() }
                 let row = TDSRow(dataRow: rowToken, lookupTable: rowLookupTable)
                 logger.debug("Row data: \(row)")
-                try onRow(row)
+                if let onRow {
+                    try onRow(row)
+                }
             case .nbcRow:
                 expectMoreResults = false
                 logger.info("TDS RawSql received NBCROW token")
@@ -92,7 +111,9 @@ class RawSqlBatchRequest: TDSRequest {
                 guard let rowLookupTable = self.rowLookupTable else { fatalError() }
                 let synthesized = TDSTokens.RowToken(colData: nbcRowToken.colData)
                 let row = TDSRow(dataRow: synthesized, lookupTable: rowLookupTable)
-                try onRow(row)
+                if let onRow {
+                    try onRow(row)
+                }
             case .colMetadata:
                 expectMoreResults = false
                 guard let colMetadataToken = token as? TDSTokens.ColMetadataToken else {
@@ -103,6 +124,7 @@ class RawSqlBatchRequest: TDSRequest {
                     logger.debug("Column \(column.colName) type=\(column.dataType) length=\(column.length)")
                 }
                 rowLookupTable = TDSRow.LookupTable(colMetadata: colMetadataToken)
+                onMetadata?(colMetadataToken)
             case .colInfo:
                 logger.debug("TDS RawSql received COLINFO token")
             case .order:
@@ -130,15 +152,18 @@ class RawSqlBatchRequest: TDSRequest {
                     expectMoreResults = false
                     finalDoneHasArrived = true
                 }
+                onDone?(doneToken)
             case .error:
                 if let errorToken = token as? TDSTokens.ErrorInfoToken {
                     logger.error("TDS RawSql error \(errorToken.number) [state=\(errorToken.state) class=\(errorToken.classValue)] \(errorToken.messageText)")
+                    onMessage?(errorToken, true)
                 } else {
                     logger.error("TDS RawSql encountered unknown ERROR token")
                 }
             case .info:
                 if let infoToken = token as? TDSTokens.ErrorInfoToken {
                     logger.info("TDS RawSql info \(infoToken.number): \(infoToken.messageText)")
+                    onMessage?(infoToken, false)
                 } else {
                     logger.info("TDS RawSql received INFO token")
                 }

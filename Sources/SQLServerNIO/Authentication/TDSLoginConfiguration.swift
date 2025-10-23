@@ -1,6 +1,6 @@
 import Foundation
 
-public enum TDSAuthentication {
+public enum TDSAuthentication: Sendable {
     case sqlPassword(username: String, password: String)
     case windowsIntegrated(username: String, password: String, domain: String?)
 }

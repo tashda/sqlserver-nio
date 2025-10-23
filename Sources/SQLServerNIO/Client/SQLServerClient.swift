@@ -109,7 +109,14 @@ public final class SQLServerClient {
                     on: eventLoop
                 )
             }.flatMap { connection in
-                connection.login(configuration: loginConfiguration).map { connection }.flatMapError { error in
+                connection.login(configuration: loginConfiguration).flatMap { _ -> EventLoopFuture<TDSConnection> in
+                    let statements = configuration.connection.sessionOptions.buildStatements()
+                    guard !statements.isEmpty else {
+                        return eventLoop.makeSucceededFuture(connection)
+                    }
+                    let batch = statements.joined(separator: " " )
+                    return connection.rawSql(batch).map { _ in connection }
+                }.flatMapError { error in
                     connection.close().flatMapThrowing { throw error }
                 }
             }
@@ -217,6 +224,24 @@ public final class SQLServerClient {
         }
     }
 
+    public func execute(
+        _ sql: String,
+        on eventLoop: EventLoop? = nil
+    ) -> EventLoopFuture<SQLServerExecutionResult> {
+        let loop = eventLoop ?? eventLoopGroup.next()
+        return withConnection(on: loop) { connection in
+            connection.execute(sql)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func execute(
+        _ sql: String,
+        on eventLoop: EventLoop? = nil
+    ) async throws -> SQLServerExecutionResult {
+        try await execute(sql, on: eventLoop).get()
+    }
+
     public func query(
         _ sql: String,
         on eventLoop: EventLoop? = nil
@@ -235,12 +260,90 @@ public final class SQLServerClient {
         try await query(sql, on: eventLoop).get()
     }
 
-    @available(*, deprecated, message: "Use query(_:) instead")
-    public func rawQuery(
+    public func queryScalar<T: TDSDataConvertible>(
         _ sql: String,
+        as type: T.Type = T.self,
         on eventLoop: EventLoop? = nil
-    ) -> EventLoopFuture<[TDSRow]> {
-        query(sql, on: eventLoop)
+    ) -> EventLoopFuture<T?> {
+        let loop = eventLoop ?? eventLoopGroup.next()
+        return withConnection(on: loop) { connection in
+            connection.queryScalar(sql, as: type)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func queryScalar<T: TDSDataConvertible>(
+        _ sql: String,
+        as type: T.Type = T.self,
+        on eventLoop: EventLoop? = nil
+    ) async throws -> T? {
+        try await queryScalar(sql, as: type, on: eventLoop).get()
+    }
+
+    public func fetchObjectDefinitions(
+        _ identifiers: [SQLServerMetadataObjectIdentifier],
+        on eventLoop: EventLoop? = nil
+    ) -> EventLoopFuture<[ObjectDefinition]> {
+        let loop = eventLoop ?? eventLoopGroup.next()
+        return withConnection(on: loop) { connection in
+            connection.fetchObjectDefinitions(identifiers)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func fetchObjectDefinitions(
+        _ identifiers: [SQLServerMetadataObjectIdentifier],
+        on eventLoop: EventLoop? = nil
+    ) async throws -> [ObjectDefinition] {
+        try await fetchObjectDefinitions(identifiers, on: eventLoop).get()
+    }
+
+    public func fetchObjectDefinition(
+        database: String? = nil,
+        schema: String,
+        name: String,
+        kind: SQLServerMetadataObjectIdentifier.Kind,
+        on eventLoop: EventLoop? = nil
+    ) -> EventLoopFuture<ObjectDefinition?> {
+        let loop = eventLoop ?? eventLoopGroup.next()
+        return withConnection(on: loop) { connection in
+            connection.fetchObjectDefinition(database: database, schema: schema, name: name, kind: kind)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func fetchObjectDefinition(
+        database: String? = nil,
+        schema: String,
+        name: String,
+        kind: SQLServerMetadataObjectIdentifier.Kind,
+        on eventLoop: EventLoop? = nil
+    ) async throws -> ObjectDefinition? {
+        try await fetchObjectDefinition(database: database, schema: schema, name: name, kind: kind, on: eventLoop).get()
+    }
+
+        public func searchMetadata(
+            query: String,
+            database: String? = nil,
+            schema: String? = nil,
+            scopes: MetadataSearchScope = .default,
+            on eventLoop: EventLoop? = nil
+        ) -> EventLoopFuture<[MetadataSearchHit]> {
+            let loop = eventLoop ?? eventLoopGroup.next()
+            return withConnection(on: loop) { connection in
+                connection.searchMetadata(query: query, database: database, schema: schema, scopes: scopes)
+            }
+       }
+
+    @available(macOS 12.0, *)
+    public func searchMetadata(
+        query: String,
+        database: String? = nil,
+        schema: String? = nil,
+        scopes: MetadataSearchScope = .default,
+        on eventLoop: EventLoop? = nil
+    ) async throws -> [MetadataSearchHit] {
+        try await searchMetadata(query: query, database: database, schema: schema, scopes: scopes, on: eventLoop).get()
     }
 
     public func listDatabases(on eventLoop: EventLoop? = nil) -> EventLoopFuture<[DatabaseMetadata]> {
@@ -311,6 +414,191 @@ public final class SQLServerClient {
         try await listColumns(database: database, schema: schema, table: table, on: eventLoop).get()
     }
 
+    public func listParameters(
+        database: String? = nil,
+        schema: String,
+        object: String,
+        on eventLoop: EventLoop? = nil
+    ) -> EventLoopFuture<[ParameterMetadata]> {
+        withConnection(on: eventLoop) { connection in
+            connection.listParameters(database: database, schema: schema, object: object)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listParameters(
+        database: String? = nil,
+        schema: String,
+        object: String,
+        on eventLoop: EventLoop? = nil
+    ) async throws -> [ParameterMetadata] {
+        try await listParameters(database: database, schema: schema, object: object, on: eventLoop).get()
+    }
+
+    public func listPrimaryKeys(
+        database: String? = nil,
+        schema: String? = nil,
+        table: String? = nil,
+        on eventLoop: EventLoop? = nil
+    ) -> EventLoopFuture<[KeyConstraintMetadata]> {
+        withConnection(on: eventLoop) { connection in
+            connection.listPrimaryKeys(database: database, schema: schema, table: table)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listPrimaryKeys(
+        database: String? = nil,
+        schema: String? = nil,
+        table: String? = nil,
+        on eventLoop: EventLoop? = nil
+    ) async throws -> [KeyConstraintMetadata] {
+        try await listPrimaryKeys(database: database, schema: schema, table: table, on: eventLoop).get()
+    }
+
+    public func listUniqueConstraints(
+        database: String? = nil,
+        schema: String? = nil,
+        table: String? = nil,
+        on eventLoop: EventLoop? = nil
+    ) -> EventLoopFuture<[KeyConstraintMetadata]> {
+        withConnection(on: eventLoop) { connection in
+            connection.listUniqueConstraints(database: database, schema: schema, table: table)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listUniqueConstraints(
+        database: String? = nil,
+        schema: String? = nil,
+        table: String? = nil,
+        on eventLoop: EventLoop? = nil
+    ) async throws -> [KeyConstraintMetadata] {
+        try await listUniqueConstraints(database: database, schema: schema, table: table, on: eventLoop).get()
+    }
+
+    public func listIndexes(
+        database: String? = nil,
+        schema: String,
+        table: String,
+        on eventLoop: EventLoop? = nil
+    ) -> EventLoopFuture<[IndexMetadata]> {
+        withConnection(on: eventLoop) { connection in
+            connection.listIndexes(database: database, schema: schema, table: table)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listIndexes(
+        database: String? = nil,
+        schema: String,
+        table: String,
+        on eventLoop: EventLoop? = nil
+    ) async throws -> [IndexMetadata] {
+        try await listIndexes(database: database, schema: schema, table: table, on: eventLoop).get()
+    }
+
+    public func listForeignKeys(
+        database: String? = nil,
+        schema: String,
+        table: String,
+        on eventLoop: EventLoop? = nil
+    ) -> EventLoopFuture<[ForeignKeyMetadata]> {
+        withConnection(on: eventLoop) { connection in
+            connection.listForeignKeys(database: database, schema: schema, table: table)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listForeignKeys(
+        database: String? = nil,
+        schema: String,
+        table: String,
+        on eventLoop: EventLoop? = nil
+    ) async throws -> [ForeignKeyMetadata] {
+        try await listForeignKeys(database: database, schema: schema, table: table, on: eventLoop).get()
+    }
+
+    public func listDependencies(
+        database: String? = nil,
+        schema: String,
+        object: String,
+        on eventLoop: EventLoop? = nil
+    ) -> EventLoopFuture<[DependencyMetadata]> {
+        withConnection(on: eventLoop) { connection in
+            connection.listDependencies(database: database, schema: schema, object: object)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listDependencies(
+        database: String? = nil,
+        schema: String,
+        object: String,
+        on eventLoop: EventLoop? = nil
+    ) async throws -> [DependencyMetadata] {
+        try await listDependencies(database: database, schema: schema, object: object, on: eventLoop).get()
+    }
+
+    public func listTriggers(
+        database: String? = nil,
+        schema: String? = nil,
+        table: String? = nil,
+        on eventLoop: EventLoop? = nil
+    ) -> EventLoopFuture<[TriggerMetadata]> {
+        withConnection(on: eventLoop) { connection in
+            connection.listTriggers(database: database, schema: schema, table: table)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listTriggers(
+        database: String? = nil,
+        schema: String? = nil,
+        table: String? = nil,
+        on eventLoop: EventLoop? = nil
+    ) async throws -> [TriggerMetadata] {
+        try await listTriggers(database: database, schema: schema, table: table, on: eventLoop).get()
+    }
+
+    public func listProcedures(
+        database: String? = nil,
+        schema: String? = nil,
+        on eventLoop: EventLoop? = nil
+    ) -> EventLoopFuture<[RoutineMetadata]> {
+        withConnection(on: eventLoop) { connection in
+            connection.listProcedures(database: database, schema: schema)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listProcedures(
+        database: String? = nil,
+        schema: String? = nil,
+        on eventLoop: EventLoop? = nil
+    ) async throws -> [RoutineMetadata] {
+        try await listProcedures(database: database, schema: schema, on: eventLoop).get()
+    }
+
+    public func listFunctions(
+        database: String? = nil,
+        schema: String? = nil,
+        on eventLoop: EventLoop? = nil
+    ) -> EventLoopFuture<[RoutineMetadata]> {
+        withConnection(on: eventLoop) { connection in
+            connection.listFunctions(database: database, schema: schema)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listFunctions(
+        database: String? = nil,
+        schema: String? = nil,
+        on eventLoop: EventLoop? = nil
+    ) async throws -> [RoutineMetadata] {
+        try await listFunctions(database: database, schema: schema, on: eventLoop).get()
+    }
+
     deinit {
         assert(stateLock.withLock { isShutdown }, "SQLServerClient deinitialized without shutdownGracefully()")
     }
@@ -349,7 +637,7 @@ public final class SQLServerClient {
     private func makeConnection(from pooled: SQLServerConnectionPool.PooledConnection) -> SQLServerConnection {
         let connectionConfiguration = configuration.connection
         let baseConnection = pooled.base
-        return SQLServerConnection(
+        let connection = SQLServerConnection(
             base: baseConnection,
             configuration: connectionConfiguration,
             metadataCache: metadataCache,
@@ -363,6 +651,8 @@ public final class SQLServerClient {
                 }
             }
         )
+        connection.markSessionPrimed()
+        return connection
     }
 
     private func executeWithRetry<Result>(

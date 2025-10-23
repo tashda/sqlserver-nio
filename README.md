@@ -1,22 +1,4 @@
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/sqlserver-nio/.github/main/images/sqlserver-nio.svg" height="96" alt="SQLServerNIO" />
-  <br><br>
-  <a href="https://sqlserver-nio.github.io/documentation">
-    <img src="https://design.vapor.codes/images/readthedocs.svg" alt="Documentation" />
-  </a>
-  <a href="LICENSE">
-    <img src="https://design.vapor.codes/images/mitlicense.svg" alt="MIT License" />
-  </a>
-  <a href="https://github.com/sqlserver-nio/sqlserver-nio/actions/workflows/test.yml">
-    <img src="https://img.shields.io/github/actions/workflow/status/sqlserver-nio/sqlserver-nio/test.yml?event=push&style=plastic&logo=github&label=tests&logoColor=%23ccc" alt="Continuous Integration" />
-  </a>
-  <a href="https://swift.org">
-    <img src="https://design.vapor.codes/images/swift60up.svg" alt="Swift 6.0+" />
-  </a>
-</p>
-
-🧱 Non-blocking, event-driven Swift client for Microsoft SQL Server built on top of [SwiftNIO].
+SQLServerNIO is a non-blocking Swift client for Microsoft SQL Server. It builds on the original SwiftTDS (tds-nio) project and the SwiftNIO networking stack.
 
 - `SQLServerConnection` gives you fine-grained control over a single TDS session.
 - `SQLServerClient` manages pooled connections with retries and metadata caching.
@@ -77,7 +59,18 @@ try await single.close()
 
 ## Connection Configuration
 
-`SQLServerConnection.Configuration` lets you specify hostname, port, database, authentication, TLS, metadata caching, and retry behaviour.
+`SQLServerConnection.Configuration` lets you specify hostname, port, database, authentication, TLS, metadata caching, retry behaviour, and session defaults.
+
+Session defaults mirror SQL Server Management Studio (ANSI settings, `SET NOCOUNT ON`, `SET FMTONLY OFF`) and can be customised via `SessionOptions`:
+
+```swift
+var configuration = makeSQLServerClientConfiguration()
+configuration.connection.sessionOptions = .init(
+    nocount: false,
+    fmtOnlyOff: true,
+    additionalStatements: ["SET DEADLOCK_PRIORITY LOW;"]
+)
+```
 
 ## Querying
 
@@ -98,6 +91,74 @@ client.query("SELECT COUNT(*) AS count FROM sys.tables;").whenSuccess { rows in
 }
 ```
 
+### Execute with row counts
+
+```swift
+let result = try await client.execute("INSERT INTO Logs(Message) VALUES (N'hello');")
+print("rows: \(result.totalRowCount)")
+```
+
+`execute(_:)` returns an `SQLServerExecutionResult`, exposing the rows (if any), informational messages, and `UInt64` row counts for each DONE token.
+
+### Scalar helpers
+
+```swift
+let databaseName: String? = try await client.queryScalar("SELECT DB_NAME();", as: String.self)
+```
+
+The scalar helper bridges to `TDSDataConvertible`, so you can request `String`, `Int`, `UUID`, etc.
+
+### Changing databases
+
+```swift
+try await connection.changeDatabase("msdb")
+print(connection.currentDatabase) // "msdb"
+```
+
+Connections keep track of the active database and automatically switch back to the original catalog when returned to the pool.
+
+### Streaming (AsyncSequence)
+
+**Single connection**
+
+```swift
+for try await event in connection.streamQuery("SELECT TOP (5) name FROM sys.databases ORDER BY name;") {
+    switch event {
+    case .metadata(let columns):
+        let columnNames = columns.map(\.name)
+        print("Columns: \(columnNames)")
+    case .row(let row):
+        print(row.column("name")?.string ?? "<nil>")
+    case .done(let done):
+        print("batch complete rows=\(done.rowCount)")
+    case .message(let message):
+        print("message: \(message.message)")
+    }
+}
+```
+
+**Via the pooled client**
+
+```swift
+try await client.withConnection { connection in
+    for try await event in connection.streamQuery("SELECT TOP (5) name FROM sys.databases ORDER BY name;") {
+        switch event {
+        case .metadata(let columns):
+            let columnNames = columns.map(\.name)
+            print("Columns: \(columnNames)")
+        case .row(let row):
+            print(row.column("name")?.string ?? "<nil>")
+        case .done(let done):
+            print("batch complete rows=\(done.rowCount)")
+        case .message(let message):
+            print("message: \(message.message)")
+        }
+    }
+}
+```
+
+```Note:``` cancel either loop to stop early; the underlying connection is returned to the pool (or left open for you) once the sequence completes or is cancelled.
+
 ### Parameterised SQL
 
 Use string interpolation for safe parameter binding:
@@ -113,8 +174,78 @@ try await client.query(
 
 ## Metadata Helpers
 
+SQLServerNIO ships with a full metadata surface so application code no longer needs to hit `INFORMATION_SCHEMA` or `sys.*` directly.
+
+- `listColumns` covers tables *and* views, exposing identity/computed flags, default definitions, collation, and ordinal position. Driver-internal artifacts (`meta_client_%`) are filtered automatically.
+- `listParameters` returns stored procedure & function parameters (return values are flagged via `isReturnValue`).
+- `listPrimaryKeys`, `listUniqueConstraints`, `listIndexes`, and `listForeignKeys` capture relational structure including column order, sort direction, included columns, and referential actions.
+- `listDependencies` reports referencing objects (views, procedures, triggers, etc.) so you can build dependency graphs without custom SQL.
+- `listProcedures`, `listFunctions`, and `listTriggers` list routines/triggers with system/shipped flags; set `metadataConfiguration.includeRoutineDefinitions = true` to hydrate definitions while listing.
+
 ```swift
+// Columns (tables & views)
 let columns = try await client.listColumns(schema: "dbo", table: "Employees")
+for column in columns {
+    print("\(column.name) \(column.typeName) default=\(column.defaultDefinition ?? "<none>")")
+}
+
+// Procedure / function parameters
+let parameters = try await client.listParameters(schema: "dbo", object: "usp_UpdateEmployee")
+let inputs = parameters.filter { !$0.isReturnValue }
+
+// Keys & indexes
+let primaryKeys = try await client.listPrimaryKeys(schema: "dbo", table: "Employees")
+let indexes = try await client.listIndexes(schema: "dbo", table: "EmployeeAudit")
+
+// Foreign keys & dependencies
+let foreignKeys = try await client.listForeignKeys(schema: "dbo", table: "EmployeeAudit")
+let dependencies = try await client.listDependencies(schema: "dbo", object: "Employees")
+
+// Routines & triggers
+let procedures = try await client.listProcedures(schema: "dbo")
+let functions = try await client.listFunctions(schema: "dbo")
+let triggers = try await client.listTriggers(schema: "dbo", table: "EmployeeAudit")
+```
+
+> Routine listings return core metadata by default. Enable definition hydration by toggling the metadata configuration:
+
+```swift
+var clientConfig = makeSQLServerClientConfiguration()
+clientConfig.connection.metadataConfiguration.includeRoutineDefinitions = true
+let client = try await SQLServerClient.connect(configuration: clientConfig)
+
+let procedures = try await client.listProcedures(schema: "dbo") // definitions populated
+```
+
+### Object definitions
+
+When you need the full module text, use the definition helpers. They work with procedures, functions, views, and triggers, and report the SQL Server system flag so you can filter Microsoft-shipped objects.
+
+```swift
+let identifiers = [
+    SQLServerMetadataObjectIdentifier(database: nil, schema: "dbo", name: "usp_ReportSales", kind: .procedure),
+    SQLServerMetadataObjectIdentifier(database: nil, schema: "dbo", name: "vw_Sales", kind: .view)
+]
+
+let definitions = try await client.fetchObjectDefinitions(identifiers)
+
+let single = try await client.fetchObjectDefinition(schema: "dbo", name: "usp_ReportSales", kind: .procedure)
+print(single?.definition)
+```
+
+### Metadata search
+
+Search across object names, definitions, columns, indexes, and constraints without crafting raw SQL:
+
+```swift
+let hits = try await client.searchMetadata(
+    query: "Customer",
+    scopes: [.objectNames, .definitions, .columns]
+)
+
+for hit in hits {
+    print("\(hit.matchKind): \(hit.schema).\(hit.name) -> \(hit.detail ?? "")")
+}
 ```
 
 ## Administration Helpers
