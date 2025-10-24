@@ -1,4 +1,5 @@
 import NIO
+import SQLServerTDS
 
 public struct SQLServerLoginInfo: Sendable {
     public let name: String
