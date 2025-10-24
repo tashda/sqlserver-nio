@@ -1,9 +1,10 @@
 import XCTest
 import Logging
 import NIOTestUtils
-@testable import SQLServerNIO
+import NIO
+@testable import SQLServerKit
 
-final class SQLServerConnectionTests: XCTestCase {
+final class SQLServerKitIntegrationTests: XCTestCase {
     
     private var group: EventLoopGroup!
     

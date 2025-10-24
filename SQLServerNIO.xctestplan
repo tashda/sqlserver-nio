@@ -1,0 +1,86 @@
+{
+  "configurations" : [
+    {
+      "id" : "C5B2711F-7F67-4B74-B7E4-5B6AE54A02AA",
+      "name" : "Core (SQL Login)",
+      "options" : {
+        "environmentVariableEntries" : [
+          {
+            "key" : "TDS_ENABLE_SCHEMA_TESTS",
+            "value" : "1"
+          }
+        ]
+      }
+    },
+    {
+      "id" : "3A3FD24B-7E41-4B47-A7F7-EB69A62AEF25",
+      "name" : "Administration",
+      "options" : {
+        "environmentVariableEntries" : [
+          {
+            "key" : "TDS_ENABLE_SCHEMA_TESTS",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_ENABLE_ADMIN_TESTS",
+            "value" : "1"
+          }
+        ],
+        "selectedTestIdentifiers" : [
+          "SQLServerNIOTests\/SQLServerIntegrationTests"
+        ]
+      }
+    },
+    {
+      "id" : "B6C2719A-2158-4DFE-98A8-863F3516E4B4",
+      "name" : "SQL Agent",
+      "options" : {
+        "environmentVariableEntries" : [
+          {
+            "key" : "TDS_ENABLE_SCHEMA_TESTS",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_ENABLE_AGENT_TESTS",
+            "value" : "1"
+          }
+        ],
+        "selectedTestIdentifiers" : [
+          "SQLServerNIOTests\/SQLServerIntegrationTests\/testSqlAgentJobLifecycle"
+        ]
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "environmentVariableEntries" : [
+      {
+        "key" : "TDS_ENABLE_SCHEMA_TEST",
+        "value" : "1"
+      }
+    ],
+    "maximumTestRepetitions" : 1,
+    "runDestination" : {
+      "displayName" : "My Mac",
+      "targetArchitecture" : "arm64",
+      "targetDevice" : {
+        "model" : "My Mac"
+      }
+    }
+  },
+  "testTargets" : [
+    {
+      "skippedTests" : [
+        "SQLServerConnectionTests\/testRemoteTLSServer()",
+        "SQLServerIntegrationTests\/testSQLServerClientMetadataFacade()",
+        "SQLServerIntegrationTests\/testSqlAgentJobLifecycle()"
+      ],
+      "target" : {
+        "containerPath" : "container:",
+        "identifier" : "SQLServerNIOTests",
+        "name" : "SQLServerNIOTests"
+      }
+    }
+  ],
+  "type" : "com.apple.dt.xctestplan",
+  "version" : 2
+}
