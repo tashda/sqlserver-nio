@@ -181,6 +181,7 @@ SQLServerNIO ships with a full metadata surface so application code no longer ne
 - `listPrimaryKeys`, `listUniqueConstraints`, `listIndexes`, and `listForeignKeys` capture relational structure including column order, sort direction, included columns, and referential actions.
 - `listDependencies` reports referencing objects (views, procedures, triggers, etc.) so you can build dependency graphs without custom SQL.
 - `listProcedures`, `listFunctions`, and `listTriggers` list routines/triggers with system/shipped flags; set `metadataConfiguration.includeRoutineDefinitions = true` to hydrate definitions while listing.
+- Database and parameter metadata flows through Microsoft’s stored procedures (`sp_databases`, `sp_sproc_columns_100`, `sp_fkeys`, etc.). Schema/table listings read from `sys.schemas`, `sys.tables`, and `sys.views` so they stay available even on SQL Server editions that omit the legacy `sp_schemata` procedure.
 
 ```swift
 // Columns (tables & views)

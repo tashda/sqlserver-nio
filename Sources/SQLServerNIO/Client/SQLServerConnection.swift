@@ -565,12 +565,7 @@ public final class SQLServerConnection {
         self.configuration = configuration
         self.sessionOptions = configuration.sessionOptions
         self.retryConfiguration = configuration.retryConfiguration
-        self.metadataClient = SQLServerMetadataClient(
-            connection: base,
-            configuration: configuration.metadataConfiguration,
-            sharedCache: metadataCache,
-            defaultDatabase: configuration.login.database
-        )
+        self.sharedMetadataCache = metadataCache
         self._currentDatabase = configuration.login.database
         self.releaseClosure = releaseClosure
         self.reuseOnClose = reuseOnClose
@@ -592,7 +587,23 @@ public final class SQLServerConnection {
     private let configuration: Configuration
     private let sessionOptions: SessionOptions
     private let retryConfiguration: SQLServerRetryConfiguration
-    private let metadataClient: SQLServerMetadataClient
+    private let sharedMetadataCache: MetadataCache<[ColumnMetadata]>?
+    private lazy var metadataClient: SQLServerMetadataClient = {
+        let baseLoop = base.eventLoop
+        let executor: @Sendable (String) -> EventLoopFuture<[TDSRow]> = { [weak self] sql in
+            guard let self else {
+                return baseLoop.makeFailedFuture(SQLServerError.connectionClosed)
+            }
+            return self.runBatch(sql).map(\.rows)
+        }
+        return SQLServerMetadataClient(
+            connection: base,
+            configuration: configuration.metadataConfiguration,
+            sharedCache: sharedMetadataCache,
+            defaultDatabase: configuration.login.database,
+            queryExecutor: executor
+        )
+    }()
     private let stateLock = NIOLock()
     private var _currentDatabase: String
     private var didApplySessionOptions: Bool = false
@@ -620,6 +631,7 @@ public final class SQLServerConnection {
     }
 
     private func runBatch(_ sql: String) -> EventLoopFuture<SQLServerExecutionResult> {
+        logger.trace("SQLServerConnection executing batch: \(sql)")
         var rows: [TDSRow] = []
         var dones: [SQLServerStreamDone] = []
         var messages: [SQLServerStreamMessage] = []
@@ -644,7 +656,8 @@ public final class SQLServerConnection {
             }
         )
         return base.send(request, logger: logger).map {
-            SQLServerExecutionResult(rows: rows, done: dones, messages: messages)
+            self.logger.trace("SQLServerConnection completed batch")
+            return SQLServerExecutionResult(rows: rows, done: dones, messages: messages)
         }
     }
 

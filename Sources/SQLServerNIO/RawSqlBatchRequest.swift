@@ -60,16 +60,10 @@ final class RawSqlBatchRequest: TDSRequest {
         try handleParsedTokens(parsedTokens)
 
         if expectMoreResults {
-            logger.debug("TDS RawSql awaiting additional result sets")
-            return .continue
-        }
-
-        guard packet.header.status == .eom else {
             return .continue
         }
 
         if finalDoneHasArrived {
-            logger.debug("TDS RawSql observed final DONE token; completing request")
             finalDoneHasArrived = false
             return .done
         }
@@ -78,7 +72,18 @@ final class RawSqlBatchRequest: TDSRequest {
     }
 
     func start(allocator: ByteBufferAllocator) throws -> [TDSPacket] {
-        return try TDSMessage(payload: sqlBatch, allocator: allocator).packets
+        let textLength = sqlBatch.sqlText.utf16.count * 2
+        let packets = try TDSMessage(payload: sqlBatch, allocator: allocator).packets
+        let packetSummaries = packets.map { packet -> String in
+            let length = packet.buffer.readableBytes
+            let packetId = packet.header.packetId
+            let status = packet.header.status.value
+            let headerLength = packet.header.length
+            return "length=\(length), packetId=\(packetId), status=\(status), headerLength=\(headerLength)"
+        }
+        let summaryString = packetSummaries.joined(separator: "; ")
+        logger.trace("TDS RawSql sending batch text length: \(textLength) bytes, packets: [\(summaryString)]")
+        return packets
     }
 
     func log(to logger: Logger) {
@@ -88,23 +93,19 @@ final class RawSqlBatchRequest: TDSRequest {
     func handleParsedTokens(_ tokens: [TDSToken]) throws {
         // TODO: The following is an incomplete implementation of extracting data from rowTokens
         for token in tokens {
-            logger.debug("TDS RawSql token received: \(token.type)")
             switch token.type {
             case .row:
                 expectMoreResults = false
-                logger.info("TDS RawSql received ROW token")
                 guard let rowToken = token as? TDSTokens.RowToken else {
                     throw TDSError.protocolError("Error while reading row results.")
                 }
                 guard let rowLookupTable = self.rowLookupTable else { fatalError() }
                 let row = TDSRow(dataRow: rowToken, lookupTable: rowLookupTable)
-                logger.debug("Row data: \(row)")
                 if let onRow {
                     try onRow(row)
                 }
             case .nbcRow:
                 expectMoreResults = false
-                logger.info("TDS RawSql received NBCROW token")
                 guard let nbcRowToken = token as? TDSTokens.NbcRowToken else {
                     throw TDSError.protocolError("Error while reading NBC row results.")
                 }
@@ -119,31 +120,25 @@ final class RawSqlBatchRequest: TDSRequest {
                 guard let colMetadataToken = token as? TDSTokens.ColMetadataToken else {
                     throw TDSError.protocolError("Error reading column metadata token.")
                 }
-                logger.info("TDS RawSql received COLMETADATA token with count \(colMetadataToken.count)")
-                for column in colMetadataToken.colData {
-                    logger.debug("Column \(column.colName) type=\(column.dataType) length=\(column.length)")
-                }
                 rowLookupTable = TDSRow.LookupTable(colMetadata: colMetadataToken)
                 onMetadata?(colMetadataToken)
             case .colInfo:
-                logger.debug("TDS RawSql received COLINFO token")
+                break
             case .order:
-                guard let orderToken = token as? TDSTokens.OrderToken else {
+                guard let _ = token as? TDSTokens.OrderToken else {
                     throw TDSError.protocolError("Error reading ORDER token.")
                 }
-                logger.info("TDS RawSql received ORDER token for ordinals \(orderToken.columnOrdinals)")
             case .tabName:
-                logger.debug("TDS RawSql received TABNAME token")
+                break
             case .returnStatus:
                 if let returnStatusToken = token as? TDSTokens.ReturnStatusToken {
-                    logger.debug("TDS RawSql received RETURNSTATUS token value=\(returnStatusToken.value)")
+                    _ = returnStatusToken.value
                 } else {
                     throw TDSError.protocolError("Error reading RETURNSTATUS token.")
                 }
             case .done, .doneInProc, .doneProc:
                 guard let doneToken = token as? TDSTokens.DoneToken else { continue }
                 let moreResults = (doneToken.status & 0x01) != 0
-                logger.info("TDS RawSql received DONE token status=\(doneToken.status) rowCount=\(doneToken.doneRowCount) more=\(moreResults)")
                 if moreResults {
                     expectMoreResults = true
                     finalDoneHasArrived = false
@@ -162,23 +157,12 @@ final class RawSqlBatchRequest: TDSRequest {
                 }
             case .info:
                 if let infoToken = token as? TDSTokens.ErrorInfoToken {
-                    logger.info("TDS RawSql info \(infoToken.number): \(infoToken.messageText)")
                     onMessage?(infoToken, false)
-                } else {
-                    logger.info("TDS RawSql received INFO token")
                 }
             case .envchange:
-                if let token = token as? TDSTokens.EnvchangeToken<String> {
-                    logger.debug("TDS RawSql ENVCHANGE \(token.envchangeType) newValue=\(token.newValue)")
-                } else if let token = token as? TDSTokens.EnvchangeToken<[Byte]> {
-                    logger.debug("TDS RawSql ENVCHANGE \(token.envchangeType) (binary payload length \(token.newValue.count))")
-                } else if let routing = token as? TDSTokens.RoutingEnvchangeToken {
-                    logger.debug("TDS RawSql ENVCHANGE routing to \(routing.newValue.alternateServer):\(routing.newValue.port)")
-                } else {
-                    logger.debug("TDS RawSql received ENVCHANGE token")
-                }
+                break
             default:
-                logger.info("TDS RawSql encountered unhandled token \(token.type)")
+                break
             }
         }
     }
