@@ -379,8 +379,15 @@ public final class SQLServerClient {
         schema: String? = nil,
         on eventLoop: EventLoop? = nil
     ) -> EventLoopFuture<[TableMetadata]> {
-        withConnection(on: eventLoop) { connection in
+        let defaultDatabase = configuration.connection.login.database
+        let dbName = database ?? defaultDatabase
+        let schemaName = schema ?? "<nil>"
+        logger.trace("SQLServerClient listTables start database=\(dbName) schema=\(schemaName)")
+        return withFreshConnection(on: eventLoop) { connection in
             connection.listTables(database: database, schema: schema)
+        }.map { tables in
+            self.logger.trace("SQLServerClient listTables completed with \(tables.count) entries")
+            return tables
         }
     }
 
@@ -653,6 +660,24 @@ public final class SQLServerClient {
         )
         connection.markSessionPrimed()
         return connection
+    }
+
+    private func withFreshConnection<Result>(
+        on eventLoop: EventLoop?,
+        _ operation: @escaping (SQLServerConnection) -> EventLoopFuture<Result>
+    ) -> EventLoopFuture<Result> {
+        let loop = eventLoop ?? eventLoopGroup.next()
+        return SQLServerConnection.connect(
+            configuration: configuration.connection,
+            on: loop,
+            logger: logger
+        ).flatMap { connection in
+            operation(connection).flatMap { value in
+                connection.close().map { value }
+            }.flatMapError { error in
+                connection.invalidate().flatMapThrowing { throw error }
+            }
+        }
     }
 
     private func executeWithRetry<Result>(

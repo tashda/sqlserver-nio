@@ -6,7 +6,7 @@ extension TDSMessage {
     init(from buffer: inout ByteBuffer, ofType type: TDSPacket.HeaderType, allocator: ByteBufferAllocator) throws {
         var packets = [TDSPacket]()
         
-        var packetId: UInt8 = 0
+        var packetId: UInt8 = 1
         while buffer.readableBytes >= TDSPacket.maximumPacketDataLength {
             guard var packetData = buffer.readSlice(length: TDSPacket.maximumPacketDataLength) else {
                 throw TDSError.protocolError("Serialization Error: Expected")

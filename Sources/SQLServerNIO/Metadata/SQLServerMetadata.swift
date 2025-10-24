@@ -284,6 +284,7 @@ public final class SQLServerMetadataClient {
     }
 
     private let connection: TDSConnection
+    private let queryExecutor: @Sendable (String) -> EventLoopFuture<[TDSRow]>
     private let cache: MetadataCache<[ColumnMetadata]>?
     private let configuration: Configuration
     private let defaultDatabaseLock = NIOLock()
@@ -293,11 +294,19 @@ public final class SQLServerMetadataClient {
         connection: SQLServerConnection,
         configuration: Configuration = Configuration()
     ) {
+        let eventLoop = connection.eventLoop
+        let executor: @Sendable (String) -> EventLoopFuture<[TDSRow]> = { [weak connection] sql in
+            guard let connection else {
+                return eventLoop.makeFailedFuture(SQLServerError.connectionClosed)
+            }
+            return connection.execute(sql).map(\.rows)
+        }
         self.init(
             connection: connection.underlying,
             configuration: configuration,
             sharedCache: nil,
-            defaultDatabase: connection.currentDatabase
+            defaultDatabase: connection.currentDatabase,
+            queryExecutor: executor
         )
     }
 
@@ -313,7 +322,8 @@ public final class SQLServerMetadataClient {
         connection: TDSConnection,
         configuration: Configuration,
         sharedCache: MetadataCache<[ColumnMetadata]>?,
-        defaultDatabase: String?
+        defaultDatabase: String?,
+        queryExecutor: (@Sendable (String) -> EventLoopFuture<[TDSRow]>)? = nil
     ) {
         self.connection = connection
         self.configuration = configuration
@@ -323,6 +333,13 @@ public final class SQLServerMetadataClient {
             self.cache = nil
         }
         self.defaultDatabase = defaultDatabase
+        if let executor = queryExecutor {
+            self.queryExecutor = executor
+        } else {
+            self.queryExecutor = { sql in
+                connection.rawSql(sql)
+            }
+        }
     }
 
     internal func updateDefaultDatabase(_ database: String) {
@@ -340,7 +357,7 @@ public final class SQLServerMetadataClient {
 
     public func listDatabases() -> EventLoopFuture<[DatabaseMetadata]> {
         let sql = "EXEC sp_databases;"
-        return connection.rawSql(sql).map { rows in
+        return queryExecutor(sql).map { rows in
             rows.compactMap { row in
                 guard let name = row.column("DATABASE_NAME")?.string else { return nil }
                 return DatabaseMetadata(name: name)
@@ -351,45 +368,76 @@ public final class SQLServerMetadataClient {
     // MARK: - Schemas
 
     public func listSchemas(in database: String? = nil) -> EventLoopFuture<[SchemaMetadata]> {
-        var parameters: [String] = []
-        if let catalog = effectiveDatabase(database) {
-            parameters.append("@catalog_name = N'\(SQLServerMetadataClient.escapeLiteral(catalog))'")
+        let qualifiedSchemas = qualified(database, object: "sys.schemas")
+        var predicates: [String] = []
+        if !self.configuration.includeSystemSchemas {
+            predicates.append("s.name NOT IN ('sys', 'INFORMATION_SCHEMA')")
         }
-        let sql = "EXEC sp_schemata\(parameters.isEmpty ? "" : " " + parameters.joined(separator: ", "));"
-        return connection.rawSql(sql).map { rows in
-            rows.compactMap { row in
-                guard let name = row.column("SCHEMA_NAME")?.string else { return nil }
-
-                if !self.configuration.includeSystemSchemas,
-                   name.caseInsensitiveCompare("sys") == .orderedSame ||
-                   name.caseInsensitiveCompare("INFORMATION_SCHEMA") == .orderedSame {
-                    return nil
-                }
-
+        let sql = """
+        SELECT s.name
+        FROM \(qualifiedSchemas) AS s
+        \(predicates.isEmpty ? "" : "WHERE " + predicates.joined(separator: " AND "))
+        ORDER BY s.name;
+        """
+        return queryExecutor(sql).map { rows in
+            let schemas: [SchemaMetadata] = rows.compactMap { row in
+                guard let name = row.column("name")?.string else { return nil }
                 return SchemaMetadata(name: name)
             }
+            return schemas
         }
     }
 
     // MARK: - Tables
 
     public func listTables(database: String? = nil, schema: String? = nil) -> EventLoopFuture<[TableMetadata]> {
-        var parameters: [String] = []
-        if let qualifier = effectiveDatabase(database) {
-            parameters.append("@table_qualifier = N'\(SQLServerMetadataClient.escapeLiteral(qualifier))'")
-        }
-        if let schema {
-            parameters.append("@table_owner = N'\(SQLServerMetadataClient.escapeLiteral(schema))'")
-        }
-        let sql = "EXEC sp_tables\(parameters.isEmpty ? "" : " " + parameters.joined(separator: ", "));"
+        let qualifiedObjects = qualified(database, object: "sys.objects")
+        let qualifiedSchemas = qualified(database, object: "sys.schemas")
 
-        return connection.rawSql(sql).map { rows in
+        var predicates: [String] = [
+            "o.type IN ('U', 'S', 'V', 'TT')"
+        ]
+
+        if let schema {
+            predicates.append("s.name = N'\(SQLServerMetadataClient.escapeLiteral(schema))'")
+        }
+
+        if !self.configuration.includeSystemSchemas {
+            predicates.append("s.name NOT IN ('sys', 'INFORMATION_SCHEMA')")
+        }
+
+        let whereClause = predicates.isEmpty ? "" : "WHERE " + predicates.joined(separator: " AND ")
+
+        let sql = """
+        SELECT
+            s.name AS schema_name,
+            o.name AS object_name,
+            CASE
+                WHEN o.type = 'S' OR o.is_ms_shipped = 1 THEN 'SYSTEM TABLE'
+                WHEN o.type = 'U' THEN 'TABLE'
+                WHEN o.type = 'V' THEN 'VIEW'
+                WHEN o.type = 'TT' THEN 'TABLE TYPE'
+                ELSE o.type_desc
+            END AS table_type,
+            o.is_ms_shipped
+        FROM \(qualifiedObjects) AS o
+        INNER JOIN \(qualifiedSchemas) AS s
+            ON s.schema_id = o.schema_id
+        \(whereClause)
+        ORDER BY s.name, o.name;
+        """
+
+        return queryExecutor(sql).map { rows in
             rows.compactMap { row in
                 guard
-                    let schemaName = row.column("TABLE_SCHEM")?.string,
-                    let tableName = row.column("TABLE_NAME")?.string,
-                    let tableType = row.column("TABLE_TYPE")?.string
+                    let schemaName = row.column("schema_name")?.string,
+                    let tableName = row.column("object_name")?.string,
+                    let tableType = row.column("table_type")?.string
                 else {
+                    return nil
+                }
+
+                if let schema, schemaName.caseInsensitiveCompare(schema) != .orderedSame {
                     return nil
                 }
 
@@ -403,13 +451,21 @@ public final class SQLServerMetadataClient {
                     return nil
                 }
 
-                if let schema, schemaName.caseInsensitiveCompare(schema) != .orderedSame {
-                    return nil
-                }
-
                 let normalizedType = tableType.uppercased()
-                let isSystem = normalizedType.contains("SYSTEM")
-                return TableMetadata(schema: schemaName, name: tableName, type: normalizedType, isSystemObject: isSystem)
+
+                let isSystemObject: Bool
+                if normalizedType.contains("SYSTEM") {
+                    isSystemObject = true
+                } else {
+                    let msShipped = (row.column("is_ms_shipped")?.int ?? 0) != 0
+                    isSystemObject = msShipped
+                }
+                return TableMetadata(
+                    schema: schemaName,
+                    name: tableName,
+                    type: normalizedType,
+                    isSystemObject: isSystemObject
+                )
             }
         }
     }
@@ -432,7 +488,7 @@ public final class SQLServerMetadataClient {
         }
         let sql = "EXEC sp_columns_100 \(parameters.joined(separator: ", "));"
 
-        return connection.rawSql(sql).map { rows in
+        return queryExecutor(sql).map { rows in
             let columns: [ColumnMetadata] = rows.compactMap { row -> ColumnMetadata? in
                 guard
                     let schemaName = row.column("TABLE_OWNER")?.string ?? row.column("TABLE_SCHEM")?.string,
@@ -507,13 +563,21 @@ public final class SQLServerMetadataClient {
 
         let sql = "EXEC sp_sproc_columns_100 \(arguments.joined(separator: ", "));"
 
-        return connection.rawSql(sql).flatMap { rows in
-            let values: [ParameterMetadata] = rows.compactMap { row -> ParameterMetadata? in
-                guard
-                    let schemaName = row.column("PROCEDURE_OWNER")?.string,
-                    let rawObjectName = row.column("PROCEDURE_NAME")?.string,
-                    let columnType = row.column("COLUMN_TYPE")?.int,
-                    let name = row.column("COLUMN_NAME")?.string,
+        return queryExecutor(sql).flatMap { rows in
+            let defaultsFuture: EventLoopFuture<[String: (hasDefault: Bool, defaultValue: String?) ]>
+            if rows.isEmpty {
+                defaultsFuture = self.connection.eventLoop.makeSucceededFuture([:])
+            } else {
+                defaultsFuture = self.loadParameterDefaults(database: database, schema: schema, object: object)
+            }
+
+            return defaultsFuture.map { defaults in
+                rows.compactMap { row -> ParameterMetadata? in
+                    guard
+                        let schemaName = row.column("PROCEDURE_OWNER")?.string,
+                        let rawObjectName = row.column("PROCEDURE_NAME")?.string,
+                        let columnType = row.column("COLUMN_TYPE")?.int,
+                        let name = row.column("COLUMN_NAME")?.string,
                     let ordinal = row.column("ORDINAL_POSITION")?.int,
                     let typeName = row.column("TYPE_NAME")?.string
                 else {
@@ -521,7 +585,7 @@ public final class SQLServerMetadataClient {
                 }
 
                 // COLUMN_TYPE: 1=input, 2=input/output, 3=output, 4=return value, 5=result column.
-                if columnType == 5 {
+                if columnType == 5 && ordinal != 0 {
                     return nil
                 }
 
@@ -531,9 +595,12 @@ public final class SQLServerMetadataClient {
                 let precision = row.column("PRECISION")?.int
                 let scale = row.column("SCALE")?.int
                 let defaultValue = row.column("COLUMN_DEF")?.string
-                let hasDefault = defaultValue?.isEmpty == false
+                let normalizedName = name.lowercased()
+                let override = defaults[normalizedName]
+                let resolvedDefault = override?.defaultValue ?? defaultValue
+                let hasDefault = override?.hasDefault ?? (resolvedDefault?.isEmpty == false)
                 let isOutput = columnType == 2 || columnType == 3
-                let isReturnValue = columnType == 4 || ordinal == 0
+                let isReturnValue = columnType == 4 || ordinal == 0 || normalizedName == "@return_value"
 
                 return ParameterMetadata(
                     schema: schemaName,
@@ -548,11 +615,11 @@ public final class SQLServerMetadataClient {
                     scale: scale,
                     isOutput: isOutput,
                     hasDefaultValue: hasDefault,
-                    defaultValue: defaultValue,
+                    defaultValue: resolvedDefault,
                     isReadOnly: row.column("IS_READONLY")?.bool ?? false
                 )
             }
-            return self.connection.eventLoop.makeSucceededFuture(values)
+            }
         }
     }
 
@@ -580,12 +647,13 @@ public final class SQLServerMetadataClient {
 
         let sql = "EXEC sp_pkeys \(parameters.joined(separator: ", "));"
 
-        return connection.rawSql(sql).map { rows in
+        return fetchPrimaryKeyClusterInfo(database: database, schema: schema, table: table).flatMap { clusterInfo in
+            self.queryExecutor(sql).map { rows in
             var grouped: [String: (schema: String, table: String, name: String, columns: [KeyColumnMetadata])] = [:]
 
             for row in rows {
                 guard
-                    let schemaName = row.column("TABLE_SCHEM")?.string,
+                    let schemaName = row.column("TABLE_OWNER")?.string,
                     let tableName = row.column("TABLE_NAME")?.string,
                     let columnName = row.column("COLUMN_NAME")?.string
                 else {
@@ -613,7 +681,7 @@ public final class SQLServerMetadataClient {
                 grouped[key] = entry
             }
 
-            return grouped.values.sorted {
+            let result = grouped.values.sorted {
                 if $0.schema == $1.schema {
                     if $0.table == $1.table {
                         return $0.name < $1.name
@@ -622,14 +690,18 @@ public final class SQLServerMetadataClient {
                 }
                 return $0.schema < $1.schema
             }.map { entry in
-                KeyConstraintMetadata(
+                let key = "\(entry.schema)|\(entry.table)|\(entry.name)"
+                let isClustered = clusterInfo[key] ?? false
+                return KeyConstraintMetadata(
                     schema: entry.schema,
                     table: entry.table,
                     name: entry.name,
                     type: .primaryKey,
-                    isClustered: false,
+                    isClustered: isClustered,
                     columns: entry.columns.sorted { $0.ordinal < $1.ordinal }
                 )
+            }
+            return result
             }
         }
     }
@@ -658,7 +730,7 @@ public final class SQLServerMetadataClient {
             schema_name = s.name,
             table_name = t.name,
             constraint_name = kc.name,
-            is_clustered = i.is_clustered,
+            is_clustered = CASE WHEN i.type = 1 THEN 1 ELSE 0 END,
             column_name = c.name,
             ordinal = ic.key_ordinal,
             is_descending = ic.is_descending_key
@@ -688,7 +760,7 @@ public final class SQLServerMetadataClient {
 
         sql += " ORDER BY s.name, t.name, kc.name, ic.key_ordinal;"
 
-        return connection.rawSql(sql).map { rows in
+        return queryExecutor(sql).map { rows in
             var grouped: [String: (schema: String, table: String, name: String, isClustered: Bool, columns: [KeyColumnMetadata])] = [:]
 
             for row in rows {
@@ -707,14 +779,18 @@ public final class SQLServerMetadataClient {
                     schema: schemaName,
                     table: tableName,
                     name: constraintName,
-                    isClustered: row.column("is_clustered")?.bool ?? false,
+                    isClustered: (row.column("is_clustered")?.int ?? 0) != 0,
                     columns: []
                 )
+
+                if entry.columns.isEmpty {
+                    entry.isClustered = (row.column("is_clustered")?.int ?? 0) != 0
+                }
 
                 let column = KeyColumnMetadata(
                     column: columnName,
                     ordinal: ordinal,
-                    isDescending: row.column("is_descending")?.bool ?? false
+                    isDescending: (row.column("is_descending")?.int ?? 0) != 0
                 )
                 entry.columns.append(column)
                 grouped[key] = entry
@@ -741,6 +817,59 @@ public final class SQLServerMetadataClient {
         }
     }
 
+    private func fetchPrimaryKeyClusterInfo(
+        database: String?,
+        schema: String?,
+        table: String?
+    ) -> EventLoopFuture<[String: Bool]> {
+        var sql = """
+        SELECT
+            schema_name = s.name,
+            table_name = t.name,
+            constraint_name = kc.name,
+            is_clustered = CASE WHEN i.type = 1 THEN 1 ELSE 0 END
+        FROM \(qualified(database, object: "sys.key_constraints")) AS kc
+        JOIN \(qualified(database, object: "sys.tables")) AS t ON kc.parent_object_id = t.object_id
+        JOIN \(qualified(database, object: "sys.schemas")) AS s ON t.schema_id = s.schema_id
+        JOIN \(qualified(database, object: "sys.indexes")) AS i ON kc.parent_object_id = i.object_id AND kc.unique_index_id = i.index_id
+        WHERE kc.type = 'PK'
+        """
+
+        var predicates: [String] = []
+        if let schema {
+            predicates.append("s.name = N'\(SQLServerMetadataClient.escapeLiteral(schema))'")
+        } else if !self.configuration.includeSystemSchemas {
+            predicates.append("s.name NOT IN ('sys', 'INFORMATION_SCHEMA')")
+        }
+
+        if let table {
+            predicates.append("t.name = N'\(SQLServerMetadataClient.escapeLiteral(table))'")
+        }
+
+        if !predicates.isEmpty {
+            sql += " AND " + predicates.joined(separator: " AND ")
+        }
+
+        sql += ";"
+
+        return queryExecutor(sql).map { rows in
+            var info: [String: Bool] = [:]
+            for row in rows {
+                guard
+                    let schemaName = row.column("schema_name")?.string,
+                    let tableName = row.column("table_name")?.string,
+                    let constraintName = row.column("constraint_name")?.string
+                else {
+                    continue
+                }
+                let key = "\(schemaName)|\(tableName)|\(constraintName)"
+                let isClustered = (row.column("is_clustered")?.int ?? 0) != 0
+                info[key] = isClustered
+            }
+            return info
+        }
+    }
+
     // MARK: - Indexes
 
     public func listIndexes(
@@ -761,29 +890,37 @@ public final class SQLServerMetadataClient {
 
         let sql = "EXEC sp_statistics \(parameters.joined(separator: ", "));"
 
-        return connection.rawSql(sql).map { rows in
-            var grouped: [String: (schema: String, table: String, name: String, isUnique: Bool, columns: [IndexColumnMetadata])] = [:]
+        return queryExecutor(sql).map { rows in
+            var grouped: [String: (schema: String, table: String, name: String, isUnique: Bool, isClustered: Bool, columns: [IndexColumnMetadata])] = [:]
 
             for row in rows {
                 guard
-                    let schemaName = row.column("TABLE_SCHEM")?.string,
+                    let schemaName = row.column("TABLE_SCHEM")?.string ?? row.column("TABLE_OWNER")?.string,
                     let tableName = row.column("TABLE_NAME")?.string,
                     let indexName = row.column("INDEX_NAME")?.string
                 else {
                     continue
                 }
+                let typeValue = row.column("TYPE")?.int ?? 0
                 let key = "\(schemaName)|\(tableName)|\(indexName)"
                 var entry = grouped[key] ?? (
                     schema: schemaName,
                     table: tableName,
                     name: indexName,
                     isUnique: (row.column("NON_UNIQUE")?.int ?? 1) == 0,
+                    isClustered: typeValue == 1,
                     columns: []
                 )
 
+                if entry.columns.isEmpty {
+                    entry.isUnique = (row.column("NON_UNIQUE")?.int ?? 1) == 0
+                    entry.isClustered = typeValue == 1
+                }
+
                 if let columnName = row.column("COLUMN_NAME")?.string {
                     let ordinal = row.column("ORDINAL_POSITION")?.int ?? (entry.columns.count + 1)
-                    let isDescending = row.column("ASC_OR_DESC")?.string?.uppercased() == "D"
+                    let sortIndicator = row.column("ASC_OR_DESC")?.string ?? row.column("COLLATION")?.string
+                    let isDescending = sortIndicator?.uppercased() == "D"
                     let column = IndexColumnMetadata(
                         column: columnName,
                         ordinal: ordinal,
@@ -810,7 +947,7 @@ public final class SQLServerMetadataClient {
                     table: entry.table,
                     name: entry.name,
                     isUnique: entry.isUnique,
-                    isClustered: false,
+                    isClustered: entry.isClustered,
                     isPrimaryKey: false,
                     isUniqueConstraint: false,
                     filterDefinition: nil,
@@ -837,15 +974,15 @@ public final class SQLServerMetadataClient {
 
         let sql = "EXEC sp_fkeys \(parameters.joined(separator: ", "));"
 
-        return connection.rawSql(sql).map { rows in
+        return queryExecutor(sql).map { rows in
             var grouped: [String: (schema: String, table: String, name: String, referencedSchema: String, referencedTable: String, deleteAction: Int, updateAction: Int, columns: [ForeignKeyColumnMetadata])] = [:]
 
             for row in rows {
                 guard
-                    let schemaName = row.column("FKTABLE_SCHEM")?.string,
+                    let schemaName = row.column("FKTABLE_SCHEM")?.string ?? row.column("FKTABLE_OWNER")?.string,
                     let tableName = row.column("FKTABLE_NAME")?.string,
                     let fkName = row.column("FK_NAME")?.string,
-                    let referencedSchema = row.column("PKTABLE_SCHEM")?.string,
+                    let referencedSchema = row.column("PKTABLE_SCHEM")?.string ?? row.column("PKTABLE_OWNER")?.string,
                     let referencedTable = row.column("PKTABLE_NAME")?.string
                 else {
                     continue
@@ -931,7 +1068,7 @@ public final class SQLServerMetadataClient {
         ORDER BY rs.name, ro.name;
         """
 
-        return connection.rawSql(sql).map { rows in
+        return queryExecutor(sql).map { rows in
             rows.compactMap { row in
                 guard
                     let schemaName = row.column("referencing_schema")?.string,
@@ -986,7 +1123,7 @@ public final class SQLServerMetadataClient {
         }
         sql += " ORDER BY s.name, t.name, tr.name;"
 
-        return connection.rawSql(sql).map { rows in
+        return queryExecutor(sql).map { rows in
             rows.compactMap { row in
                 guard
                     let schemaName = row.column("schema_name")?.string,
@@ -1017,6 +1154,17 @@ public final class SQLServerMetadataClient {
             return connection.eventLoop.makeSucceededFuture([])
         }
 
+        let includeSystemSchemas = self.configuration.includeSystemSchemas
+
+        func needsDefinition(_ type: ObjectDefinition.ObjectType) -> Bool {
+            switch type {
+            case .procedure, .scalarFunction, .tableFunction, .view, .trigger:
+                return true
+            default:
+                return false
+            }
+        }
+
         let groups = Dictionary(grouping: identifiers) { identifier -> String? in
             identifier.database
         }
@@ -1028,47 +1176,90 @@ public final class SQLServerMetadataClient {
                 return "[\(escaped)]."
             }()
 
-            let predicates = items.map { identifier -> String in
-                let escapedSchema = SQLServerMetadataClient.escapeLiteral(identifier.schema)
-                let escapedName = SQLServerMetadataClient.escapeLiteral(identifier.name)
-                return "(s.name = N'\(escapedSchema)' AND o.name = N'\(escapedName)')"
-            }.joined(separator: " OR ")
+            var unique: [(schema: String, name: String)] = []
+            unique.reserveCapacity(items.count)
+            var seen: Set<String> = []
+            for identifier in items {
+                let key = "\(identifier.schema.lowercased())|\(identifier.name.lowercased())"
+                if seen.insert(key).inserted {
+                    unique.append((identifier.schema, identifier.name))
+                }
+            }
 
-            let sql = """
-            SELECT
-                schema_name = s.name,
-                object_name = o.name,
-                type_desc = o.type_desc,
-                definition = m.definition,
-                is_ms_shipped = o.is_ms_shipped,
-                create_date = o.create_date,
-                modify_date = o.modify_date
-            FROM \(dbPrefix)sys.objects AS o
-            JOIN \(dbPrefix)sys.schemas AS s ON o.schema_id = s.schema_id
-            LEFT JOIN \(dbPrefix)sys.sql_modules AS m ON o.object_id = m.object_id
-            WHERE \(predicates)
-            ORDER BY s.name, o.name
-            """
+            guard !unique.isEmpty else {
+                return self.connection.eventLoop.makeSucceededFuture([])
+            }
 
-            return self.connection.rawSql(sql).map { rows in
-                rows.compactMap { row in
-                    guard
-                        let schemaName = row.column("schema_name")?.string,
-                        let objectName = row.column("object_name")?.string,
-                        let typeDesc = row.column("type_desc")?.string
-                    else {
-                        return nil
+            let initial = self.connection.eventLoop.makeSucceededFuture([ObjectDefinition]())
+
+            return unique.reduce(initial) { partial, target in
+                partial.flatMap { collected -> EventLoopFuture<[ObjectDefinition]> in
+                    let escapedSchema = SQLServerMetadataClient.escapeLiteral(target.schema)
+                    let escapedName = SQLServerMetadataClient.escapeLiteral(target.name)
+
+                    var infoSql = """
+                    SELECT
+                        schema_name = s.name,
+                        object_name = o.name,
+                        type_desc = o.type_desc,
+                        is_ms_shipped = o.is_ms_shipped,
+                        create_date = o.create_date,
+                        modify_date = o.modify_date
+                    FROM \(dbPrefix)sys.objects AS o
+                    JOIN \(dbPrefix)sys.schemas AS s ON o.schema_id = s.schema_id
+                    WHERE s.name = N'\(escapedSchema)' AND o.name = N'\(escapedName)'
+                    """
+
+                    if !includeSystemSchemas {
+                        infoSql += "\n  AND o.is_ms_shipped = 0"
                     }
 
-                    return ObjectDefinition(
-                        schema: schemaName,
-                        name: objectName,
-                        type: ObjectDefinition.ObjectType.from(typeDesc: typeDesc),
-                        definition: row.column("definition")?.string,
-                        isSystemObject: row.column("is_ms_shipped")?.bool ?? false,
-                        createDate: row.column("create_date")?.date,
-                        modifyDate: row.column("modify_date")?.date
-                    )
+                    return self.queryExecutor(infoSql).flatMap { rows in
+                        guard
+                            let row = rows.first,
+                            let schemaName = row.column("schema_name")?.string,
+                            let objectName = row.column("object_name")?.string,
+                            let typeDesc = row.column("type_desc")?.string
+                        else {
+                            return self.connection.eventLoop.makeSucceededFuture(collected)
+                        }
+
+                        let objectType = ObjectDefinition.ObjectType.from(typeDesc: typeDesc)
+                        let isSystem = row.column("is_ms_shipped")?.bool ?? false
+                        if !includeSystemSchemas && isSystem {
+                            return self.connection.eventLoop.makeSucceededFuture(collected)
+                        }
+
+                        let definitionFuture: EventLoopFuture<String?>
+                        if needsDefinition(objectType) {
+                            let literal = SQLServerMetadataClient.escapeLiteral("[\(schemaName)].[\(objectName)]")
+                            let helptextSql = "EXEC \(dbPrefix)sys.sp_helptext @objname = N'\(literal)';"
+                            definitionFuture = self.queryExecutor(helptextSql).map { rows in
+                                let segments = rows.compactMap { $0.column("Text")?.string }
+                                if segments.isEmpty {
+                                    return nil
+                                }
+                                return segments.joined().trimmingCharacters(in: .whitespacesAndNewlines)
+                            }
+                        } else {
+                            definitionFuture = self.connection.eventLoop.makeSucceededFuture(nil)
+                        }
+
+                        return definitionFuture.map { definition in
+                            var next = collected
+                            let object = ObjectDefinition(
+                                schema: schemaName,
+                                name: objectName,
+                                type: objectType,
+                                definition: definition,
+                                isSystemObject: isSystem,
+                                createDate: row.column("create_date")?.date,
+                                modifyDate: row.column("modify_date")?.date
+                            )
+                            next.append(object)
+                            return next
+                        }
+                    }
                 }
             }
         }
@@ -1089,7 +1280,7 @@ public final class SQLServerMetadataClient {
         }
         let sql = "EXEC sp_stored_procedures\(parameters.isEmpty ? "" : " " + parameters.joined(separator: ", "));"
 
-        return connection.rawSql(sql).flatMap { rows in
+        return queryExecutor(sql).flatMap { rows in
             let procedures: [RoutineMetadata] = rows.compactMap { row -> RoutineMetadata? in
                 guard
                     let schemaName = row.column("PROCEDURE_OWNER")?.string,
@@ -1163,51 +1354,48 @@ public final class SQLServerMetadataClient {
         database: String? = nil,
         schema: String? = nil
     ) -> EventLoopFuture<[RoutineMetadata]> {
-        var parameters: [String] = []
-        if let qualifier = effectiveDatabase(database) {
-            parameters.append("@sp_qualifier = N'\(SQLServerMetadataClient.escapeLiteral(qualifier))'")
-        }
+        let resolvedDatabase = effectiveDatabase(database)
+        let dbPrefix = resolvedDatabase.map { "[\(SQLServerMetadataClient.escapeIdentifier($0))]." } ?? ""
+
+        var predicates: [String] = ["o.type IN ('FN', 'TF', 'IF')"]
         if let schema {
-            parameters.append("@sp_owner = N'\(SQLServerMetadataClient.escapeLiteral(schema))'")
+            predicates.append("s.name = N'\(SQLServerMetadataClient.escapeLiteral(schema))'")
+        } else if !self.configuration.includeSystemSchemas {
+            predicates.append("s.name NOT IN ('sys', 'INFORMATION_SCHEMA')")
         }
 
-        let sql = "EXEC sp_stored_procedures\(parameters.isEmpty ? "" : " " + parameters.joined(separator: ", "))"
+        predicates.append("o.name NOT LIKE 'meta_client_%'")
+        let whereClause = predicates.joined(separator: " AND ")
 
-        return connection.rawSql(sql).flatMap { rows in
+        let sql = """
+        SELECT
+            schema_name = s.name,
+            object_name = o.name,
+            type_desc = o.type_desc,
+            is_ms_shipped = o.is_ms_shipped
+        FROM \(dbPrefix)sys.objects AS o
+        JOIN \(dbPrefix)sys.schemas AS s ON o.schema_id = s.schema_id
+        WHERE \(whereClause)
+        ORDER BY s.name, o.name;
+        """
+
+        return queryExecutor(sql).flatMap { rows in
             let functions: [RoutineMetadata] = rows.compactMap { row -> RoutineMetadata? in
                 guard
-                    let schemaName = row.column("PROCEDURE_OWNER")?.string,
-                    let rawName = row.column("PROCEDURE_NAME")?.string,
-                    let typeValue = row.column("PROCEDURE_TYPE")?.int
+                    let schemaName = row.column("schema_name")?.string,
+                    let objectName = row.column("object_name")?.string,
+                    let typeDesc = row.column("type_desc")?.string
                 else {
                     return nil
                 }
 
-                // PROCEDURE_TYPE: 1=procedure, 2=function
-                guard typeValue == 2 else { return nil }
-
-                if !self.configuration.includeSystemSchemas,
-                   schemaName.caseInsensitiveCompare("sys") == .orderedSame ||
-                   schemaName.caseInsensitiveCompare("INFORMATION_SCHEMA") == .orderedSame {
-                    return nil
-                }
-
-                if let schema,
-                   schemaName.caseInsensitiveCompare(schema) != .orderedSame {
-                    return nil
-                }
-
-                let name = SQLServerMetadataClient.normalizeRoutineName(rawName)
-                if name.hasPrefix("meta_client_") {
-                    return nil
-                }
-
+                let objectType = ObjectDefinition.ObjectType.from(typeDesc: typeDesc)
                 return RoutineMetadata(
                     schema: schemaName,
-                    name: name,
-                    type: .scalarFunction,
+                    name: objectName,
+                    type: objectType == .tableFunction ? .tableFunction : .scalarFunction,
                     definition: nil,
-                    isSystemObject: false
+                    isSystemObject: row.column("is_ms_shipped")?.bool ?? false
                 )
             }
 
@@ -1219,9 +1407,13 @@ public final class SQLServerMetadataClient {
                 return self.connection.eventLoop.makeSucceededFuture(functions)
             }
 
-            let db = self.effectiveDatabase(database)
             let identifiers = functions.map { function in
-                SQLServerMetadataObjectIdentifier(database: db, schema: function.schema, name: function.name, kind: .function)
+                SQLServerMetadataObjectIdentifier(
+                    database: resolvedDatabase,
+                    schema: function.schema,
+                    name: function.name,
+                    kind: .function
+                )
             }
 
             return self.fetchObjectDefinitions(identifiers).map { definitions in
@@ -1233,11 +1425,21 @@ public final class SQLServerMetadataClient {
                 return functions.map { function in
                     let key = "\(function.schema.lowercased())|\(function.name.lowercased())"
                     guard let definition = lookup[key] else { return function }
-                    let type: RoutineMetadata.RoutineType = definition.type == .tableFunction ? .tableFunction : .scalarFunction
+
+                    let resolvedType: RoutineMetadata.RoutineType
+                    switch definition.type {
+                    case .tableFunction:
+                        resolvedType = .tableFunction
+                    case .scalarFunction:
+                        resolvedType = .scalarFunction
+                    default:
+                        resolvedType = function.type
+                    }
+
                     return RoutineMetadata(
                         schema: function.schema,
                         name: function.name,
-                        type: type,
+                        type: resolvedType,
                         definition: definition.definition,
                         isSystemObject: definition.isSystemObject
                     )
@@ -1245,7 +1447,6 @@ public final class SQLServerMetadataClient {
             }
         }
     }
-
     // MARK: - Search
 
     public func searchMetadata(
@@ -1393,7 +1594,7 @@ public final class SQLServerMetadataClient {
 
         let sql = selects.joined(separator: "\nUNION ALL\n") + "\nORDER BY schema_name, object_name, match_kind;"
 
-        return connection.rawSql(sql).map { rows in
+        return queryExecutor(sql).map { rows in
             rows.compactMap { row in
                 guard
                     let schemaName = row.column("schema_name")?.string,
@@ -1427,6 +1628,95 @@ public final class SQLServerMetadataClient {
 
     private static func escapeLiteral(_ literal: String) -> String {
         return literal.replacingOccurrences(of: "'", with: "''")
+    }
+
+    private func loadParameterDefaults(
+        database: String?,
+        schema: String,
+        object: String
+    ) -> EventLoopFuture<[String: (hasDefault: Bool, defaultValue: String?)]> {
+        let candidates: [SQLServerMetadataObjectIdentifier] = [
+            .init(database: database, schema: schema, name: object, kind: .procedure),
+            .init(database: database, schema: schema, name: object, kind: .function)
+        ]
+
+        return fetchObjectDefinitions(candidates).map { definitions in
+            guard let definition = definitions.first(where: { $0.definition?.isEmpty == false })?.definition else {
+                return [:]
+            }
+            return SQLServerMetadataClient.extractParameterDefaults(from: definition)
+        }
+    }
+
+    private static func extractParameterDefaults(from definition: String) -> [String: (hasDefault: Bool, defaultValue: String?)] {
+        guard let openIndex = definition.firstIndex(of: "(") else { return [:] }
+
+        var index = definition.index(after: openIndex)
+        var level = 1
+        var current = ""
+        var segments: [String] = []
+
+        while index < definition.endIndex, level > 0 {
+            let character = definition[index]
+            if character == "(" {
+                level += 1
+                current.append(character)
+            } else if character == ")" {
+                level -= 1
+                if level == 0 {
+                    segments.append(current)
+                    break
+                } else {
+                    current.append(character)
+                }
+            } else if character == "," && level == 1 {
+                segments.append(current)
+                current.removeAll(keepingCapacity: true)
+            } else {
+                current.append(character)
+            }
+            index = definition.index(after: index)
+        }
+
+        var defaults: [String: (hasDefault: Bool, defaultValue: String?)] = [:]
+        defaults.reserveCapacity(segments.count)
+
+        for rawSegment in segments {
+            let segment = rawSegment.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let atIndex = segment.firstIndex(of: "@") else { continue }
+            let nameStart = atIndex
+            var nameEnd = segment.index(after: nameStart)
+            while nameEnd < segment.endIndex {
+                let scalar = segment[nameEnd]
+                if scalar == " " || scalar == "\t" || scalar == "\n" || scalar == "=" || scalar == "," {
+                    break
+                }
+                nameEnd = segment.index(after: nameEnd)
+            }
+            let name = String(segment[nameStart..<nameEnd])
+            let key = name.lowercased()
+
+            guard let equalsIndex = segment.firstIndex(of: "=") else {
+                defaults[key] = (hasDefault: false, defaultValue: nil)
+                continue
+            }
+
+            var defaultPart = segment[segment.index(after: equalsIndex)...].trimmingCharacters(in: .whitespacesAndNewlines)
+
+            while let range = defaultPart.range(of: "[A-Za-z_]+$", options: .regularExpression) {
+                let keyword = defaultPart[range].lowercased()
+                if keyword == "output" || keyword == "out" || keyword == "readonly" {
+                    defaultPart = defaultPart[..<range.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+                } else {
+                    break
+                }
+            }
+
+            let cleaned = defaultPart.isEmpty ? nil : String(defaultPart)
+            defaults[key] = (hasDefault: cleaned != nil, defaultValue: cleaned)
+        }
+
+        return defaults
     }
 
     internal static func normalizeRoutineName(_ raw: String) -> String {

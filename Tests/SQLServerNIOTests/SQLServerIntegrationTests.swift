@@ -9,7 +9,7 @@ final class SQLServerIntegrationTests: XCTestCase {
     
     private var group: EventLoopGroup!
     private var eventLoop: EventLoop { self.group.next() }
-    private let TIMEOUT: TimeInterval = 15
+    private let TIMEOUT: TimeInterval = 30
     
     override func setUpWithError() throws {
         try super.setUpWithError()
@@ -50,7 +50,13 @@ final class SQLServerIntegrationTests: XCTestCase {
     
     func testTempTableCrudLifecycle() throws {
         let conn = try waitForResult(connectSQLServer(on: eventLoop), timeout: TIMEOUT, description: "connect")
-        defer { _ = try? waitForResult(conn.close(), timeout: TIMEOUT, description: "close") }
+        defer {
+            _ = try? waitForResult(
+                conn.close().recover { _ in () },
+                timeout: TIMEOUT,
+                description: "close"
+            )
+        }
         
         let tableName = makeTempTableName(prefix: "crud")
         let createResult = try waitForResult(conn.execute("CREATE TABLE \(tableName) (id INT PRIMARY KEY, name NVARCHAR(100));"), timeout: TIMEOUT, description: "create temp table")

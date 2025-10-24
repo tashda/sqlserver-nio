@@ -221,8 +221,14 @@ final class TDSRequestHandler: ChannelDuplexHandler {
     }
     
     public func errorCaught(context: ChannelHandlerContext, error: Error) {
-        print(error.localizedDescription)
+        logger.error("TDS pipeline error: \(error.localizedDescription)")
         context.fireErrorCaught(error)
+        if !queue.isEmpty {
+            cleanupRequest(queue[0], error: error)
+            while !queue.isEmpty {
+                cleanupRequest(queue[0], error: TDSError.connectionClosed)
+            }
+        }
     }
     
     
@@ -280,5 +286,12 @@ final class TDSRequestHandler: ChannelDuplexHandler {
     
     func triggerUserOutboundEvent(context: ChannelHandlerContext, event: Any, promise: EventLoopPromise<Void>?) {
         
+    }
+
+    func channelInactive(context: ChannelHandlerContext) {
+        while !queue.isEmpty {
+            cleanupRequest(queue[0], error: TDSError.connectionClosed)
+        }
+        context.fireChannelInactive()
     }
 }

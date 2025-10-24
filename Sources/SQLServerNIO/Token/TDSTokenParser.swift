@@ -72,11 +72,6 @@ public class TDSTokenParser {
                 parsedTokens.append(token)
                 
             } catch TDSError.needMoreData {
-                if let nextByte = bufferCopy.getInteger(at: bufferCopy.readerIndex, as: UInt8.self) {
-                    logger.debug("Token parser awaiting more data for token byte: 0x\(String(nextByte, radix: 16)) remaining: \(bufferCopy.readableBytes)")
-                } else {
-                    logger.debug("Token parser awaiting more data (no byte available)")
-                }
                 buffer = bufferCopy
                 return parsedTokens
             } catch {

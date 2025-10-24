@@ -15,9 +15,22 @@ extension TDSData {
         
         // TODO
         switch self.metadata.dataType {
-        case .charLegacy, .varcharLegacy, .char, .varchar, .nvarchar, .nchar, .text, .nText:
-            let val = value.readUTF16String(length: value.readableBytes)
-            return val
+        case .charLegacy, .varcharLegacy, .char, .varchar, .text:
+            guard let bytes = value.readBytes(length: value.readableBytes) else {
+                return nil
+            }
+            if bytes.isEmpty {
+                return ""
+            }
+            if let utf8 = String(bytes: bytes, encoding: .utf8) {
+                return utf8
+            }
+            if let cp1252 = String(bytes: bytes, encoding: .windowsCP1252) {
+                return cp1252
+            }
+            return String(decoding: bytes, as: UTF8.self)
+        case .nvarchar, .nchar, .nText:
+            return value.readUTF16String(length: value.readableBytes)
         default:
             return nil
         }
