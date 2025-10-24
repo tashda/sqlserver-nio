@@ -1,4 +1,4 @@
-@testable import SQLServerNIO
+@testable import SQLServerTDS
 import XCTest
 import NIOEmbedded
 import Logging

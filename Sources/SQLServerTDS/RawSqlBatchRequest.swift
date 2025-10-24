@@ -24,7 +24,7 @@ extension TDSConnection {
     }
 }
 
-final class RawSqlBatchRequest: TDSRequest {
+public final class RawSqlBatchRequest: TDSRequest {
     let sqlBatch: TDSMessages.RawSqlBatchMessage
     var onRow: ((TDSRow) throws -> ())?
     var onMetadata: ((TDSTokens.ColMetadataToken) -> Void)?
@@ -37,7 +37,7 @@ final class RawSqlBatchRequest: TDSRequest {
     private var expectMoreResults: Bool = false
     private var finalDoneHasArrived: Bool = false
 
-    init(
+    public init(
         sqlBatch: TDSMessages.RawSqlBatchMessage,
         logger: Logger,
         onRow: ((TDSRow) throws -> ())? = nil,
@@ -54,7 +54,7 @@ final class RawSqlBatchRequest: TDSRequest {
         self.tokenParser = TDSTokenParser(logger: logger)
     }
 
-    func handle(packet: TDSPacket, allocator: ByteBufferAllocator) throws -> TDSPacketResponse {
+    public func handle(packet: TDSPacket, allocator: ByteBufferAllocator) throws -> TDSPacketResponse {
         // Add packet to token parser stream
         let parsedTokens = tokenParser.writeAndParseTokens(packet.messageBuffer)
         try handleParsedTokens(parsedTokens)
@@ -71,7 +71,7 @@ final class RawSqlBatchRequest: TDSRequest {
         return .continue
     }
 
-    func start(allocator: ByteBufferAllocator) throws -> [TDSPacket] {
+    public func start(allocator: ByteBufferAllocator) throws -> [TDSPacket] {
         let textLength = sqlBatch.sqlText.utf16.count * 2
         let packets = try TDSMessage(payload: sqlBatch, allocator: allocator).packets
         let packetSummaries = packets.map { packet -> String in
@@ -86,7 +86,7 @@ final class RawSqlBatchRequest: TDSRequest {
         return packets
     }
 
-    func log(to logger: Logger) {
+    public func log(to logger: Logger) {
 
     }
     

@@ -1,7 +1,7 @@
 import Foundation
 import Logging
 import NIO
-import SQLServerNIO
+import SQLServerKit
 import XCTest
 
 func env(_ name: String) -> String? {

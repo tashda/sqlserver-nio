@@ -1,6 +1,7 @@
 import Foundation
 import NIO
 import NIOConcurrencyHelpers
+import SQLServerTDS
 
 // Lightweight metadata structs
 public struct DatabaseMetadata: Sendable {

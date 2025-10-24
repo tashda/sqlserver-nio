@@ -1,5 +1,6 @@
 import NIO
 import NIOPosix
+import SQLServerTDS
 
 extension SQLServerError {
     static func normalize(_ error: Swift.Error) -> SQLServerError {

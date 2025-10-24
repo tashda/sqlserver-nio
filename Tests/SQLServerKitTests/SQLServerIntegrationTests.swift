@@ -2,7 +2,8 @@ import XCTest
 import Logging
 import NIO
 import NIOTestUtils
-@testable import SQLServerNIO
+@testable import SQLServerKit
+import SQLServerTDS
 
 final class SQLServerIntegrationTests: XCTestCase {
     private static var executionSummary: [String] = []

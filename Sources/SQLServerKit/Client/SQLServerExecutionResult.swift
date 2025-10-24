@@ -1,4 +1,5 @@
 import Foundation
+import SQLServerTDS
 
 public struct SQLServerExecutionResult: Sendable {
     public let rows: [TDSRow]

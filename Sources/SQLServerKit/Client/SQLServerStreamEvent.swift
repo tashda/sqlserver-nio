@@ -1,4 +1,5 @@
 import struct Foundation.Decimal
+import SQLServerTDS
 
 public struct SQLServerColumnDescription: Sendable {
     public let name: String

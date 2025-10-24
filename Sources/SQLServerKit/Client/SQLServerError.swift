@@ -1,5 +1,6 @@
 import NIO
 import NIOPosix
+import SQLServerTDS
 
 public enum SQLServerError: Swift.Error, CustomStringConvertible {
     case clientShutdown

@@ -157,20 +157,20 @@ public enum TDSTokens {
 
     public struct DoneToken: TDSToken {
         public var type: TokenType = .done
-        var status: UShort
-        var curCmd: UShort
-        var doneRowCount: ULongLong
+        public var status: UShort
+        public var curCmd: UShort
+        public var doneRowCount: ULongLong
     }
 
     public struct ErrorInfoToken: TDSToken {
         public var type: TokenType = .error
-        var number: Int
-        var state: Byte
-        var classValue: Byte
-        var messageText: String
-        var serverName: String
-        var procedureName: String
-        var lineNumber: Int
+        public var number: Int
+        public var state: Byte
+        public var classValue: Byte
+        public var messageText: String
+        public var serverName: String
+        public var procedureName: String
+        public var lineNumber: Int
     }
 
     public struct EnvchangeToken<T>: TDSToken {

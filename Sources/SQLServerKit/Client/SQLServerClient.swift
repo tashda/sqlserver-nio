@@ -4,6 +4,7 @@ import NIO
 import NIOConcurrencyHelpers
 import NIOPosix
 import NIOSSL
+import SQLServerTDS
 
 public final class SQLServerClient {
     public enum EventLoopGroupProvider {

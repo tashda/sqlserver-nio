@@ -2,6 +2,7 @@ import NIO
 import NIOCore
 import NIOConcurrencyHelpers
 import Logging
+import SQLServerTDS
 
 public final class SQLServerConnectionPool {
     public struct Configuration {

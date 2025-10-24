@@ -9,3 +9,4 @@ Package.Resolved
 Tests/LinuxMain.swift
 .env
 /Docs
+Private.xctestplan
