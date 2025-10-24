@@ -1,3 +1,4 @@
+@_exported import SQLServerTDS
 import Foundation
 import Logging
 import NIO
