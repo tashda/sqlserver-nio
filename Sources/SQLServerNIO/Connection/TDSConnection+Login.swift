@@ -94,7 +94,7 @@ class LoginRequest: TDSRequest {
                     if let response, !response.isEmpty {
                         var responseBuffer = allocator.buffer(capacity: response.count)
                         responseBuffer.writeBytes(response)
-                        let packet = TDSPacket(from: &responseBuffer, ofType: .sspi, isLastPacket: true, allocator: allocator)
+                        let packet = TDSPacket(from: &responseBuffer, ofType: .sspi, isLastPacket: true, packetId: 1, allocator: allocator)
                         return .respond(with: [packet])
                     }
                 }

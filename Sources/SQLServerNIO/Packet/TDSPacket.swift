@@ -41,7 +41,7 @@ public struct TDSPacket {
         // Skip length, it will be set later
         buffer.moveWriterIndex(forwardBy: 2)
         buffer.writeInteger(0x00 as UInt16) // SPID
-        buffer.writeInteger(0x00 as UInt8)
+        buffer.writeInteger(0x01 as UInt8) // PacketID must start at 1
         buffer.writeInteger(0x00 as UInt8) // Window
         
         try message.serialize(into: &buffer)
@@ -53,7 +53,7 @@ public struct TDSPacket {
         self.buffer = buffer
     }
     
-    init(from inputBuffer: inout ByteBuffer, ofType type: HeaderType, isLastPacket: Bool, packetId: UInt8 = 0, allocator: ByteBufferAllocator) {
+    init(from inputBuffer: inout ByteBuffer, ofType type: HeaderType, isLastPacket: Bool, packetId: UInt8, allocator: ByteBufferAllocator) {
         var buffer = allocator.buffer(capacity: inputBuffer.readableBytes + TDSPacket.headerLength)
         
         buffer.writeInteger(type.value)
@@ -76,7 +76,7 @@ public struct TDSPacket {
 }
 
 extension TDSPacket {
-    public static let defaultPacketLength = 1000
+    public static let defaultPacketLength = 4096
     public static let headerLength = 8
     public static let maximumPacketDataLength = TDSPacket.defaultPacketLength - 8
 }
