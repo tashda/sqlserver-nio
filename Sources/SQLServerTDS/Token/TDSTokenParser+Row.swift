@@ -91,9 +91,35 @@ extension TDSTokenParser {
             }
             return payload
             
-        case .nText, .text, .image, .xml:
-            guard buffer.readableBytes >= MemoryLayout<LongLen>.size else {
+        case .xml:
+            // XML is a PLP-encoded type
+            guard let plpData = try buffer.readPLPBytes() else {
+                return nil
+            }
+            return plpData
+
+        case .nText, .text, .image:
+            // TEXT/NTEXT/IMAGE layout in row data:
+            //  - textptr length (BYTE). If 0, the value is NULL and no more data follows for this column
+            //  - textptr (length bytes), typically 16 bytes
+            //  - timestamp (8 bytes)
+            //  - LONGLEN (Int32): length of data that follows; 0 for empty
+            //  - data bytes
+            guard let textPtrLen = buffer.readByte() else {
                 throw TDSError.needMoreData
+            }
+            if textPtrLen == 0 {
+                return nil
+            }
+            let ptrLen = Int(textPtrLen)
+            guard buffer.readableBytes >= ptrLen + 8 + MemoryLayout<LongLen>.size else {
+                throw TDSError.needMoreData
+            }
+            guard let _ = buffer.readBytes(length: ptrLen) else {
+                throw TDSError.protocolError("Failed to read TEXT/NTEXT/IMAGE text pointer")
+            }
+            guard let _ = buffer.readBytes(length: 8) else {
+                throw TDSError.protocolError("Failed to read TEXT/NTEXT/IMAGE timestamp")
             }
             guard let len = buffer.readLongLen() else {
                 throw TDSError.protocolError("Error while reading large-length column.")
@@ -105,7 +131,7 @@ extension TDSTokenParser {
             guard buffer.readableBytes >= requiredBytes else {
                 throw TDSError.needMoreData
             }
-            guard let data = buffer.readSlice(length: Int(len)) else {
+            guard let data = buffer.readSlice(length: requiredBytes) else {
                 throw TDSError.protocolError("Error while reading large-length column data.")
             }
             return data
