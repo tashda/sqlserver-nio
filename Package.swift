@@ -45,7 +45,24 @@ let package = Package(
                 "SQLServerKit",
                 .product(name: "NIOTestUtils", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
-            ]),
+            ],
+            
+                         path: "Tests/SQLServerKitTests",
+                         sources: [
+                            "SQLServerKitIntegrationTests.swift",
+                            "SQLServerTableAdministrationTests.swift",
+                            "SQLServerTransactionTests.swift",
+                            "SQLServerBatchTests.swift",
+                            "SQLServerConnectionTests.swift",
+                            "SQLServerQuerySplitterTests.swift",
+                            "SQLServerRoutineTests.swift",
+                            "SQLServerViewTests.swift",
+                            "SQLServerIndexTests.swift",
+                            "SQLServerConstraintTests.swift",
+                            "SQLServerTriggerTests.swift",
+                            "SQLServerSecurityTests.swift",
+                            "Test+Helpers.swift"
+                        ]),
         .testTarget(
             name: "SQLServerTDSTests",
             dependencies: [

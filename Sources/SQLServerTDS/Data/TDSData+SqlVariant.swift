@@ -128,8 +128,7 @@ extension TDSData {
             return payload.readSlice(length: Int(length))
 
         case .char, .varchar, .charLegacy, .varcharLegacy,
-             .binary, .varbinary, .binaryLegacy, .varbinaryLegacy,
-             .nchar, .nvarchar:
+             .binary, .varbinary, .binaryLegacy, .varbinaryLegacy:
             guard let length = payload.readInteger(endianness: .little, as: UInt16.self) else {
                 return nil
             }
@@ -137,8 +136,18 @@ extension TDSData {
             if length == UInt16.max {
                 return nil
             }
-
+            
             return payload.readSlice(length: Int(length))
+            
+        case .nchar, .nvarchar:
+            // For nvarchar in sql_variant, the remaining payload IS the string data
+            // No additional length prefix - the properties already told us the max length
+            // and the actual length is determined by the remaining payload size
+            if payload.readableBytes == 0 {
+                return nil // Empty string or NULL
+            }
+            
+            return payload.readSlice(length: payload.readableBytes)
 
         case .xml, .image, .nText, .text, .sqlVariant, .clrUdt, .null:
             return nil

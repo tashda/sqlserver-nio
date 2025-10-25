@@ -637,7 +637,11 @@ public final class SQLServerConnection {
         var dones: [SQLServerStreamDone] = []
         var messages: [SQLServerStreamMessage] = []
         let request = RawSqlBatchRequest(
-            sqlBatch: TDSMessages.RawSqlBatchMessage(sqlText: sql),
+            sqlBatch: TDSMessages.RawSqlBatchMessage(
+                sqlText: sql,
+                transactionDescriptor: base.transactionDescriptor,
+                outstandingRequestCount: base.requestCount
+            ),
             logger: logger,
             onRow: { row in rows.append(row) },
             onMetadata: nil,
@@ -654,11 +658,21 @@ public final class SQLServerConnection {
                     severity: token.classValue
                 )
                 messages.append(message)
-            }
+            },
+            connection: base
         )
-        return base.send(request, logger: logger).map {
+        return base.send(request, logger: logger).flatMapThrowing {
             self.logger.trace("SQLServerConnection completed batch")
-            return SQLServerExecutionResult(rows: rows, done: dones, messages: messages)
+            let result = SQLServerExecutionResult(rows: rows, done: dones, messages: messages)
+            
+            // Check for errors and throw them as Swift exceptions
+            let errorMessages = messages.filter { $0.kind == .error }
+            if !errorMessages.isEmpty {
+                let firstError = errorMessages[0]
+                throw SQLServerError.sqlExecutionError(message: firstError.message)
+            }
+            
+            return result
         }
     }
 

@@ -35,4 +35,3 @@ public enum SQLServerStreamEvent: Sendable {
     case message(SQLServerStreamMessage)
 }
 
-extension TDSRow: @unchecked Sendable {}
