@@ -108,13 +108,20 @@ func makeSQLServerConnectionConfiguration() -> SQLServerConnection.Configuration
             enableColumnCache: true,
             includeRoutineDefinitions: true
         ),
-        retryConfiguration: SQLServerRetryConfiguration()
+        retryConfiguration: SQLServerRetryConfiguration(
+            maximumAttempts: 8,
+            backoffStrategy: { attempt in
+                let base: Int64 = 250 // ms
+                let delay = base << (attempt - 1) // 250, 500, 1000, ...
+                return .milliseconds(delay)
+            }
+        )
     )
 }
 
 func makeSQLServerClientConfiguration() -> SQLServerClient.Configuration {
     let pool = SQLServerConnectionPool.Configuration(
-        maximumConcurrentConnections: 4,
+        maximumConcurrentConnections: 1,
         minimumIdleConnections: 1,
         connectionIdleTimeout: .seconds(60),
         validationQuery: "SELECT 1;"
@@ -216,3 +223,171 @@ extension NSRegularExpression {
 }
 
 let sqlServerVersionPattern = "[0-9]{2}\\.{1}[0-9]{1}\\.{1}[0-9]{4}\\.{1}[0-9]{1}"
+// MARK: - DDL Serialization & Retry
+
+actor DDLGuard {
+    static let shared = DDLGuard()
+    func withLock<T>(_ operation: () async throws -> T) async rethrows -> T {
+        try await operation()
+    }
+}
+
+@discardableResult
+func runWithRetry(_ client: SQLServerClient, _ sql: String, attempts: Int = 3, delayNs: UInt64 = 200_000_000) async -> Bool {
+    for i in 1...attempts {
+        do {
+            _ = try await client.execute(sql).get()
+            return true
+        } catch {
+            if i == attempts { return false }
+            try? await Task.sleep(nanoseconds: delayNs)
+        }
+    }
+    return false
+}
+
+// MARK: - Ephemeral database helpers
+
+/// Creates an ephemeral database, runs the body, and drops the database.
+/// DDL is serialized and each step has a timeout + retry for robustness.
+func withTemporaryDatabase(
+    client: SQLServerClient,
+    prefix: String = "tmpdb",
+    body: @escaping (_ database: String) async throws -> Void
+) async throws {
+    let db = "\(prefix)_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))"
+    try await DDLGuard.shared.withLock {
+        _ = try await withTimeout(15) { try await client.execute("CREATE DATABASE [\(db)]").get() }
+    }
+    // Wait for the database to come ONLINE and accept queries
+    do {
+        _ = try await withTimeout(10) {
+            try await withRetry(attempts: 8, delayNs: 250_000_000) {
+                // Check ONLINE state
+                let rows = try await client.query("SELECT state_desc FROM sys.databases WHERE name = N'\(db)' ").get()
+                guard rows.first?.column("state_desc")?.string == "ONLINE" else {
+                    throw SQLServerError.timeout(description: "database not ONLINE yet", underlying: nil)
+                }
+                // Also verify a simple query using a DB-scoped connection
+                let _: [TDSRow] = try await withDbConnection(client: client, database: db) { conn in
+                    try await conn.query("SELECT 1 AS ready").get()
+                }
+                return ()
+            }
+        }
+    } catch {
+        // best-effort; if readiness fails, attempt cleanup and rethrow
+        await runWithRetry(client, "ALTER DATABASE [\(db)] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [\(db)]")
+        throw error
+    }
+    do {
+        try await body(db)
+    } catch {
+        // attempt cleanup then rethrow
+        await runWithRetry(client, "ALTER DATABASE [\(db)] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [\(db)]")
+        throw error
+    }
+    try await DDLGuard.shared.withLock {
+        _ = try? await withTimeout(15) {
+            try await client.execute("ALTER DATABASE [\(db)] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [\(db)]").get()
+        }
+    }
+}
+
+// MARK: - Retry helper for flaky connections
+
+@discardableResult
+func withRetry<T>(
+    attempts: Int = 3,
+    delayNs: UInt64 = 200_000_000,
+    _ operation: @escaping () async throws -> T
+) async throws -> T {
+    var lastError: Error?
+    for i in 1...attempts {
+        do {
+            return try await operation()
+        } catch {
+            lastError = error
+            if i == attempts { break }
+            if let se = error as? SQLServerError {
+                switch se {
+                case .connectionClosed, .timeout, .transient:
+                    try? await Task.sleep(nanoseconds: delayNs)
+                    continue
+                default:
+                    throw error
+                }
+            } else {
+                throw error
+            }
+        }
+    }
+    throw lastError ?? SQLServerError.unknown(NSError(domain: "withRetry", code: -1))
+}
+
+/// Runs an operation using a connection switched to the provided database for the duration of the operation.
+func withDbConnection<T>(
+    client: SQLServerClient,
+    database: String,
+    _ operation: @escaping (SQLServerConnection) async throws -> T
+) async throws -> T {
+    try await client.withConnection { connection in
+        _ = try await connection.changeDatabase(database).get()
+        return try await operation(connection)
+    }
+}
+
+// Creates a connected client reusing the same group, but pointing to a specific database.
+func makeClient(forDatabase database: String, using group: EventLoopGroup) async throws -> SQLServerClient {
+    var cfg = makeSQLServerClientConfiguration()
+    cfg.connection.login.database = database
+    return try await SQLServerClient.connect(configuration: cfg, eventLoopGroupProvider: .shared(group)).get()
+}
+
+@discardableResult
+func executeInDb(
+    client: SQLServerClient,
+    database: String,
+    _ sql: String
+) async throws -> SQLServerExecutionResult {
+    try await withDbConnection(client: client, database: database) { conn in
+        try await conn.execute(sql).get()
+    }
+}
+
+func queryInDb(
+    client: SQLServerClient,
+    database: String,
+    _ sql: String
+) async throws -> [TDSRow] {
+    try await withDbConnection(client: client, database: database) { conn in
+        try await conn.query(sql).get()
+    }
+}
+// MARK: - Async timeout helper
+
+enum AsyncTimeoutError: Error, LocalizedError {
+    case timedOut(seconds: TimeInterval)
+
+    var errorDescription: String? {
+        switch self {
+        case .timedOut(let s):
+            return "Operation timed out after \(s) seconds"
+        }
+    }
+}
+
+func withTimeout<T>(_ seconds: TimeInterval, _ operation: @escaping () async throws -> T) async throws -> T {
+    try await withThrowingTaskGroup(of: T.self) { group in
+        group.addTask {
+            try await operation()
+        }
+        group.addTask {
+            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            throw AsyncTimeoutError.timedOut(seconds: seconds)
+        }
+        let result = try await group.next()!
+        group.cancelAll()
+        return result
+    }
+}

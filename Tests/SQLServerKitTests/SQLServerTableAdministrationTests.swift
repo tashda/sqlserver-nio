@@ -7,32 +7,37 @@ final class SQLServerTableAdministrationTests: XCTestCase {
     private var group: EventLoopGroup!
     private var client: SQLServerClient!
     private var adminClient: SQLServerAdministrationClient!
-    private var tablesToDrop: [String] = []
+    private var testDatabase: String!
 
     private var eventLoop: EventLoop { self.group.next() }
 
-    override func setUpWithError() throws {
-        try super.setUpWithError()
+    override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
         loadEnvFileIfPresent()
         self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        
-        let config = makeSQLServerClientConfiguration()
-        self.client = try SQLServerClient.connect(configuration: config, eventLoopGroupProvider: .shared(group)).wait()
+        // Use a base client to create the ephemeral DB
+        let base = try SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).wait()
+        self.testDatabase = "adm_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(10))"
+        try await DDLGuard.shared.withLock {
+            _ = try await withTimeout(15) { try await base.execute("CREATE DATABASE [\(self.testDatabase!)]").get() }
+        }
+        self.client = try await makeClient(forDatabase: self.testDatabase, using: group)
+        _ = try? await base.shutdownGracefully().get()
         self.adminClient = SQLServerAdministrationClient(client: client)
     }
 
-    override func tearDownWithError() throws {
-        // Drop any tables that were created during the test
-        for table in tablesToDrop {
-            try adminClient.dropTable(name: table).wait()
+    override func tearDown() async throws {
+        // Drop the ephemeral DB with a master-scoped client
+        let master = try SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).wait()
+        try await DDLGuard.shared.withLock {
+            _ = try? await withTimeout(15) {
+                try await master.execute("ALTER DATABASE [\(self.testDatabase!)] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [\(self.testDatabase!)]").get()
+            }
         }
-        tablesToDrop.removeAll()
-
-        try self.client.shutdownGracefully().wait()
-        try self.group?.syncShutdownGracefully()
-        self.group = nil
-        try super.tearDownWithError()
+        _ = try? await master.shutdownGracefully().get()
+        try await client?.shutdownGracefully().get()
+        try await group?.shutdownGracefully()
+        group = nil
     }
 
     // MARK: - Tests
@@ -59,7 +64,7 @@ final class SQLServerTableAdministrationTests: XCTestCase {
 
     func testCreateTableSimple() async throws {
         let tableName = "test_simple_table_\(UUID().uuidString.prefix(8))"
-        tablesToDrop.append(tableName)
+        
 
         let columns = [
             SQLServerColumnDefinition(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
@@ -74,7 +79,7 @@ final class SQLServerTableAdministrationTests: XCTestCase {
 
     func testCreateTableWithIdentityAndDefaults() async throws {
         let tableName = "test_identity_defaults_\(UUID().uuidString.prefix(8))"
-        tablesToDrop.append(tableName)
+        
 
         let columns = [
             SQLServerColumnDefinition(name: "id", definition: .standard(.init(dataType: .int, identity: (10, 2)))),
@@ -107,7 +112,7 @@ final class SQLServerTableAdministrationTests: XCTestCase {
 
     func testCreateTableWithCommentsAndComputedColumn() async throws {
         let tableName = "test_comments_computed_\(UUID().uuidString.prefix(8))"
-        tablesToDrop.append(tableName)
+        
 
         let columns = [
             SQLServerColumnDefinition(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
@@ -145,7 +150,7 @@ final class SQLServerTableAdministrationTests: XCTestCase {
 
     func testCreateTableWithVariousConstraints() async throws {
         let tableName = "test_constraints_\(UUID().uuidString.prefix(8))"
-        tablesToDrop.append(tableName)
+        
 
         let columns = [
             SQLServerColumnDefinition(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
@@ -176,7 +181,7 @@ final class SQLServerTableAdministrationTests: XCTestCase {
 
     func testCreateTableWithCompositePrimaryKey() async throws {
         let tableName = "test_composite_pk_\(UUID().uuidString.prefix(8))"
-        tablesToDrop.append(tableName)
+        
 
         let columns = [
             SQLServerColumnDefinition(name: "id1", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
@@ -198,7 +203,7 @@ final class SQLServerTableAdministrationTests: XCTestCase {
 
     func testCreateTableWithAllDataTypes() async throws {
         let tableName = "test_all_types_\(UUID().uuidString.prefix(8))"
-        tablesToDrop.append(tableName)
+        
 
         let columns: [SQLServerColumnDefinition] = [
             .init(name: "t_bit", definition: .standard(.init(dataType: .bit))),
@@ -286,7 +291,7 @@ final class SQLServerTableAdministrationTests: XCTestCase {
 
     func testAddColumnCommentAfterTableCreation() async throws {
         let tableName = "test_add_comment_\(UUID().uuidString.prefix(8))"
-        tablesToDrop.append(tableName)
+        
         
         // Create table without comments
         let columns: [SQLServerColumnDefinition] = [
@@ -316,7 +321,7 @@ final class SQLServerTableAdministrationTests: XCTestCase {
     
     func testAddTableComment() async throws {
         let tableName = "test_table_comment_\(UUID().uuidString.prefix(8))"
-        tablesToDrop.append(tableName)
+        
         
         // Create simple table
         let columns: [SQLServerColumnDefinition] = [
@@ -340,7 +345,7 @@ final class SQLServerTableAdministrationTests: XCTestCase {
     
     func testMultipleColumnComments() async throws {
         let tableName = "test_multi_comments_\(UUID().uuidString.prefix(8))"
-        tablesToDrop.append(tableName)
+        
         
         let columns: [SQLServerColumnDefinition] = [
             .init(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true, comment: "Primary key identifier"))),
@@ -376,7 +381,7 @@ final class SQLServerTableAdministrationTests: XCTestCase {
     
     func testCommentWithSpecialCharacters() async throws {
         let tableName = "test_special_chars_\(UUID().uuidString.prefix(8))"
-        tablesToDrop.append(tableName)
+        
         
         let specialComment = "Comment with 'quotes', \"double quotes\", and unicode: 🚀 世界"
         let columns: [SQLServerColumnDefinition] = [
@@ -399,7 +404,7 @@ final class SQLServerTableAdministrationTests: XCTestCase {
     
     func testUpdateColumnComment() async throws {
         let tableName = "test_update_comment_\(UUID().uuidString.prefix(8))"
-        tablesToDrop.append(tableName)
+        
         
         let columns: [SQLServerColumnDefinition] = [
             .init(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
@@ -428,7 +433,7 @@ final class SQLServerTableAdministrationTests: XCTestCase {
     
     func testUpdateTableComment() async throws {
         let tableName = "test_update_table_comment_\(UUID().uuidString.prefix(8))"
-        tablesToDrop.append(tableName)
+        
         
         let columns: [SQLServerColumnDefinition] = [
             .init(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true)))
@@ -454,7 +459,7 @@ final class SQLServerTableAdministrationTests: XCTestCase {
     
     func testRemoveColumnComment() async throws {
         let tableName = "test_remove_comment_\(UUID().uuidString.prefix(8))"
-        tablesToDrop.append(tableName)
+        
         
         let columns: [SQLServerColumnDefinition] = [
             .init(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
@@ -482,7 +487,7 @@ final class SQLServerTableAdministrationTests: XCTestCase {
     
     func testRemoveTableComment() async throws {
         let tableName = "test_remove_table_comment_\(UUID().uuidString.prefix(8))"
-        tablesToDrop.append(tableName)
+        
         
         let columns: [SQLServerColumnDefinition] = [
             .init(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true)))
@@ -511,7 +516,7 @@ final class SQLServerTableAdministrationTests: XCTestCase {
     
     func testCommentWithLongText() async throws {
         let tableName = "test_long_comment_\(UUID().uuidString.prefix(8))"
-        tablesToDrop.append(tableName)
+        
         
         let longComment = String(repeating: "This is a very long comment that tests the limits of extended properties. ", count: 50)
         
@@ -535,7 +540,7 @@ final class SQLServerTableAdministrationTests: XCTestCase {
     
     func testCommentWithEmptyString() async throws {
         let tableName = "test_empty_comment_\(UUID().uuidString.prefix(8))"
-        tablesToDrop.append(tableName)
+        
         
         let columns: [SQLServerColumnDefinition] = [
             .init(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
@@ -561,13 +566,13 @@ final class SQLServerTableAdministrationTests: XCTestCase {
     
     func testTableAndColumnCommentsSimultaneously() async throws {
         let tableName = "test_both_comments_\(UUID().uuidString.prefix(8))"
-        tablesToDrop.append(tableName)
+        
         
         let columns: [SQLServerColumnDefinition] = [
             .init(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true, comment: "Primary key column comment"))),
             .init(name: "data", definition: .standard(.init(dataType: .nvarchar(length: .length(100)), isNullable: true, comment: "Data column comment")))
         ]
-        try await adminClient.createTable(name: tableName, columns: columns)
+        try await withTimeout(15) { try await self.adminClient.createTable(name: tableName, columns: columns) }
         
         // Add table comment
         try await adminClient.addTableComment(tableName: tableName, comment: "Table level comment")
