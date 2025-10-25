@@ -40,7 +40,8 @@ public final class SQLServerClient {
             tlsConfiguration: TLSConfiguration? = .makeClientConfiguration(),
             poolConfiguration: SQLServerConnectionPool.Configuration = .init(),
             metadataConfiguration: SQLServerMetadataClient.Configuration = .init(),
-            retryConfiguration: SQLServerRetryConfiguration = .init()
+            retryConfiguration: SQLServerRetryConfiguration = .init(),
+            transparentNetworkIPResolution: Bool = true
         ) {
             self.connection = SQLServerConnection.Configuration(
                 hostname: hostname,
@@ -48,7 +49,9 @@ public final class SQLServerClient {
                 login: login,
                 tlsConfiguration: tlsConfiguration,
                 metadataConfiguration: metadataConfiguration,
-                retryConfiguration: retryConfiguration
+                retryConfiguration: retryConfiguration,
+                sessionOptions: .ssmsDefaults,
+                transparentNetworkIPResolution: transparentNetworkIPResolution
             )
             self.poolConfiguration = poolConfiguration
         }
@@ -71,6 +74,11 @@ public final class SQLServerClient {
         public var tlsConfiguration: TLSConfiguration? {
             get { connection.tlsConfiguration }
             set { connection.tlsConfiguration = newValue }
+        }
+        
+        public var transparentNetworkIPResolution: Bool {
+            get { connection.transparentNetworkIPResolution }
+            set { connection.transparentNetworkIPResolution = newValue }
         }
     }
 
@@ -99,16 +107,18 @@ public final class SQLServerClient {
                 authentication: configuration.connection.login.authentication
             )
 
-            return SQLServerConnection.resolveSocketAddress(
+            return SQLServerConnection.resolveSocketAddresses(
                 hostname: configuration.connection.hostname,
                 port: configuration.connection.port,
+                transparentResolution: configuration.connection.transparentNetworkIPResolution,
                 on: eventLoop
-            ).flatMap { address in
-                TDSConnection.connect(
-                    to: address,
+            ).flatMap { addresses in
+                SQLServerConnection.establishTDSConnection(
+                    addresses: addresses,
                     tlsConfiguration: configuration.connection.tlsConfiguration,
                     serverHostname: configuration.connection.hostname,
-                    on: eventLoop
+                    on: eventLoop,
+                    logger: logger
                 )
             }.flatMap { connection in
                 connection.login(configuration: loginConfiguration).flatMap { _ -> EventLoopFuture<TDSConnection> in
@@ -237,16 +247,13 @@ public final class SQLServerClient {
             return loop.makeSucceededFuture(.init(rows: [], done: [], messages: []))
         }
 
-        var lastFuture: EventLoopFuture<SQLServerExecutionResult> = loop.makeSucceededFuture(.init(rows: [], done: [], messages: []))
-
-        for batchSql in batches {
-            lastFuture = lastFuture.flatMap { _ in
-                self.withConnection(on: loop) { connection in
-                    connection.execute(batchSql)
-                }
+        return withConnection(on: loop) { connection in
+            var last: EventLoopFuture<SQLServerExecutionResult> = connection.eventLoop.makeSucceededFuture(.init(rows: [], done: [], messages: []))
+            for batchSql in batches {
+                last = last.flatMap { _ in connection.execute(batchSql) }
             }
+            return last
         }
-        return lastFuture
     }
 
     @available(macOS 12.0, *)
@@ -619,6 +626,19 @@ public final class SQLServerClient {
         on eventLoop: EventLoop? = nil
     ) async throws -> [RoutineMetadata] {
         try await listFunctions(database: database, schema: schema, on: eventLoop).get()
+    }
+
+    /// Returns the SQL Server product version in the form `major.minor.build.revision`.
+    public func serverVersion(on eventLoop: EventLoop? = nil) -> EventLoopFuture<String> {
+        let loop = eventLoop ?? eventLoopGroup.next()
+        return withConnection(on: loop) { connection in
+            connection.serverVersion()
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func serverVersion(on eventLoop: EventLoop? = nil) async throws -> String {
+        try await serverVersion(on: eventLoop).get()
     }
 
     public func executeOnFreshConnection(

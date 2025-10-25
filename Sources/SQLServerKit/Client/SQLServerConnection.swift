@@ -5,6 +5,11 @@ import NIOConcurrencyHelpers
 import NIOPosix
 import NIOSSL
 import SQLServerTDS
+#if canImport(Darwin)
+import Darwin
+#else
+import Glibc
+#endif
 
 public final class SQLServerConnection {
     public struct Configuration: Sendable {
@@ -22,6 +27,7 @@ public final class SQLServerConnection {
         public var port: Int
         public var login: Login
         public var tlsConfiguration: TLSConfiguration?
+        public var transparentNetworkIPResolution: Bool
         public var metadataConfiguration: SQLServerMetadataClient.Configuration
         public var retryConfiguration: SQLServerRetryConfiguration
         public var sessionOptions: SessionOptions
@@ -33,7 +39,8 @@ public final class SQLServerConnection {
             tlsConfiguration: TLSConfiguration? = .makeClientConfiguration(),
             metadataConfiguration: SQLServerMetadataClient.Configuration = .init(),
             retryConfiguration: SQLServerRetryConfiguration = .init(),
-            sessionOptions: SessionOptions = .ssmsDefaults
+            sessionOptions: SessionOptions = .ssmsDefaults,
+            transparentNetworkIPResolution: Bool = true
         ) {
             self.hostname = hostname
             self.port = port
@@ -42,6 +49,7 @@ public final class SQLServerConnection {
             self.metadataConfiguration = metadataConfiguration
             self.retryConfiguration = retryConfiguration
             self.sessionOptions = sessionOptions
+            self.transparentNetworkIPResolution = transparentNetworkIPResolution
         }
     }
 
@@ -99,16 +107,18 @@ public final class SQLServerConnection {
             authentication: configuration.login.authentication
         )
 
-        return resolveSocketAddress(
+        return resolveSocketAddresses(
             hostname: configuration.hostname,
             port: configuration.port,
+            transparentResolution: configuration.transparentNetworkIPResolution,
             on: eventLoop
-        ).flatMap { address in
-            TDSConnection.connect(
-                to: address,
+        ).flatMap { addresses in
+            Self.establishTDSConnection(
+                addresses: addresses,
                 tlsConfiguration: configuration.tlsConfiguration,
                 serverHostname: configuration.hostname,
-                on: eventLoop
+                on: eventLoop,
+                logger: logger
             )
         }.flatMap { connection in
             connection.login(configuration: loginConfiguration).map { connection }.flatMapError { error in
@@ -544,6 +554,18 @@ public final class SQLServerConnection {
         try await searchMetadata(query: query, database: database, schema: schema, scopes: scopes).get()
     }
 
+    /// Returns the SQL Server product version in the form `major.minor.build.revision`.
+    public func serverVersion() -> EventLoopFuture<String> {
+        executeWithRetry(operationName: "serverVersion") {
+            self.metadataClient.serverVersion()
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func serverVersion() async throws -> String {
+        try await serverVersion().get()
+    }
+
     deinit {
         if let ownsGroup = ownsEventLoopGroup {
             _ = release(close: true)
@@ -778,14 +800,101 @@ public final class SQLServerConnection {
         return releaseClosure(close)
     }
 
-    internal static func resolveSocketAddress(
+    internal static func resolveSocketAddresses(
         hostname: String,
         port: Int,
+        transparentResolution: Bool,
         on eventLoop: EventLoop
-    ) -> EventLoopFuture<SocketAddress> {
+    ) -> EventLoopFuture<[SocketAddress]> {
         eventLoop.submit {
-            try SocketAddress.makeAddressResolvingHost(hostname, port: port)
+            if transparentResolution {
+                return try makeAllSocketAddresses(hostname: hostname, port: port)
+            } else {
+                let address = try SocketAddress.makeAddressResolvingHost(hostname, port: port)
+                return [address]
+            }
         }
+    }
+    
+    private static func makeAllSocketAddresses(hostname: String, port: Int) throws -> [SocketAddress] {
+        var hints = addrinfo(
+            ai_flags: AI_ADDRCONFIG,
+            ai_family: AF_UNSPEC,
+            ai_socktype: SOCK_STREAM,
+            ai_protocol: IPPROTO_TCP,
+            ai_addrlen: 0,
+            ai_canonname: nil,
+            ai_addr: nil,
+            ai_next: nil
+        )
+        var infoPointer: UnsafeMutablePointer<addrinfo>?
+        let portString = "\(port)"
+        let error = getaddrinfo(hostname, portString, &hints, &infoPointer)
+        guard error == 0 else {
+            throw IOError(errnoCode: error, reason: "getaddrinfo")
+        }
+        defer {
+            if let infoPointer {
+                freeaddrinfo(infoPointer)
+            }
+        }
+        
+        var addresses: [SocketAddress] = []
+        var cursor = infoPointer
+        while let entry = cursor?.pointee {
+            if let addr = entry.ai_addr {
+                switch entry.ai_family {
+                case AF_INET:
+                    let address = addr.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { pointer in
+                        pointer.pointee
+                    }
+                    addresses.append(SocketAddress(address))
+                case AF_INET6:
+                    let address = addr.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { pointer in
+                        pointer.pointee
+                    }
+                    addresses.append(SocketAddress(address))
+                default:
+                    break
+                }
+            }
+            cursor = entry.ai_next
+        }
+        
+        if addresses.isEmpty {
+            throw SQLServerError.connectionClosed
+        }
+        
+        return addresses
+    }
+    
+    internal static func establishTDSConnection(
+        addresses: [SocketAddress],
+        tlsConfiguration: TLSConfiguration?,
+        serverHostname: String,
+        on eventLoop: EventLoop,
+        logger: Logger
+    ) -> EventLoopFuture<TDSConnection> {
+        func attempt(_ index: Int) -> EventLoopFuture<TDSConnection> {
+            guard index < addresses.count else {
+                return eventLoop.makeFailedFuture(SQLServerError.connectionClosed)
+            }
+            let address = addresses[index]
+            return TDSConnection.connect(
+                to: address,
+                tlsConfiguration: tlsConfiguration,
+                serverHostname: serverHostname,
+                on: eventLoop
+            ).flatMapError { error in
+                logger.warning("SQLServerConnection failed to connect to \(address). \(error)")
+                if index + 1 < addresses.count {
+                    return attempt(index + 1)
+                } else {
+                    return eventLoop.makeFailedFuture(error)
+                }
+            }
+        }
+        return attempt(0)
     }
 }
 
