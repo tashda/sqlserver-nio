@@ -1,10 +1,17 @@
-SQLServerNIO is a non-blocking Swift client for Microsoft SQL Server. It builds on the original SwiftTDS (tds-nio) project and the SwiftNIO networking stack.
+# SQLServerNIO
 
-- `SQLServerConnection` gives you fine-grained control over a single TDS session.
-- `SQLServerClient` manages pooled connections with retries and metadata caching.
-- Async/await-first APIs with convenient futures-based overloads for legacy code.
-- Metadata helpers (databases, schemas, tables, columns) with safe fallbacks.
-- Additional clients for administrative tasks and SQL Agent workflows.
+SQLServerNIO is a non-blocking Swift client for Microsoft SQL Server built on SwiftNIO. It provides both connection pooling and direct connection management with comprehensive async/await and EventLoopFuture APIs.
+
+## Key Features
+
+- **Connection Management**: `SQLServerClient` for pooled connections with automatic retries, `SQLServerConnection` for direct connection control
+- **Modern Swift APIs**: Full async/await support with EventLoopFuture fallbacks for compatibility
+- **Transaction Support**: Proper transaction descriptor management with savepoints and isolation levels
+- **Batch Processing**: SQL Server batch separation with GO delimiter support via `SQLServerQuerySplitter`
+- **Metadata APIs**: Comprehensive database introspection (tables, columns, indexes, procedures, etc.)
+- **Administrative Tools**: Server management via `SQLServerAdministrationClient` and SQL Agent via `SQLServerAgentClient`
+- **Streaming Support**: AsyncSequence-based result streaming for large datasets
+- **Error Handling**: Robust error handling with proper SQL Server error propagation
 
 
 ## Installation
@@ -28,7 +35,7 @@ Then add the product to your target:
 
 ## Quick Start
 
-### Pooled client
+### Pooled Client (Recommended)
 
 ```swift
 import SQLServerNIO
@@ -40,21 +47,29 @@ let configuration = SQLServerClient.Configuration(
         database: "master",
         authentication: .sqlPassword(username: "sa", password: "StrongPassword123")
     ),
-    tlsConfiguration: nil
+    tlsConfiguration: .makeClientConfiguration()
 )
 
 let client = try await SQLServerClient.connect(configuration: configuration)
-let rows = try await client.query("SELECT @@VERSION AS version;")
+
+// Simple query
+let rows = try await client.query("SELECT @@VERSION AS version")
 print(rows.first?.column("version")?.string ?? "<unknown>")
+
+// Execute with results
+let result = try await client.execute("SELECT COUNT(*) as count FROM sys.tables")
+print("Table count: \(result.rows.first?.column("count")?.int ?? 0)")
+
 try await client.shutdownGracefully()
 ```
 
-### Single connection
+### Direct Connection
 
 ```swift
-let single = try await SQLServerConnection.connect(configuration: configuration.connection)
-let databases = try await single.listDatabases()
-try await single.close()
+let connection = try await SQLServerConnection.connect(configuration: configuration.connection)
+let databases = try await connection.listDatabases()
+print("Found \(databases.count) databases")
+try await connection.close()
 ```
 
 ## Connection Configuration
@@ -72,104 +87,112 @@ configuration.connection.sessionOptions = .init(
 )
 ```
 
-## Querying
+## Core Operations
 
-### Async/await
+### Basic Querying
 
 ```swift
-let rows = try await client.query("SELECT name FROM sys.databases ORDER BY name;")
+// Query returning rows
+let rows = try await client.query("SELECT name FROM sys.databases ORDER BY name")
 for row in rows {
     print(row.column("name")?.string ?? "<unknown>")
 }
+
+// Execute statements (INSERT, UPDATE, DELETE, DDL)
+let result = try await client.execute("INSERT INTO Logs(Message) VALUES (N'hello')")
+print("Affected rows: \(result.done.first?.rowCount ?? 0)")
+
+// Scalar queries
+let databaseName: String? = try await client.queryScalar("SELECT DB_NAME()", as: String.self)
+let tableCount: Int? = try await client.queryScalar("SELECT COUNT(*) FROM sys.tables", as: Int.self)
 ```
 
-### Futures
+### EventLoopFuture API (Legacy Support)
 
 ```swift
-client.query("SELECT COUNT(*) AS count FROM sys.tables;").whenSuccess { rows in
+client.query("SELECT COUNT(*) AS count FROM sys.tables").whenSuccess { rows in
     print(rows.first?.column("count")?.int ?? 0)
 }
 ```
 
-### Execute with row counts
+### Connection Management
 
 ```swift
-let result = try await client.execute("INSERT INTO Logs(Message) VALUES (N'hello');")
-print("rows: \(result.totalRowCount)")
-```
-
-`execute(_:)` returns an `SQLServerExecutionResult`, exposing the rows (if any), informational messages, and `UInt64` row counts for each DONE token.
-
-### Scalar helpers
-
-```swift
-let databaseName: String? = try await client.queryScalar("SELECT DB_NAME();", as: String.self)
-```
-
-The scalar helper bridges to `TDSDataConvertible`, so you can request `String`, `Int`, `UUID`, etc.
-
-### Changing databases
-
-```swift
-try await connection.changeDatabase("msdb")
-print(connection.currentDatabase) // "msdb"
-```
-
-Connections keep track of the active database and automatically switch back to the original catalog when returned to the pool.
-
-### Streaming (AsyncSequence)
-
-**Single connection**
-
-```swift
-for try await event in connection.streamQuery("SELECT TOP (5) name FROM sys.databases ORDER BY name;") {
-    switch event {
-    case .metadata(let columns):
-        let columnNames = columns.map(\.name)
-        print("Columns: \(columnNames)")
-    case .row(let row):
-        print(row.column("name")?.string ?? "<nil>")
-    case .done(let done):
-        print("batch complete rows=\(done.rowCount)")
-    case .message(let message):
-        print("message: \(message.message)")
-    }
+// Use a specific connection for multiple operations
+try await client.withConnection { connection in
+    try await connection.changeDatabase("AdventureWorks")
+    let tables = try await connection.listTables(schema: "dbo")
+    return tables.count
 }
+
+// Connection state is automatically managed
+print(connection.currentDatabase) // Shows current database
 ```
 
-**Via the pooled client**
+### Batch Processing and Scripts
+
+```swift
+// Execute multiple statements as separate batches
+let statements = [
+    "CREATE TABLE TestTable (id INT PRIMARY KEY, name NVARCHAR(50))",
+    "INSERT INTO TestTable VALUES (1, N'Test')",
+    "SELECT * FROM TestTable"
+]
+let results = try await client.executeSeparateBatches(statements)
+print("Executed \(results.count) batches")
+
+// Execute SQL script with GO separators
+let script = """
+CREATE TABLE Users (id INT PRIMARY KEY, name NVARCHAR(100))
+GO
+INSERT INTO Users VALUES (1, N'John Doe')
+GO
+SELECT COUNT(*) FROM Users
+GO
+"""
+let scriptResults = try await client.executeScript(script)
+```
+
+### Streaming Large Results
 
 ```swift
 try await client.withConnection { connection in
-    for try await event in connection.streamQuery("SELECT TOP (5) name FROM sys.databases ORDER BY name;") {
+    for try await event in connection.streamQuery("SELECT * FROM LargeTable") {
         switch event {
         case .metadata(let columns):
-            let columnNames = columns.map(\.name)
-            print("Columns: \(columnNames)")
+            print("Columns: \(columns.map(\.name))")
         case .row(let row):
-            print(row.column("name")?.string ?? "<nil>")
+            // Process each row as it arrives
+            processRow(row)
         case .done(let done):
-            print("batch complete rows=\(done.rowCount)")
+            print("Batch complete, rows: \(done.rowCount)")
         case .message(let message):
-            print("message: \(message.message)")
+            print("Server message: \(message.message)")
         }
     }
 }
 ```
 
-```Note:``` cancel either loop to stop early; the underlying connection is returned to the pool (or left open for you) once the sequence completes or is cancelled.
-
-### Parameterised SQL
-
-Use string interpolation for safe parameter binding:
+### Transactions
 
 ```swift
-let dbName = "AdventureWorks2022"
-try await client.query(
-    """
-    IF DB_ID(\(dbName)) IS NULL CREATE DATABASE \(dbName);
-    """
-)
+try await client.withConnection { connection in
+    // Begin transaction
+    _ = try await connection.execute("BEGIN TRANSACTION")
+    
+    do {
+        // Your transactional operations
+        _ = try await connection.execute("INSERT INTO Orders (customer_id) VALUES (123)")
+        _ = try await connection.execute("UPDATE Inventory SET quantity = quantity - 1 WHERE product_id = 456")
+        
+        // Commit if all operations succeed
+        _ = try await connection.execute("COMMIT")
+    } catch {
+        // Rollback on any error
+        _ = try await connection.execute("ROLLBACK")
+        throw error
+    }
+}
 ```
 
 ## Metadata Helpers
@@ -254,6 +277,186 @@ for hit in hits {
 ```swift
 let admin = SQLServerAdministrationClient(client: client)
 let logins = try await admin.listServerLogins()
+
+// Create tables with comprehensive options
+let columns = [
+    SQLServerColumnDefinition(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
+    SQLServerColumnDefinition(name: "name", definition: .standard(.init(dataType: .nvarchar(length: .length(100)), comment: "User name")))
+]
+try await admin.createTable(name: "Users", columns: columns)
+```
+
+## Stored Procedures and Functions
+
+```swift
+let routineClient = SQLServerRoutineClient(client: client)
+
+// Create stored procedure
+let parameters = [
+    ProcedureParameter(name: "user_id", dataType: .int),
+    ProcedureParameter(name: "result", dataType: .nvarchar(length: .length(100)), direction: .output)
+]
+let body = """
+BEGIN
+    SELECT @result = name FROM Users WHERE id = @user_id
+END
+"""
+try await routineClient.createStoredProcedure(name: "GetUserName", parameters: parameters, body: body)
+
+// Create scalar function
+try await routineClient.createFunction(
+    name: "CalculateAge",
+    parameters: [FunctionParameter(name: "birth_date", dataType: .date)],
+    returnType: .int,
+    body: "BEGIN RETURN DATEDIFF(YEAR, @birth_date, GETDATE()) END"
+)
+
+// Create table-valued function
+let tableDefinition = [
+    TableValuedFunctionColumn(name: "id", dataType: .int),
+    TableValuedFunctionColumn(name: "name", dataType: .nvarchar(length: .length(100)))
+]
+try await routineClient.createTableValuedFunction(
+    name: "GetActiveUsers",
+    tableDefinition: tableDefinition,
+    body: "RETURN (SELECT id, name FROM Users WHERE active = 1)"
+)
+```
+
+## Views and Indexed Views
+
+```swift
+let viewClient = SQLServerViewClient(client: client)
+
+// Create view
+try await viewClient.createView(
+    name: "ActiveUsers",
+    query: "SELECT id, name, email FROM Users WHERE active = 1"
+)
+
+// Create indexed view (materialized view)
+try await viewClient.createIndexedView(
+    name: "UserSummary",
+    query: "SELECT department, COUNT_BIG(*) as user_count FROM dbo.Users GROUP BY department",
+    indexName: "IX_UserSummary_department",
+    indexColumns: ["department"]
+)
+```
+
+## Index Management
+
+```swift
+let indexClient = SQLServerIndexClient(client: client)
+
+// Create nonclustered index
+try await indexClient.createIndex(
+    name: "IX_Users_Email",
+    table: "Users",
+    columns: [IndexColumn(name: "email")]
+)
+
+// Create unique index
+try await indexClient.createUniqueIndex(
+    name: "IX_Users_Username_Unique",
+    table: "Users",
+    columns: [IndexColumn(name: "username")]
+)
+
+// Create index with included columns
+try await indexClient.createIndex(
+    name: "IX_Users_LastName_Incl",
+    table: "Users",
+    columns: [
+        IndexColumn(name: "last_name"),
+        IndexColumn(name: "first_name", isIncluded: true),
+        IndexColumn(name: "email", isIncluded: true)
+    ]
+)
+
+// Rebuild index
+try await indexClient.rebuildIndex(name: "IX_Users_Email", table: "Users")
+```
+
+## Constraint Management
+
+```swift
+let constraintClient = SQLServerConstraintClient(client: client)
+
+// Add foreign key constraint
+try await constraintClient.addForeignKey(
+    name: "FK_Orders_Users",
+    table: "Orders",
+    columns: ["user_id"],
+    referencedTable: "Users",
+    referencedColumns: ["id"],
+    options: ForeignKeyOptions(onDelete: .cascade)
+)
+
+// Add check constraint
+try await constraintClient.addCheckConstraint(
+    name: "CK_Users_Age",
+    table: "Users",
+    expression: "age >= 0 AND age <= 150"
+)
+
+// Add unique constraint
+try await constraintClient.addUniqueConstraint(
+    name: "UQ_Users_Email",
+    table: "Users",
+    columns: ["email"]
+)
+```
+
+## Trigger Management
+
+```swift
+let triggerClient = SQLServerTriggerClient(client: client)
+
+// Create audit trigger
+let auditBody = """
+BEGIN
+    SET NOCOUNT ON;
+    INSERT INTO UserAudit (user_id, operation, audit_date)
+    SELECT inserted.id, 'INSERT', GETDATE()
+    FROM inserted;
+END
+"""
+try await triggerClient.createTrigger(
+    name: "tr_Users_Audit",
+    table: "Users",
+    timing: .after,
+    events: [.insert, .update, .delete],
+    body: auditBody
+)
+
+// Enable/disable triggers
+try await triggerClient.disableTrigger(name: "tr_Users_Audit", table: "Users")
+try await triggerClient.enableTrigger(name: "tr_Users_Audit", table: "Users")
+```
+
+## Security and User Management
+
+```swift
+let securityClient = SQLServerSecurityClient(client: client)
+
+// Create database user
+try await securityClient.createUser(name: "app_user", options: UserOptions(defaultSchema: "dbo"))
+
+// Create custom role
+try await securityClient.createRole(name: "data_analysts")
+
+// Add user to role
+try await securityClient.addUserToRole(user: "app_user", role: "data_analysts")
+
+// Grant permissions
+try await securityClient.grantPermission(permission: .select, on: "Users", to: "data_analysts")
+try await securityClient.grantPermission(permission: .insert, on: "Users", to: "data_analysts")
+
+// Add user to built-in database roles
+try await securityClient.addUserToDatabaseRole(user: "app_user", role: .dbDataReader)
+
+// List permissions
+let permissions = try await securityClient.listPermissions(principal: "app_user")
 ```
 
 ## SQL Agent Helpers

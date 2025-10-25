@@ -10,16 +10,21 @@ extension TDSConnection {
     
     public func rawSql(_ sqlText: String, onRow: @escaping (TDSRow) throws -> ()) -> EventLoopFuture<Void> {
         let request = RawSqlBatchRequest(
-            sqlBatch: TDSMessages.RawSqlBatchMessage(sqlText: sqlText),
+            sqlBatch: TDSMessages.RawSqlBatchMessage(
+                sqlText: sqlText, 
+                transactionDescriptor: self.transactionDescriptor, 
+                outstandingRequestCount: self.requestCount
+            ),
             logger: logger,
-            onRow: onRow
+            onRow: onRow,
+            connection: self
         )
         return self.send(request, logger: logger)
     }
 
 
     func query(_ message: TDSMessages.RawSqlBatchMessage, _ onRow: @escaping (TDSRow) throws -> ()) -> EventLoopFuture<Void> {
-        let request = RawSqlBatchRequest(sqlBatch: message, logger: logger, onRow: onRow)
+        let request = RawSqlBatchRequest(sqlBatch: message, logger: logger, onRow: onRow, connection: self)
         return self.send(request, logger: logger)
     }
 }
@@ -36,6 +41,7 @@ public final class RawSqlBatchRequest: TDSRequest {
     private let tokenParser: TDSTokenParser
     private var expectMoreResults: Bool = false
     private var finalDoneHasArrived: Bool = false
+    private weak var connection: TDSConnection?
 
     public init(
         sqlBatch: TDSMessages.RawSqlBatchMessage,
@@ -43,7 +49,8 @@ public final class RawSqlBatchRequest: TDSRequest {
         onRow: ((TDSRow) throws -> ())? = nil,
         onMetadata: ((TDSTokens.ColMetadataToken) -> Void)? = nil,
         onDone: ((TDSTokens.DoneToken) -> Void)? = nil,
-        onMessage: ((TDSTokens.ErrorInfoToken, Bool) -> Void)? = nil
+        onMessage: ((TDSTokens.ErrorInfoToken, Bool) -> Void)? = nil,
+        connection: TDSConnection? = nil
     ) {
         self.sqlBatch = sqlBatch
         self.onRow = onRow
@@ -52,6 +59,7 @@ public final class RawSqlBatchRequest: TDSRequest {
         self.onMessage = onMessage
         self.logger = logger
         self.tokenParser = TDSTokenParser(logger: logger)
+        self.connection = connection
     }
 
     public func handle(packet: TDSPacket, allocator: ByteBufferAllocator) throws -> TDSPacketResponse {
@@ -88,6 +96,25 @@ public final class RawSqlBatchRequest: TDSRequest {
 
     public func log(to logger: Logger) {
 
+    }
+    
+    private func handleTransactionEnvChange(_ envChangeToken: TDSTokens.EnvchangeToken<[Byte]>) {
+        switch envChangeToken.envchangeType {
+        case .beingTransaction:
+            // Extract transaction descriptor from newValue (8 bytes) - exactly like Microsoft
+            if envChangeToken.newValue.count >= 8 {
+                let transactionDescriptor = Array(envChangeToken.newValue.prefix(8))
+                connection?.updateTransactionState(descriptor: transactionDescriptor, requestCount: 1)
+                let descriptorHex = transactionDescriptor.map { String(format: "%02x", $0) }.joined()
+                logger.trace("TDS transaction started with descriptor: \(descriptorHex)")
+            }
+        case .commitTransaction, .rollbackTransaction, .transactionEnded:
+            // Transaction ended, reset descriptor to all zeros like Microsoft
+            connection?.updateTransactionState(descriptor: [0, 0, 0, 0, 0, 0, 0, 0], requestCount: 1)
+            logger.trace("TDS transaction ended")
+        default:
+            break
+        }
     }
     
     func handleParsedTokens(_ tokens: [TDSToken]) throws {
@@ -160,6 +187,9 @@ public final class RawSqlBatchRequest: TDSRequest {
                     onMessage?(infoToken, false)
                 }
             case .envchange:
+                if let envChangeToken = token as? TDSTokens.EnvchangeToken<[Byte]> {
+                    handleTransactionEnvChange(envChangeToken)
+                }
                 break
             default:
                 break

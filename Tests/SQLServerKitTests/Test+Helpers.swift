@@ -4,6 +4,19 @@ import NIO
 import SQLServerKit
 import XCTest
 
+// MARK: - Logging
+
+let isLoggingConfigured: Bool = {
+    LoggingSystem.bootstrap { label in
+        var handler = StreamLogHandler.standardOutput(label: label)
+        handler.logLevel = env("LOG_LEVEL").flatMap { Logger.Level(rawValue: $0) } ?? .debug
+        return handler
+    }
+    return true
+}()
+
+// MARK: - Environment
+
 func env(_ name: String) -> String? {
     getenv(name).flatMap { String(cString: $0) }
 }
@@ -12,7 +25,7 @@ private var hasLoadedEnvironmentFile = false
 
 private let packageRootPath: String = {
     var url = URL(fileURLWithPath: #filePath)
-    // Utilities.swift -> SQLServerNIOTests -> Tests -> package root
+    // Test+Helpers.swift -> SQLServerKitTests -> Tests -> package root
     for _ in 0..<3 {
         url.deleteLastPathComponent()
     }
@@ -47,8 +60,8 @@ func loadEnvFileIfPresent(path: String = ".env") {
     let newlineSet = CharacterSet.newlines
     let whitespaceSet = CharacterSet.whitespacesAndNewlines
     
-    contents.components(separatedBy: newlineSet).forEach { rawLine in
-        let line = rawLine.trimmingCharacters(in: whitespaceSet)
+    contents.components(separatedBy: newlineSet).forEach {
+        let line = $0.trimmingCharacters(in: whitespaceSet)
         guard !line.isEmpty, !line.hasPrefix("#") else { return }
         
         guard let separatorIndex = line.firstIndex(of: "=") else { return }
@@ -61,7 +74,7 @@ func loadEnvFileIfPresent(path: String = ".env") {
         
         if trimmedValue.hasPrefix("\"") && trimmedValue.hasSuffix("\""), trimmedValue.count >= 2 {
             trimmedValue = String(trimmedValue.dropFirst().dropLast())
-        } else if trimmedValue.hasPrefix("'") && trimmedValue.hasSuffix("'"), trimmedValue.count >= 2 {
+        } else if trimmedValue.hasPrefix("'" ) && trimmedValue.hasSuffix("'" ), trimmedValue.count >= 2 {
             trimmedValue = String(trimmedValue.dropFirst().dropLast())
         }
         
@@ -73,24 +86,7 @@ func loadEnvFileIfPresent(path: String = ".env") {
     }
 }
 
-func makeTempTableName(prefix: String = "tmp") -> String {
-    let token = UUID().uuidString.replacingOccurrences(of: "-", with: "")
-    return "#\(prefix)_\(token)"
-}
-
-func makeSchemaQualifiedName(prefix: String, schema: String = "dbo") -> (bare: String, bracketed: String, nameOnly: String) {
-    let token = UUID().uuidString.replacingOccurrences(of: "-", with: "")
-    let name = "\(prefix)_\(token)"
-    let bare = "\(schema).\(name)"
-    let bracketed = "[\(schema)].[\(name)]"
-    return (bare, bracketed, name)
-}
-
-func requireEnvFlag(_ key: String, description: String) throws {
-    guard env(key) == "1" else {
-        throw XCTSkip("Skipping \(description). Set \(key)=1 to enable.")
-    }
-}
+// MARK: - Test Configuration
 
 func makeSQLServerConnectionConfiguration() -> SQLServerConnection.Configuration {
     let hostname = env("TDS_HOSTNAME") ?? "localhost"
@@ -134,23 +130,27 @@ func connectSQLServer(on eventLoop: EventLoop) -> EventLoopFuture<SQLServerConne
     SQLServerConnection.connect(configuration: makeSQLServerConnectionConfiguration(), on: eventLoop)
 }
 
-extension NSRegularExpression {
-    convenience init(_ pattern: String) {
-        do {
-            try self.init(pattern: pattern)
-        } catch {
-            preconditionFailure("Illegal regular expression: \(pattern).")
-        }
-    }
-    
-    func matches(_ string: String?) -> Bool {
-        guard let str = string else { return false }
-        let range = NSRange(location: 0, length: str.utf16.count)
-        return firstMatch(in: str, options: [], range: range) != nil
-    }
+
+// MARK: - Test Helpers
+
+func makeTempTableName(prefix: String = "tmp") -> String {
+    let token = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+    return "#\(prefix)_\(token)"
 }
 
-let sqlServerVersionPattern = "[0-9]{2}\\.[0-9]{1}\\.[0-9]{4}\\.[0-9]{1}"
+func makeSchemaQualifiedName(prefix: String, schema: String = "dbo") -> (bare: String, bracketed: String, nameOnly: String) {
+    let token = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+    let name = "\(prefix)_\(token)"
+    let bare = "\(schema).\(name)"
+    let bracketed = "[\(schema)].[\(name)]"
+    return (bare, bracketed, name)
+}
+
+func requireEnvFlag(_ key: String, description: String) throws {
+    guard env(key) == "1" else {
+        throw XCTSkip("Skipping \(description). Set \(key)=1 to enable.")
+    }
+}
 
 enum TestTimeoutError: Error, LocalizedError {
     case timedOut(timeout: TimeInterval, description: String)
@@ -198,3 +198,21 @@ extension XCTestCase {
         }
     }
 }
+
+extension NSRegularExpression {
+    convenience init(_ pattern: String) {
+        do {
+            try self.init(pattern: pattern)
+        } catch {
+            preconditionFailure("Illegal regular expression: \(pattern).")
+        }
+    }
+    
+    func matches(_ string: String?) -> Bool {
+        guard let str = string else { return false }
+        let range = NSRange(location: 0, length: str.utf16.count)
+        return firstMatch(in: str, options: [], range: range) != nil
+    }
+}
+
+let sqlServerVersionPattern = "[0-9]{2}\\.{1}[0-9]{1}\\.{1}[0-9]{4}\\.{1}[0-9]{1}"

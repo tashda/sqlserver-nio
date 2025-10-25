@@ -8,5 +8,6 @@ xcuserdata/
 Package.Resolved
 Tests/LinuxMain.swift
 .env
+/AGENTS.md
 /Docs
 Private.xctestplan

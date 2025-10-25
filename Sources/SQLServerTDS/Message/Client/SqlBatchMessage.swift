@@ -9,11 +9,17 @@ extension TDSMessages {
         public static let packetType: TDSPacket.HeaderType = .sqlBatch
 
         public var sqlText: String
+        public var transactionDescriptor: [UInt8]
+        public var outstandingRequestCount: UInt32
         
-        public init(sqlText: String) { self.sqlText = sqlText}
+        public init(sqlText: String, transactionDescriptor: [UInt8] = [0, 0, 0, 0, 0, 0, 0, 0], outstandingRequestCount: UInt32 = 1) { 
+            self.sqlText = sqlText
+            self.transactionDescriptor = transactionDescriptor
+            self.outstandingRequestCount = outstandingRequestCount
+        }
 
         public func serialize(into buffer: inout ByteBuffer) throws {
-            TDSMessage.serializeAllHeaders(&buffer)
+            TDSMessage.serializeAllHeaders(&buffer, transactionDescriptor: transactionDescriptor, outstandingRequestCount: outstandingRequestCount)
             buffer.writeUTF16String(sqlText)
             return
         }
