@@ -8,51 +8,37 @@ final class SQLServerIndexTests: XCTestCase {
     private var client: SQLServerClient!
     private var indexClient: SQLServerIndexClient!
     private var adminClient: SQLServerAdministrationClient!
-    private var indexesToDrop: [(name: String, table: String, schema: String)] = []
-    private var tablesToDrop: [String] = []
 
     private var eventLoop: EventLoop { self.group.next() }
 
-    override func setUpWithError() throws {
-        try super.setUpWithError()
+    private var testDatabase: String!
+
+    override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
         loadEnvFileIfPresent()
         self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        
-        let config = makeSQLServerClientConfiguration()
-        self.client = try SQLServerClient.connect(configuration: config, eventLoopGroupProvider: .shared(group)).wait()
+        let base = try SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).wait()
+        self.testDatabase = "idx_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(10))"
+        try await DDLGuard.shared.withLock {
+            _ = try await withTimeout(15) { try await base.execute("CREATE DATABASE [\(self.testDatabase!)]").get() }
+        }
+        self.client = try await makeClient(forDatabase: self.testDatabase, using: group)
+        _ = try? await base.shutdownGracefully().get()
         self.indexClient = SQLServerIndexClient(client: client)
         self.adminClient = SQLServerAdministrationClient(client: client)
     }
 
-    override func tearDownWithError() throws {
-        // Drop any indexes that were created during the test
-        for index in indexesToDrop {
-            let dropSql = "IF EXISTS (SELECT * FROM sys.indexes WHERE name = '\(index.name)' AND object_id = OBJECT_ID('[\(index.schema)].[\(index.table)]')) DROP INDEX [\(index.name)] ON [\(index.schema)].[\(index.table)]"
-            do {
-                _ = try client.execute(dropSql).wait()
-            } catch {
-                // Ignore errors during cleanup
-                print("Warning: Failed to drop index \(index.name): \(error)")
+    override func tearDown() async throws {
+        let master = try SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).wait()
+        try await DDLGuard.shared.withLock {
+            _ = try? await withTimeout(15) {
+                try await master.execute("ALTER DATABASE [\(self.testDatabase!)] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [\(self.testDatabase!)]").get()
             }
         }
-        indexesToDrop.removeAll()
-        
-        // Drop any tables that were created during the test
-        for table in tablesToDrop {
-            do {
-                try adminClient.dropTable(name: table).wait()
-            } catch {
-                // Ignore errors during cleanup
-                print("Warning: Failed to drop table \(table): \(error)")
-            }
-        }
-        tablesToDrop.removeAll()
-
-        try self.client.shutdownGracefully().wait()
-        try self.group?.syncShutdownGracefully()
-        self.group = nil
-        try super.tearDownWithError()
+        _ = try? await master.shutdownGracefully().get()
+        try await client?.shutdownGracefully().get()
+        try await group?.shutdownGracefully()
+        group = nil
     }
 
     // MARK: - Helper Methods
@@ -70,8 +56,7 @@ final class SQLServerIndexTests: XCTestCase {
             columns[0] = SQLServerColumnDefinition(name: "id", definition: .standard(.init(dataType: .int)))
         }
         
-        try await adminClient.createTable(name: name, columns: columns)
-        tablesToDrop.append(name)
+        try await withTimeout(15) { try await self.adminClient.createTable(name: name, columns: columns) }
         
         // Insert some test data
         let insertSql = """
@@ -90,14 +75,13 @@ final class SQLServerIndexTests: XCTestCase {
     func testCreateSimpleIndex() async throws {
         let tableName = "test_index_table_\(UUID().uuidString.prefix(8))"
         let indexName = "IX_\(tableName)_name"
-        indexesToDrop.append((name: indexName, table: tableName, schema: "dbo"))
 
         // Create test table
         try await createTestTable(name: tableName)
 
         // Create index
         let columns = [IndexColumn(name: "name")]
-        try await indexClient.createIndex(name: indexName, table: tableName, columns: columns)
+        try await withTimeout(15) { try await self.indexClient.createIndex(name: indexName, table: tableName, columns: columns) }
 
         // Verify the index exists
         let exists = try await indexClient.indexExists(name: indexName, table: tableName)
@@ -112,7 +96,6 @@ final class SQLServerIndexTests: XCTestCase {
     func testCreateIndexWithMultipleColumns() async throws {
         let tableName = "test_multi_index_table_\(UUID().uuidString.prefix(8))"
         let indexName = "IX_\(tableName)_name_age"
-        indexesToDrop.append((name: indexName, table: tableName, schema: "dbo"))
 
         // Create test table
         try await createTestTable(name: tableName)
@@ -122,7 +105,7 @@ final class SQLServerIndexTests: XCTestCase {
             IndexColumn(name: "name"),
             IndexColumn(name: "age", sortDirection: .descending)
         ]
-        try await indexClient.createIndex(name: indexName, table: tableName, columns: columns)
+        try await withTimeout(15) { try await self.indexClient.createIndex(name: indexName, table: tableName, columns: columns) }
 
         // Verify the index exists
         let exists = try await indexClient.indexExists(name: indexName, table: tableName)
@@ -141,7 +124,6 @@ final class SQLServerIndexTests: XCTestCase {
     func testCreateIndexWithIncludedColumns() async throws {
         let tableName = "test_included_index_table_\(UUID().uuidString.prefix(8))"
         let indexName = "IX_\(tableName)_name_incl_email"
-        indexesToDrop.append((name: indexName, table: tableName, schema: "dbo"))
 
         // Create test table
         try await createTestTable(name: tableName)
@@ -151,7 +133,7 @@ final class SQLServerIndexTests: XCTestCase {
             IndexColumn(name: "name"),
             IndexColumn(name: "email", isIncluded: true)
         ]
-        try await indexClient.createIndex(name: indexName, table: tableName, columns: columns)
+        try await withTimeout(15) { try await self.indexClient.createIndex(name: indexName, table: tableName, columns: columns) }
 
         // Verify the index exists
         let exists = try await indexClient.indexExists(name: indexName, table: tableName)
@@ -170,14 +152,13 @@ final class SQLServerIndexTests: XCTestCase {
     func testCreateUniqueIndex() async throws {
         let tableName = "test_unique_index_table_\(UUID().uuidString.prefix(8))"
         let indexName = "IX_\(tableName)_email_unique"
-        indexesToDrop.append((name: indexName, table: tableName, schema: "dbo"))
 
         // Create test table
         try await createTestTable(name: tableName)
 
         // Create unique index
         let columns = [IndexColumn(name: "email")]
-        try await indexClient.createUniqueIndex(name: indexName, table: tableName, columns: columns)
+        try await withTimeout(15) { try await self.indexClient.createUniqueIndex(name: indexName, table: tableName, columns: columns) }
 
         // Verify the index exists and is unique
         let exists = try await indexClient.indexExists(name: indexName, table: tableName)
@@ -200,14 +181,13 @@ final class SQLServerIndexTests: XCTestCase {
     func testCreateClusteredIndex() async throws {
         let tableName = "test_clustered_index_table_\(UUID().uuidString.prefix(8))"
         let indexName = "IX_\(tableName)_clustered"
-        indexesToDrop.append((name: indexName, table: tableName, schema: "dbo"))
 
         // Create test table without primary key (so we can add clustered index)
         try await createTestTable(name: tableName, withPrimaryKey: false)
 
         // Create clustered index
         let columns = [IndexColumn(name: "id")]
-        try await indexClient.createClusteredIndex(name: indexName, table: tableName, columns: columns)
+        try await withTimeout(15) { try await self.indexClient.createClusteredIndex(name: indexName, table: tableName, columns: columns) }
 
         // Verify the index exists and is clustered
         let exists = try await indexClient.indexExists(name: indexName, table: tableName)
@@ -221,7 +201,6 @@ final class SQLServerIndexTests: XCTestCase {
     func testCreateIndexWithOptions() async throws {
         let tableName = "test_options_index_table_\(UUID().uuidString.prefix(8))"
         let indexName = "IX_\(tableName)_with_options"
-        indexesToDrop.append((name: indexName, table: tableName, schema: "dbo"))
 
         // Create test table
         try await createTestTable(name: tableName)
@@ -236,7 +215,7 @@ final class SQLServerIndexTests: XCTestCase {
             allowRowLocks: true,
             allowPageLocks: true
         )
-        try await indexClient.createIndex(name: indexName, table: tableName, columns: columns, options: options)
+        try await withTimeout(15) { try await self.indexClient.createIndex(name: indexName, table: tableName, columns: columns, options: options) }
 
         // Verify the index exists
         let exists = try await indexClient.indexExists(name: indexName, table: tableName)
@@ -271,17 +250,16 @@ final class SQLServerIndexTests: XCTestCase {
     func testRebuildIndex() async throws {
         let tableName = "test_rebuild_index_table_\(UUID().uuidString.prefix(8))"
         let indexName = "IX_\(tableName)_rebuild"
-        indexesToDrop.append((name: indexName, table: tableName, schema: "dbo"))
 
         // Create test table
         try await createTestTable(name: tableName)
 
         // Create index
         let columns = [IndexColumn(name: "name")]
-        try await indexClient.createIndex(name: indexName, table: tableName, columns: columns)
+        try await withTimeout(15) { try await self.indexClient.createIndex(name: indexName, table: tableName, columns: columns) }
 
         // Rebuild the index
-        try await indexClient.rebuildIndex(name: indexName, table: tableName)
+        try await withTimeout(15) { try await self.indexClient.rebuildIndex(name: indexName, table: tableName) }
 
         // Verify the index still exists and works
         let exists = try await indexClient.indexExists(name: indexName, table: tableName)
@@ -294,17 +272,16 @@ final class SQLServerIndexTests: XCTestCase {
     func testReorganizeIndex() async throws {
         let tableName = "test_reorganize_index_table_\(UUID().uuidString.prefix(8))"
         let indexName = "IX_\(tableName)_reorganize"
-        indexesToDrop.append((name: indexName, table: tableName, schema: "dbo"))
 
         // Create test table
         try await createTestTable(name: tableName)
 
         // Create index
         let columns = [IndexColumn(name: "name")]
-        try await indexClient.createIndex(name: indexName, table: tableName, columns: columns)
+        try await withTimeout(15) { try await self.indexClient.createIndex(name: indexName, table: tableName, columns: columns) }
 
         // Reorganize the index
-        try await indexClient.reorganizeIndex(name: indexName, table: tableName)
+        try await withTimeout(15) { try await self.indexClient.reorganizeIndex(name: indexName, table: tableName) }
 
         // Verify the index still exists and works
         let exists = try await indexClient.indexExists(name: indexName, table: tableName)
@@ -319,7 +296,6 @@ final class SQLServerIndexTests: XCTestCase {
     func testGetIndexInfo() async throws {
         let tableName = "test_info_index_table_\(UUID().uuidString.prefix(8))"
         let indexName = "IX_\(tableName)_info"
-        indexesToDrop.append((name: indexName, table: tableName, schema: "dbo"))
 
         // Create test table
         try await createTestTable(name: tableName)
@@ -330,7 +306,7 @@ final class SQLServerIndexTests: XCTestCase {
             IndexColumn(name: "age", sortDirection: .descending),
             IndexColumn(name: "email", isIncluded: true)
         ]
-        try await indexClient.createIndex(name: indexName, table: tableName, columns: columns)
+        try await withTimeout(15) { try await self.indexClient.createIndex(name: indexName, table: tableName, columns: columns) }
 
         // Get index info
         let indexInfo = try await indexClient.getIndexInfo(name: indexName, table: tableName)
@@ -358,15 +334,13 @@ final class SQLServerIndexTests: XCTestCase {
         let tableName = "test_list_indexes_table_\(UUID().uuidString.prefix(8))"
         let index1Name = "IX_\(tableName)_name"
         let index2Name = "IX_\(tableName)_email"
-        indexesToDrop.append((name: index1Name, table: tableName, schema: "dbo"))
-        indexesToDrop.append((name: index2Name, table: tableName, schema: "dbo"))
 
         // Create test table
         try await createTestTable(name: tableName)
 
         // Create multiple indexes
-        try await indexClient.createIndex(name: index1Name, table: tableName, columns: [IndexColumn(name: "name")])
-        try await indexClient.createIndex(name: index2Name, table: tableName, columns: [IndexColumn(name: "email")])
+        try await withTimeout(15) { try await self.indexClient.createIndex(name: index1Name, table: tableName, columns: [IndexColumn(name: "name")]) }
+        try await withTimeout(15) { try await self.indexClient.createIndex(name: index2Name, table: tableName, columns: [IndexColumn(name: "email")]) }
 
         // List all indexes for the table
         let indexes = try await indexClient.listTableIndexes(table: tableName)
@@ -384,14 +358,13 @@ final class SQLServerIndexTests: XCTestCase {
     func testCreateDuplicateIndex() async throws {
         let tableName = "test_duplicate_index_table_\(UUID().uuidString.prefix(8))"
         let indexName = "IX_\(tableName)_duplicate"
-        indexesToDrop.append((name: indexName, table: tableName, schema: "dbo"))
 
         // Create test table
         try await createTestTable(name: tableName)
 
         // Create the first index
         let columns = [IndexColumn(name: "name")]
-        try await indexClient.createIndex(name: indexName, table: tableName, columns: columns)
+        try await withTimeout(15) { try await self.indexClient.createIndex(name: indexName, table: tableName, columns: columns) }
 
         // Attempt to create duplicate should fail
         do {

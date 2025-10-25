@@ -2,10 +2,12 @@
 import XCTest
 import NIO
 import Logging
+import Dispatch
 
 final class SQLServerTransactionTests: XCTestCase {
     var group: EventLoopGroup!
     var client: SQLServerClient!
+    private var snapshotIsolationChecked = false
     
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
@@ -19,6 +21,23 @@ final class SQLServerTransactionTests: XCTestCase {
     override func tearDown() async throws {
         try await client?.shutdownGracefully().get()
         try await group?.shutdownGracefully()
+    }
+    
+    private func ensureSnapshotIsolationEnabled() async throws {
+        guard !snapshotIsolationChecked else { return }
+        snapshotIsolationChecked = true
+        let database = makeSQLServerConnectionConfiguration().login.database
+        try await client.withConnection { connection in
+            let stateRows = try await connection.underlying.rawSql("""
+            SELECT snapshot_isolation_state 
+            FROM sys.databases 
+            WHERE name = N'\(database.replacingOccurrences(of: "'", with: "''"))'
+            """).get()
+            let state = stateRows.first?.column("snapshot_isolation_state")?.int ?? 0
+            if state != 1 {
+                _ = try await connection.underlying.rawSql("ALTER DATABASE [\(database)] SET ALLOW_SNAPSHOT_ISOLATION ON").get()
+            }
+        }
     }
     
     func testBasicTransaction() async throws {
@@ -393,5 +412,282 @@ final class SQLServerTransactionTests: XCTestCase {
         try await client.withConnection { connection in
             _ = try await connection.underlying.rawSql("DROP TABLE [\(tableName)]").get()
         }
+    }
+
+    func testReadCommittedPreventsDirtyReads() async throws {
+        let tableName = "test_read_committed_\(UUID().uuidString.prefix(8))"
+        try await client.withConnection { connection in
+            _ = try await connection.underlying.rawSql("CREATE TABLE [\(tableName)] (id INT PRIMARY KEY, value NVARCHAR(50))").get()
+            _ = try await connection.underlying.rawSql("INSERT INTO [\(tableName)] (id, value) VALUES (1, N'Original')").get()
+        }
+        defer {
+            Task {
+                try? await client.withConnection { connection in
+                    _ = try await connection.underlying.rawSql("DROP TABLE [\(tableName)]").get()
+                }
+            }
+        }
+        
+        let writer = Task {
+            try await self.client.withConnection { connection in
+                _ = try await connection.underlying.rawSql("BEGIN TRANSACTION").get()
+                _ = try await connection.underlying.rawSql("UPDATE [\(tableName)] SET value = N'Dirty' WHERE id = 1").get()
+                try await Task.sleep(nanoseconds: 500_000_000)
+                _ = try await connection.underlying.rawSql("ROLLBACK").get()
+            }
+        }
+        
+        try await Task.sleep(nanoseconds: 100_000_000)
+        
+        let readValue = try await client.withConnection { connection in
+            _ = try await connection.underlying.rawSql("SET TRANSACTION ISOLATION LEVEL READ COMMITTED").get()
+            let rows = try await connection.underlying.rawSql("SELECT value FROM [\(tableName)] WHERE id = 1").get()
+            return rows.first?.column("value")?.string
+        }
+        XCTAssertEqual(readValue, "Original", "READ COMMITTED should block until dirty update rolls back")
+        
+        _ = try await writer.value
+    }
+    
+    func testReadUncommittedAllowsDirtyReads() async throws {
+        let tableName = "test_read_uncommitted_\(UUID().uuidString.prefix(8))"
+        try await client.withConnection { connection in
+            _ = try await connection.underlying.rawSql("CREATE TABLE [\(tableName)] (id INT PRIMARY KEY, value NVARCHAR(50))").get()
+            _ = try await connection.underlying.rawSql("INSERT INTO [\(tableName)] (id, value) VALUES (1, N'Original')").get()
+        }
+        defer {
+            Task {
+                try? await client.withConnection { connection in
+                    _ = try await connection.underlying.rawSql("DROP TABLE [\(tableName)]").get()
+                }
+            }
+        }
+        
+        let writer = Task {
+            try await self.client.withConnection { connection in
+                _ = try await connection.underlying.rawSql("BEGIN TRANSACTION").get()
+                _ = try await connection.underlying.rawSql("UPDATE [\(tableName)] SET value = N'Dirty' WHERE id = 1").get()
+                try await Task.sleep(nanoseconds: 500_000_000)
+                _ = try await connection.underlying.rawSql("ROLLBACK").get()
+            }
+        }
+        
+        try await Task.sleep(nanoseconds: 100_000_000)
+        
+        let dirtyRead = try await client.withConnection { connection in
+            _ = try await connection.underlying.rawSql("SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED").get()
+            let rows = try await connection.underlying.rawSql("SELECT value FROM [\(tableName)] WHERE id = 1").get()
+            return rows.first?.column("value")?.string
+        }
+        XCTAssertEqual(dirtyRead, "Dirty", "READ UNCOMMITTED should see uncommitted changes")
+        
+        _ = try await writer.value
+    }
+    
+    func testRepeatableReadPreventsNonRepeatableReads() async throws {
+        let tableName = "test_repeatable_\(UUID().uuidString.prefix(8))"
+        try await client.withConnection { connection in
+            _ = try await connection.underlying.rawSql("CREATE TABLE [\(tableName)] (id INT PRIMARY KEY, value NVARCHAR(50))").get()
+            _ = try await connection.underlying.rawSql("INSERT INTO [\(tableName)] (id, value) VALUES (1, N'Original')").get()
+        }
+        defer {
+            Task {
+                try? await client.withConnection { connection in
+                    _ = try await connection.underlying.rawSql("DROP TABLE [\(tableName)]").get()
+                }
+            }
+        }
+        
+        let blocker = Task {
+            try await self.client.withConnection { connection in
+                _ = try await connection.underlying.rawSql("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ").get()
+                _ = try await connection.underlying.rawSql("BEGIN TRANSACTION").get()
+                let first = try await connection.underlying.rawSql("SELECT value FROM [\(tableName)] WHERE id = 1").get()
+                try await Task.sleep(nanoseconds: 600_000_000)
+                let second = try await connection.underlying.rawSql("SELECT value FROM [\(tableName)] WHERE id = 1").get()
+                _ = try await connection.underlying.rawSql("COMMIT").get()
+                return (first.first?.column("value")?.string, second.first?.column("value")?.string)
+            }
+        }
+        
+        try await Task.sleep(nanoseconds: 100_000_000)
+        
+        let updateDelay = try await client.withConnection { connection in
+            let start = DispatchTime.now()
+            _ = try await connection.underlying.rawSql("UPDATE [\(tableName)] SET value = N'Updated' WHERE id = 1").get()
+            let elapsed = DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds
+            return elapsed
+        }
+        
+        let (firstRead, secondRead) = try await blocker.value
+        XCTAssertEqual(firstRead, "Original")
+        XCTAssertEqual(secondRead, "Original")
+        XCTAssertGreaterThan(updateDelay, 400_000_000 as UInt64, "Update should wait for repeatable read to finish")
+        
+        let finalValue = try await client.withConnection { connection in
+            try await connection.underlying.rawSql("SELECT value FROM [\(tableName)] WHERE id = 1").get()
+        }
+        XCTAssertEqual(finalValue.first?.column("value")?.string, "Updated")
+    }
+    
+    func testSerializablePreventsPhantomInserts() async throws {
+        let tableName = "test_serializable_\(UUID().uuidString.prefix(8))"
+        try await client.withConnection { connection in
+            _ = try await connection.underlying.rawSql("CREATE TABLE [\(tableName)] (id INT PRIMARY KEY, category NVARCHAR(10))").get()
+            _ = try await connection.underlying.rawSql("INSERT INTO [\(tableName)] (id, category) VALUES (1, N'A'), (2, N'A')").get()
+        }
+        defer {
+            Task {
+                try? await client.withConnection { connection in
+                    _ = try await connection.underlying.rawSql("DROP TABLE [\(tableName)]").get()
+                }
+            }
+        }
+        
+        let rangeLockTask = Task {
+            try await self.client.withConnection { connection in
+                _ = try await connection.underlying.rawSql("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE").get()
+                _ = try await connection.underlying.rawSql("BEGIN TRANSACTION").get()
+                _ = try await connection.underlying.rawSql("SELECT COUNT(*) FROM [\(tableName)] WHERE category = N'A'").get()
+                try await Task.sleep(nanoseconds: 700_000_000)
+                _ = try await connection.underlying.rawSql("COMMIT").get()
+            }
+        }
+        
+        try await Task.sleep(nanoseconds: 200_000_000)
+        
+        let insertDelay = try await client.withConnection { connection in
+            let start = DispatchTime.now()
+            _ = try await connection.underlying.rawSql("INSERT INTO [\(tableName)] (id, category) VALUES (3, N'A')").get()
+            let elapsed = DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds
+            return elapsed
+        }
+        
+        _ = try await rangeLockTask.value
+        XCTAssertGreaterThan(insertDelay, 300_000_000 as UInt64, "INSERT should have been blocked until SERIALIZABLE transaction finished")
+        
+        let countResult = try await client.withConnection { connection in
+            try await connection.underlying.rawSql("SELECT COUNT(*) as count FROM [\(tableName)] WHERE category = N'A'").get()
+        }
+        XCTAssertEqual(countResult.first?.column("count")?.int, 3)
+    }
+
+    func testConcurrentUpdateBlocksUntilCommit() async throws {
+        let tableName = "test_concurrent_update_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8))"
+        try await client.withConnection { connection in
+            _ = try await connection.underlying.rawSql("CREATE TABLE [\(tableName)] (id INT PRIMARY KEY, value NVARCHAR(50))").get()
+            _ = try await connection.underlying.rawSql("INSERT INTO [\(tableName)] (id, value) VALUES (1, N'Original')").get()
+        }
+        defer {
+            Task {
+                try? await client.withConnection { connection in
+                    _ = try await connection.underlying.rawSql("DROP TABLE [\(tableName)]").get()
+                }
+            }
+        }
+
+        // Session 1: hold an X lock for ~600ms
+        let holder = Task {
+            try await self.client.withConnection { connection in
+                _ = try await connection.underlying.rawSql("BEGIN TRANSACTION").get()
+                _ = try await connection.underlying.rawSql("UPDATE [\(tableName)] SET value = N'Locked' WHERE id = 1").get()
+                try await Task.sleep(nanoseconds: 600_000_000)
+                _ = try await connection.underlying.rawSql("COMMIT").get()
+            }
+        }
+
+        // Give the holder a head start
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        // Session 2: this update should block until commit
+        let elapsed = try await client.withConnection { connection in
+            let start = DispatchTime.now()
+            _ = try await connection.underlying.rawSql("UPDATE [\(tableName)] SET value = N'Updated' WHERE id = 1").get()
+            let end = DispatchTime.now()
+            return end.uptimeNanoseconds - start.uptimeNanoseconds
+        }
+
+        _ = try await withTimeout(5) { try await holder.value }
+        XCTAssertGreaterThan(elapsed, 400_000_000 as UInt64, "Second update should wait for first transaction to commit")
+
+        let final = try await client.withConnection { connection in
+            try await connection.underlying.rawSql("SELECT value FROM [\(tableName)] WHERE id = 1").get()
+        }
+        XCTAssertEqual(final.first?.column("value")?.string, "Updated")
+    }
+    
+    func testSavepointRollbackWithinTransaction() async throws {
+        let tableName = "test_savepoint_\(UUID().uuidString.prefix(8))"
+        try await client.withConnection { connection in
+            _ = try await connection.underlying.rawSql("CREATE TABLE [\(tableName)] (id INT PRIMARY KEY, value NVARCHAR(50))").get()
+        }
+        defer {
+            Task {
+                try? await client.withConnection { connection in
+                    _ = try await connection.underlying.rawSql("DROP TABLE [\(tableName)]").get()
+                }
+            }
+        }
+        
+        try await client.withConnection { connection in
+            _ = try await connection.underlying.rawSql("BEGIN TRANSACTION").get()
+            _ = try await connection.underlying.rawSql("INSERT INTO [\(tableName)] (id, value) VALUES (1, N'Committed')").get()
+            _ = try await connection.underlying.rawSql("SAVE TRANSACTION before_temp").get()
+            _ = try await connection.underlying.rawSql("INSERT INTO [\(tableName)] (id, value) VALUES (2, N'ShouldRollback')").get()
+            _ = try await connection.underlying.rawSql("ROLLBACK TRANSACTION before_temp").get()
+            _ = try await connection.underlying.rawSql("COMMIT").get()
+        }
+        
+        let result = try await client.withConnection { connection in
+            try await connection.underlying.rawSql("SELECT COUNT(*) as count FROM [\(tableName)]").get()
+        }
+        XCTAssertEqual(result.first?.column("count")?.int, 1, "Savepoint rollback should remove second row")
+    }
+    
+    func testSnapshotIsolationProvidesStableView() async throws {
+        try await ensureSnapshotIsolationEnabled()
+        let tableName = "test_snapshot_\(UUID().uuidString.prefix(8))"
+        try await client.withConnection { connection in
+            _ = try await connection.underlying.rawSql("CREATE TABLE [\(tableName)] (id INT PRIMARY KEY, value NVARCHAR(50))").get()
+            _ = try await connection.underlying.rawSql("INSERT INTO [\(tableName)] (id, value) VALUES (1, N'Original')").get()
+        }
+        defer {
+            Task {
+                try? await client.withConnection { connection in
+                    _ = try await connection.underlying.rawSql("DROP TABLE [\(tableName)]").get()
+                }
+            }
+        }
+        
+        let writer = Task {
+            try await self.client.withConnection { connection in
+                _ = try await connection.underlying.rawSql("BEGIN TRANSACTION").get()
+                _ = try await connection.underlying.rawSql("UPDATE [\(tableName)] SET value = N'NewValue' WHERE id = 1").get()
+                try await Task.sleep(nanoseconds: 500_000_000)
+                _ = try await connection.underlying.rawSql("COMMIT").get()
+            }
+        }
+        
+        try await Task.sleep(nanoseconds: 100_000_000)
+        
+        let (firstRead, secondRead) = try await client.withConnection { connection in
+            _ = try await connection.underlying.rawSql("SET TRANSACTION ISOLATION LEVEL SNAPSHOT").get()
+            _ = try await connection.underlying.rawSql("BEGIN TRANSACTION").get()
+            let first = try await connection.underlying.rawSql("SELECT value FROM [\(tableName)] WHERE id = 1").get()
+            try await Task.sleep(nanoseconds: 400_000_000)
+            let second = try await connection.underlying.rawSql("SELECT value FROM [\(tableName)] WHERE id = 1").get()
+            _ = try await connection.underlying.rawSql("COMMIT").get()
+            return (first.first?.column("value")?.string, second.first?.column("value")?.string)
+        }
+        
+        _ = try await writer.value
+        
+        XCTAssertEqual(firstRead, "Original")
+        XCTAssertEqual(secondRead, "Original")
+        
+        let committedValue = try await client.withConnection { connection in
+            try await connection.underlying.rawSql("SELECT value FROM [\(tableName)] WHERE id = 1").get()
+        }
+        XCTAssertEqual(committedValue.first?.column("value")?.string, "NewValue")
     }
 }

@@ -8,51 +8,36 @@ final class SQLServerConstraintTests: XCTestCase {
     private var client: SQLServerClient!
     private var constraintClient: SQLServerConstraintClient!
     private var adminClient: SQLServerAdministrationClient!
-    private var constraintsToDrop: [(name: String, table: String, schema: String)] = []
-    private var tablesToDrop: [String] = []
+    private var testDatabase: String!
 
     private var eventLoop: EventLoop { self.group.next() }
 
-    override func setUpWithError() throws {
-        try super.setUpWithError()
+    override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
         loadEnvFileIfPresent()
         self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        
-        let config = makeSQLServerClientConfiguration()
-        self.client = try SQLServerClient.connect(configuration: config, eventLoopGroupProvider: .shared(group)).wait()
+        let base = try SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).wait()
+        self.testDatabase = "cst_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(10))"
+        try await DDLGuard.shared.withLock {
+            _ = try await withTimeout(15) { try await base.execute("CREATE DATABASE [\(self.testDatabase!)]").get() }
+        }
+        self.client = try await makeClient(forDatabase: self.testDatabase, using: group)
+        _ = try? await base.shutdownGracefully().get()
         self.constraintClient = SQLServerConstraintClient(client: client)
         self.adminClient = SQLServerAdministrationClient(client: client)
     }
 
-    override func tearDownWithError() throws {
-        // Drop any constraints that were created during the test
-        for constraint in constraintsToDrop {
-            let dropSql = "IF EXISTS (SELECT * FROM sys.objects WHERE name = '\(constraint.name)' AND parent_object_id = OBJECT_ID('[\(constraint.schema)].[\(constraint.table)]')) ALTER TABLE [\(constraint.schema)].[\(constraint.table)] DROP CONSTRAINT [\(constraint.name)]"
-            do {
-                _ = try client.execute(dropSql).wait()
-            } catch {
-                // Ignore errors during cleanup
-                print("Warning: Failed to drop constraint \(constraint.name): \(error)")
+    override func tearDown() async throws {
+        let master = try SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).wait()
+        try await DDLGuard.shared.withLock {
+            _ = try? await withTimeout(15) {
+                try await master.execute("ALTER DATABASE [\(self.testDatabase!)] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [\(self.testDatabase!)]").get()
             }
         }
-        constraintsToDrop.removeAll()
-        
-        // Drop any tables that were created during the test
-        for table in tablesToDrop {
-            do {
-                try adminClient.dropTable(name: table).wait()
-            } catch {
-                // Ignore errors during cleanup
-                print("Warning: Failed to drop table \(table): \(error)")
-            }
-        }
-        tablesToDrop.removeAll()
-
-        try self.client.shutdownGracefully().wait()
-        try self.group?.syncShutdownGracefully()
-        self.group = nil
-        try super.tearDownWithError()
+        _ = try? await master.shutdownGracefully().get()
+        try await client?.shutdownGracefully().get()
+        try await group?.shutdownGracefully()
+        group = nil
     }
 
     // MARK: - Helper Methods
@@ -70,8 +55,7 @@ final class SQLServerConstraintTests: XCTestCase {
             columns[0] = SQLServerColumnDefinition(name: "id", definition: .standard(.init(dataType: .int)))
         }
         
-        try await adminClient.createTable(name: name, columns: columns)
-        tablesToDrop.append(name)
+        try await withTimeout(15) { try await self.adminClient.createTable(name: name, columns: columns) }
     }
 
     private func createReferenceTable(name: String) async throws {
@@ -80,8 +64,7 @@ final class SQLServerConstraintTests: XCTestCase {
             SQLServerColumnDefinition(name: "category_name", definition: .standard(.init(dataType: .nvarchar(length: .length(50)))))
         ]
         
-        try await adminClient.createTable(name: name, columns: columns)
-        tablesToDrop.append(name)
+        try await withTimeout(15) { try await self.adminClient.createTable(name: name, columns: columns) }
         
         // Insert some reference data
         let insertSql = """
@@ -99,7 +82,6 @@ final class SQLServerConstraintTests: XCTestCase {
         let parentTableName = "test_fk_parent_\(UUID().uuidString.prefix(8))"
         let childTableName = "test_fk_child_\(UUID().uuidString.prefix(8))"
         let constraintName = "FK_\(childTableName)_\(parentTableName)"
-        constraintsToDrop.append((name: constraintName, table: childTableName, schema: "dbo"))
 
         // Create parent table
         try await createReferenceTable(name: parentTableName)
@@ -110,16 +92,16 @@ final class SQLServerConstraintTests: XCTestCase {
             SQLServerColumnDefinition(name: "parent_id", definition: .standard(.init(dataType: .int))),
             SQLServerColumnDefinition(name: "description", definition: .standard(.init(dataType: .nvarchar(length: .length(200)))))
         ]
-        try await adminClient.createTable(name: childTableName, columns: childColumns)
+        try await withTimeout(15) { try await self.adminClient.createTable(name: childTableName, columns: childColumns) }
 
         // Add foreign key constraint
-        try await constraintClient.addForeignKey(
+        try await withTimeout(15) { try await self.constraintClient.addForeignKey(
             name: constraintName,
             table: childTableName,
             columns: ["parent_id"],
             referencedTable: parentTableName,
             referencedColumns: ["id"]
-        )
+        ) }
 
         // Verify the constraint exists
         let exists = try await constraintClient.constraintExists(name: constraintName, table: childTableName)
@@ -144,7 +126,6 @@ final class SQLServerConstraintTests: XCTestCase {
         let parentTableName = "test_fk_cascade_parent_\(UUID().uuidString.prefix(8))"
         let childTableName = "test_fk_cascade_child_\(UUID().uuidString.prefix(8))"
         let constraintName = "FK_\(childTableName)_cascade"
-        constraintsToDrop.append((name: constraintName, table: childTableName, schema: "dbo"))
 
         // Create parent table
         try await createReferenceTable(name: parentTableName)
@@ -155,18 +136,18 @@ final class SQLServerConstraintTests: XCTestCase {
             SQLServerColumnDefinition(name: "parent_id", definition: .standard(.init(dataType: .int))),
             SQLServerColumnDefinition(name: "description", definition: .standard(.init(dataType: .nvarchar(length: .length(200)))))
         ]
-        try await adminClient.createTable(name: childTableName, columns: childColumns)
+        try await withTimeout(15) { try await self.adminClient.createTable(name: childTableName, columns: childColumns) }
 
         // Add foreign key constraint with cascade delete
         let options = ForeignKeyOptions(onDelete: .cascade, onUpdate: .cascade)
-        try await constraintClient.addForeignKey(
+        try await withTimeout(15) { try await self.constraintClient.addForeignKey(
             name: constraintName,
             table: childTableName,
             columns: ["parent_id"],
             referencedTable: parentTableName,
             referencedColumns: ["id"],
             options: options
-        )
+        ) }
 
         // Insert test data
         let insertChildSql = "INSERT INTO [\(childTableName)] (id, parent_id, description) VALUES (1, 1, N'Test record')"
@@ -196,16 +177,16 @@ final class SQLServerConstraintTests: XCTestCase {
             SQLServerColumnDefinition(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
             SQLServerColumnDefinition(name: "parent_id", definition: .standard(.init(dataType: .int)))
         ]
-        try await adminClient.createTable(name: childTableName, columns: childColumns)
+        try await withTimeout(15) { try await self.adminClient.createTable(name: childTableName, columns: childColumns) }
 
         // Add foreign key constraint
-        try await constraintClient.addForeignKey(
+        try await withTimeout(15) { try await self.constraintClient.addForeignKey(
             name: constraintName,
             table: childTableName,
             columns: ["parent_id"],
             referencedTable: parentTableName,
             referencedColumns: ["id"]
-        )
+        ) }
 
         // Verify it exists
         var exists = try await constraintClient.constraintExists(name: constraintName, table: childTableName)
@@ -224,17 +205,16 @@ final class SQLServerConstraintTests: XCTestCase {
     func testAddCheckConstraint() async throws {
         let tableName = "test_check_constraint_table_\(UUID().uuidString.prefix(8))"
         let constraintName = "CK_\(tableName)_age"
-        constraintsToDrop.append((name: constraintName, table: tableName, schema: "dbo"))
 
         // Create test table
         try await createTestTable(name: tableName)
 
         // Add check constraint
-        try await constraintClient.addCheckConstraint(
+        try await withTimeout(15) { try await self.constraintClient.addCheckConstraint(
             name: constraintName,
             table: tableName,
             expression: "age >= 0 AND age <= 150"
-        )
+        ) }
 
         // Verify the constraint exists
         let exists = try await constraintClient.constraintExists(name: constraintName, table: tableName)
@@ -263,11 +243,11 @@ final class SQLServerConstraintTests: XCTestCase {
         try await createTestTable(name: tableName)
 
         // Add check constraint
-        try await constraintClient.addCheckConstraint(
+        try await withTimeout(15) { try await self.constraintClient.addCheckConstraint(
             name: constraintName,
             table: tableName,
             expression: "status IN ('active', 'inactive', 'pending')"
-        )
+        ) }
 
         // Verify it exists
         var exists = try await constraintClient.constraintExists(name: constraintName, table: tableName)
@@ -286,17 +266,16 @@ final class SQLServerConstraintTests: XCTestCase {
     func testAddUniqueConstraint() async throws {
         let tableName = "test_unique_constraint_table_\(UUID().uuidString.prefix(8))"
         let constraintName = "UQ_\(tableName)_email"
-        constraintsToDrop.append((name: constraintName, table: tableName, schema: "dbo"))
 
         // Create test table
         try await createTestTable(name: tableName)
 
         // Add unique constraint
-        try await constraintClient.addUniqueConstraint(
+        try await withTimeout(15) { try await self.constraintClient.addUniqueConstraint(
             name: constraintName,
             table: tableName,
             columns: ["email"]
-        )
+        ) }
 
         // Verify the constraint exists
         let exists = try await constraintClient.constraintExists(name: constraintName, table: tableName)
@@ -320,17 +299,16 @@ final class SQLServerConstraintTests: XCTestCase {
     func testAddMultiColumnUniqueConstraint() async throws {
         let tableName = "test_multi_unique_table_\(UUID().uuidString.prefix(8))"
         let constraintName = "UQ_\(tableName)_name_email"
-        constraintsToDrop.append((name: constraintName, table: tableName, schema: "dbo"))
 
         // Create test table
         try await createTestTable(name: tableName)
 
         // Add multi-column unique constraint
-        try await constraintClient.addUniqueConstraint(
+        try await withTimeout(15) { try await self.constraintClient.addUniqueConstraint(
             name: constraintName,
             table: tableName,
             columns: ["name", "email"]
-        )
+        ) }
 
         // Test that the constraint allows same name with different email
         let insert1Sql = "INSERT INTO [\(tableName)] (id, name, email, age, status) VALUES (1, N'John', N'john1@test.com', 25, N'active')"
@@ -380,17 +358,16 @@ final class SQLServerConstraintTests: XCTestCase {
     func testAddPrimaryKeyConstraint() async throws {
         let tableName = "test_pk_constraint_table_\(UUID().uuidString.prefix(8))"
         let constraintName = "PK_\(tableName)"
-        constraintsToDrop.append((name: constraintName, table: tableName, schema: "dbo"))
 
         // Create test table without primary key
         try await createTestTable(name: tableName, withPrimaryKey: false)
 
         // Add primary key constraint
-        try await constraintClient.addPrimaryKey(
+        try await withTimeout(15) { try await self.constraintClient.addPrimaryKey(
             name: constraintName,
             table: tableName,
             columns: ["id"]
-        )
+        ) }
 
         // Verify the constraint exists
         let exists = try await constraintClient.constraintExists(name: constraintName, table: tableName)
@@ -414,17 +391,16 @@ final class SQLServerConstraintTests: XCTestCase {
     func testAddCompositePrimaryKeyConstraint() async throws {
         let tableName = "test_composite_pk_table_\(UUID().uuidString.prefix(8))"
         let constraintName = "PK_\(tableName)_composite"
-        constraintsToDrop.append((name: constraintName, table: tableName, schema: "dbo"))
 
         // Create test table without primary key
         try await createTestTable(name: tableName, withPrimaryKey: false)
 
         // Add composite primary key constraint
-        try await constraintClient.addPrimaryKey(
+        try await withTimeout(15) { try await self.constraintClient.addPrimaryKey(
             name: constraintName,
             table: tableName,
             columns: ["id", "name"]
-        )
+        ) }
 
         // Test that the constraint allows same id with different name
         let insert1Sql = "INSERT INTO [\(tableName)] (id, name, email, age, status) VALUES (1, N'John', N'john@test.com', 25, N'active')"
@@ -448,18 +424,17 @@ final class SQLServerConstraintTests: XCTestCase {
     func testAddDefaultConstraint() async throws {
         let tableName = "test_default_constraint_table_\(UUID().uuidString.prefix(8))"
         let constraintName = "DF_\(tableName)_status"
-        constraintsToDrop.append((name: constraintName, table: tableName, schema: "dbo"))
 
         // Create test table
         try await createTestTable(name: tableName)
 
         // Add default constraint
-        try await constraintClient.addDefaultConstraint(
+        try await withTimeout(15) { try await self.constraintClient.addDefaultConstraint(
             name: constraintName,
             table: tableName,
             column: "status",
             defaultValue: "'pending'"
-        )
+        ) }
 
         // Verify the constraint exists
         let exists = try await constraintClient.constraintExists(name: constraintName, table: tableName)
@@ -507,24 +482,23 @@ final class SQLServerConstraintTests: XCTestCase {
         let tableName = "test_list_constraints_table_\(UUID().uuidString.prefix(8))"
         let checkConstraintName = "CK_\(tableName)_age"
         let uniqueConstraintName = "UQ_\(tableName)_email"
-        constraintsToDrop.append((name: checkConstraintName, table: tableName, schema: "dbo"))
-        constraintsToDrop.append((name: uniqueConstraintName, table: tableName, schema: "dbo"))
+        
 
         // Create test table with primary key
         try await createTestTable(name: tableName, withPrimaryKey: true)
 
         // Add various constraints
-        try await constraintClient.addCheckConstraint(
+        try await withTimeout(15) { try await self.constraintClient.addCheckConstraint(
             name: checkConstraintName,
             table: tableName,
             expression: "age >= 0"
-        )
+        ) }
 
-        try await constraintClient.addUniqueConstraint(
+        try await withTimeout(15) { try await self.constraintClient.addUniqueConstraint(
             name: uniqueConstraintName,
             table: tableName,
             columns: ["email"]
-        )
+        ) }
 
         // List all constraints
         let constraints = try await constraintClient.listTableConstraints(table: tableName)
@@ -549,7 +523,6 @@ final class SQLServerConstraintTests: XCTestCase {
     func testEnableDisableConstraint() async throws {
         let tableName = "test_enable_disable_table_\(UUID().uuidString.prefix(8))"
         let constraintName = "CK_\(tableName)_age"
-        constraintsToDrop.append((name: constraintName, table: tableName, schema: "dbo"))
 
         // Create test table
         try await createTestTable(name: tableName)
@@ -591,17 +564,16 @@ final class SQLServerConstraintTests: XCTestCase {
     func testAddDuplicateConstraint() async throws {
         let tableName = "test_duplicate_constraint_table_\(UUID().uuidString.prefix(8))"
         let constraintName = "CK_\(tableName)_duplicate"
-        constraintsToDrop.append((name: constraintName, table: tableName, schema: "dbo"))
 
         // Create test table
         try await createTestTable(name: tableName)
 
         // Add the first constraint
-        try await constraintClient.addCheckConstraint(
+        try await withTimeout(15) { try await self.constraintClient.addCheckConstraint(
             name: constraintName,
             table: tableName,
             expression: "age >= 0"
-        )
+        ) }
 
         // Attempt to add duplicate should fail
         do {
