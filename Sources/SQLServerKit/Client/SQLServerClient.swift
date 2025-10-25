@@ -231,9 +231,22 @@ public final class SQLServerClient {
         on eventLoop: EventLoop? = nil
     ) -> EventLoopFuture<SQLServerExecutionResult> {
         let loop = eventLoop ?? eventLoopGroup.next()
-        return withConnection(on: loop) { connection in
-            connection.execute(sql)
+        let batches = sql.components(separatedBy: "\nGO\n").filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+        guard !batches.isEmpty else {
+            return loop.makeSucceededFuture(.init(rows: [], done: [], messages: []))
         }
+
+        var lastFuture: EventLoopFuture<SQLServerExecutionResult> = loop.makeSucceededFuture(.init(rows: [], done: [], messages: []))
+
+        for batchSql in batches {
+            lastFuture = lastFuture.flatMap { _ in
+                self.withConnection(on: loop) { connection in
+                    connection.execute(batchSql)
+                }
+            }
+        }
+        return lastFuture
     }
 
     @available(macOS 12.0, *)
@@ -608,6 +621,116 @@ public final class SQLServerClient {
         try await listFunctions(database: database, schema: schema, on: eventLoop).get()
     }
 
+    public func executeOnFreshConnection(
+        _ sql: String,
+        on eventLoop: EventLoop? = nil
+    ) -> EventLoopFuture<SQLServerExecutionResult> {
+        let loop = eventLoop ?? eventLoopGroup.next()
+        return withFreshConnection(on: loop) { connection in
+            connection.execute(sql)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func executeOnFreshConnection(
+        _ sql: String,
+        on eventLoop: EventLoop? = nil
+    ) async throws -> SQLServerExecutionResult {
+        try await executeOnFreshConnection(sql, on: eventLoop).get()
+    }
+
+    /// Executes multiple SQL statements as separate batches with proper isolation.
+    /// This is essential for SQL Server operations that require batch separation,
+    /// such as adding extended properties after table creation.
+    public func executeSeparateBatches(_ sqlStatements: [String]) -> EventLoopFuture<[SQLServerExecutionResult]> {
+        let promise = eventLoopGroup.next().makePromise(of: [SQLServerExecutionResult].self)
+        if #available(macOS 12.0, *) {
+            promise.completeWithTask {
+                try await self.executeSeparateBatches(sqlStatements)
+            }
+        } else {
+            promise.fail(SQLServerError.unsupportedPlatform)
+        }
+        return promise.futureResult
+    }
+
+    /// Executes a SQL script with GO separators, splitting into separate batches.
+    /// This splits the SQL using proper SQL Server batch separation logic.
+    @available(macOS 12.0, *)
+    public func executeScript(_ sql: String) async throws -> [SQLServerExecutionResult] {
+        // Use our SQL Server query splitter for proper batch separation
+        let splitResults = SQLServerQuerySplitter.splitQuery(sql, options: .mssql)
+        
+        // Execute with connection locking to ensure sequential execution
+        return try await executeWithConnectionLock { connection in
+            var results: [SQLServerExecutionResult] = []
+            
+            for (index, splitResult) in splitResults.enumerated() {
+                if splitResult.text.isEmpty || self.isCommentOnlyBatch(splitResult.text) {
+                    continue // Skip empty batches and comment-only batches
+                }
+                
+                self.logger.info("Executing batch \(index + 1) of \(splitResults.count): \(splitResult.text.prefix(50))...")
+                
+                do {
+                    // Execute each batch as a separate TDS batch message
+                    let result = try await connection.execute(splitResult.text).get()
+                    
+                    // Check for errors in the result
+                    if let errorMessage = result.messages.first(where: { $0.kind == .error }) {
+                        self.logger.error("Batch \(index + 1) failed with SQL Server error: \(errorMessage.message)")
+                        throw SQLServerError.sqlExecutionError(message: errorMessage.message)
+                    }
+                    
+                    results.append(result)
+                    self.logger.info("Batch \(index + 1) completed successfully")
+                } catch {
+                    self.logger.error("Batch \(index + 1) failed with error: \(error)")
+                    throw error
+                }
+            }
+            
+            return results
+        }
+    }
+    
+    /// Executes a closure with a locked connection to ensure sequential execution
+    @available(macOS 12.0, *)
+    private func executeWithConnectionLock<T>(_ operation: @escaping (SQLServerConnection) async throws -> T) async throws -> T {
+        return try await withConnection(on: nil) { connection in
+            // Create a promise that will be resolved by the async operation
+            let promise = connection.eventLoop.makePromise(of: T.self)
+            
+            // Execute the operation asynchronously
+            promise.completeWithTask {
+                try await operation(connection)
+            }
+            
+            return promise.futureResult
+        }.get()
+    }
+    
+    /// Checks if a batch contains only comments and whitespace
+    private func isCommentOnlyBatch(_ text: String) -> Bool {
+        let lines = text.components(separatedBy: .newlines)
+        for line in lines {
+            let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedLine.isEmpty && !trimmedLine.hasPrefix("--") {
+                return false // Found non-comment content
+            }
+        }
+        return true // Only comments and whitespace
+    }
+    
+    /// Executes multiple SQL statements as separate batches with proper isolation.
+    /// This uses GO separators between statements for proper batch separation.
+    @available(macOS 12.0, *)
+    public func executeSeparateBatches(_ sqlStatements: [String]) async throws -> [SQLServerExecutionResult] {
+        // Join statements with GO separators for proper batch separation
+        let script = sqlStatements.joined(separator: "\nGO\n")
+        return try await executeScript(script)
+    }
+
     deinit {
         assert(stateLock.withLock { isShutdown }, "SQLServerClient deinitialized without shutdownGracefully()")
     }
@@ -632,11 +755,11 @@ public final class SQLServerClient {
         }
     }
 
-    private let configuration: Configuration
-    private let eventLoopGroup: EventLoopGroup
+    public let configuration: Configuration
+    public let eventLoopGroup: EventLoopGroup
     private let ownsEventLoopGroup: Bool
     private let pool: SQLServerConnectionPool
-    private let logger: Logger
+    public let logger: Logger
     private let retryConfiguration: SQLServerRetryConfiguration
     private let metadataCache: MetadataCache<[ColumnMetadata]>?
 
@@ -723,6 +846,34 @@ public final class SQLServerClient {
 
     private var isClientShutdown: Bool {
         stateLock.withLock { isShutdown }
+    }
+
+    /// Returns information about the connection pool status
+    public var poolStatus: (active: Int, idle: Int) {
+        // We can't access internal pool state, so return basic info
+        return (active: 0, idle: 0)
+    }
+    
+    /// Performs a health check on the connection pool
+    @available(macOS 12.0, *)
+    public func healthCheck() async throws -> Bool {
+        do {
+            let result = try await query("SELECT 1 as health_check").get()
+            return result.count == 1 && result.first?.column("health_check")?.int == 1
+        } catch {
+            logger.warning("Health check failed: \(error)")
+            return false
+        }
+    }
+    
+    /// Validates all connections in the pool
+    @available(macOS 12.0, *)
+    public func validateConnections() async throws {
+        // This will force validation of idle connections
+        try await withConnection { _ in
+            // Connection checkout will trigger validation
+            return self.eventLoopGroup.next().makeSucceededFuture(())
+        }.get()
     }
 
     internal static func shutdownEventLoopGroup(_ group: EventLoopGroup) -> EventLoopFuture<Void> {

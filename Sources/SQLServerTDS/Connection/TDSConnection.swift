@@ -21,10 +21,32 @@ public final class TDSConnection {
         return !self.channel.isActive
     }
     
+    // Transaction state management
+    private var currentTransactionDescriptor: [UInt8] = [0, 0, 0, 0, 0, 0, 0, 0] // 8 bytes like Microsoft
+    private var outstandingRequestCount: UInt32 = 1
+    private var isInTransaction: Bool = false
+    
     init(channel: Channel, logger: Logger) {
         self.channel = channel
         self.logger = logger
         self.didClose = false
+    }
+    
+    // Transaction state accessors
+    public var transactionDescriptor: [UInt8] {
+        return currentTransactionDescriptor
+    }
+    
+    public var requestCount: UInt32 {
+        return outstandingRequestCount
+    }
+    
+    internal func updateTransactionState(descriptor: [UInt8], requestCount: UInt32) {
+        self.currentTransactionDescriptor = descriptor
+        self.outstandingRequestCount = requestCount
+        self.isInTransaction = !descriptor.allSatisfy { $0 == 0 }
+        let descriptorHex = descriptor.map { String(format: "%02x", $0) }.joined()
+        logger.trace("TDS transaction state updated: descriptor=\(descriptorHex), requestCount=\(requestCount), inTransaction=\(isInTransaction)")
     }
     
     public func close() -> EventLoopFuture<Void> {
