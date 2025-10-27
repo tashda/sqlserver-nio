@@ -5,42 +5,49 @@ import NIO
 
 final class SQLServerRoutineTests: XCTestCase {
     private var group: EventLoopGroup!
+    private var baseClient: SQLServerClient!
     private var client: SQLServerClient!
     private var routineClient: SQLServerRoutineClient!
-    private var testDatabase: String!
     private var skipDueToEnv: Bool = false
 
     private var eventLoop: EventLoop { self.group.next() }
+
+    // Helper to run a test body in an ephemeral database with DB-scoped clients
+    private func inTempDb(_ body: @escaping () async throws -> Void) async throws {
+        try await withTemporaryDatabase(client: self.baseClient, prefix: "rtn") { db in
+            let dbClient = try await makeClient(forDatabase: db, using: self.group)
+            let prevClient = self.client
+            let prevRC = self.routineClient
+            self.client = dbClient
+            self.routineClient = SQLServerRoutineClient(client: dbClient)
+            defer {
+                Task {
+                    _ = try? await dbClient.shutdownGracefully().get()
+                    self.client = prevClient
+                    self.routineClient = prevRC
+                }
+            }
+            // Probe DB readiness lightly; skip if environment is closed
+            do {
+                _ = try await withRetry({ try await withTimeout(5, { try await self.client.query("SELECT 1 as ready").get() }) })
+            } catch {
+                throw XCTSkip("Skipping due to environment readiness: \(error)")
+            }
+            try await body()
+        }
+    }
 
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
         loadEnvFileIfPresent()
         self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        let base = try SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).wait()
-        self.testDatabase = "rtn_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(10))"
-        try await DDLGuard.shared.withLock {
-            _ = try await withTimeout(15) { try await base.execute("CREATE DATABASE [\(self.testDatabase!)]").get() }
-        }
-        self.client = try await makeClient(forDatabase: self.testDatabase, using: group)
-        _ = try? await base.shutdownGracefully().get()
-        self.routineClient = SQLServerRoutineClient(client: client)
-        // Wait for DB readiness with a quick probe (do not fail the whole suite)
-        do {
-            _ = try await withRetry({ try await withTimeout(10, { try await self.client.query("SELECT 1 as ready").get() }) })
-        } catch {
-            self.skipDueToEnv = true
-        }
+        self.baseClient = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).get()
+        self.client = self.baseClient
+        self.routineClient = SQLServerRoutineClient(client: self.client) // placeholder, replaced in inTempDb
     }
 
     override func tearDown() async throws {
-        let master = try SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).wait()
-        try await DDLGuard.shared.withLock {
-            _ = try? await withTimeout(15) {
-                try await master.execute("ALTER DATABASE [\(self.testDatabase!)] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [\(self.testDatabase!)]").get()
-            }
-        }
-        _ = try? await master.shutdownGracefully().get()
-        try await client?.shutdownGracefully().get()
+        try await baseClient?.shutdownGracefully().get()
         try await group?.shutdownGracefully()
         group = nil
     }
@@ -48,44 +55,23 @@ final class SQLServerRoutineTests: XCTestCase {
     // MARK: - Stored Procedure Tests
 
     func testCreateSimpleStoredProcedure() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
-        let procedureName = "test_simple_proc_\(UUID().uuidString.prefix(8))"
-        do {
-            try await withDbConnection(client: self.client, database: self.testDatabase) { conn in
-                _ = try await conn.underlying.rawSql("""
-                    CREATE OR ALTER PROCEDURE [dbo].[\(procedureName)]
-                    AS
-                    BEGIN
-                        SELECT 'Hello World' AS message
-                    END
-                """).get()
-
-                // Verify the procedure exists
-                let existsRows = try await conn.underlying.rawSql("""
-                    SELECT COUNT(*) AS cnt FROM sys.objects WHERE type = 'P' AND name = N'\(procedureName)'
-                """).get()
-                XCTAssertEqual(existsRows.first?.column("cnt")?.int, 1, "Stored procedure should exist after creation")
-
-                // Execute the procedure
-                let result = try await conn.underlying.rawSql("EXEC [dbo].[\(procedureName)]").get()
-                XCTAssertEqual(result.count, 1)
-                XCTAssertEqual(result.first?.column("message")?.string, "Hello World")
-            }
-        } catch {
-            if String(describing: error).contains("Already closed") {
-                throw XCTSkip("Skipping due to unstable server connection: \(error)")
-            }
-            let norm = SQLServerError.normalize(error)
-            switch norm {
-            case .connectionClosed, .timeout:
-                throw XCTSkip("Skipping due to unstable server: \(norm)")
-            default:
-                throw error
-            }
+        try await inTempDb {
+            let procedureName = "test_simple_proc_\(UUID().uuidString.prefix(8))"
+            let body = """
+            BEGIN
+                SELECT 'Hello World' AS message
+            END
+            """
+            try await withTimeout(15) { try await self.routineClient.createStoredProcedure(name: procedureName, body: body) }
+            let existsRows = try await self.client.query("SELECT COUNT(*) AS cnt FROM sys.objects WHERE type = 'P' AND name = N'\(procedureName)'")
+            XCTAssertEqual(existsRows.first?.column("cnt")?.int, 1)
+            let result = try await self.client.query("EXEC [dbo].[\(procedureName)]")
+            XCTAssertEqual(result.first?.column("message")?.string, "Hello World")
         }
     }
 
     func testCreateStoredProcedureWithParameters() async throws {
+        try await inTempDb {
         let procedureName = "test_param_proc_\(UUID().uuidString.prefix(8))"
         
 
@@ -103,7 +89,7 @@ final class SQLServerRoutineTests: XCTestCase {
         try await withTimeout(15) { try await self.routineClient.createStoredProcedure(name: procedureName, parameters: parameters, body: body) }
 
         // Verify the procedure exists
-        let exists = try await routineClient.procedureExists(name: procedureName)
+        let exists = try await self.routineClient.procedureExists(name: procedureName)
         XCTAssertTrue(exists, "Stored procedure should exist after creation")
 
         // Test calling the procedure with parameters
@@ -112,12 +98,14 @@ final class SQLServerRoutineTests: XCTestCase {
         EXEC [\(procedureName)] @input_value = 5, @output_value = @result OUTPUT
         SELECT @result AS doubled_value
         """
-        let result = try await client.query(callSql)
+        let result = try await self.client.query(callSql)
         XCTAssertEqual(result.count, 1)
         XCTAssertEqual(result.first?.column("doubled_value")?.int, 10)
+        }
     }
 
     func testCreateStoredProcedureWithOptions() async throws {
+        try await inTempDb {
         let procedureName = "test_options_proc_\(UUID().uuidString.prefix(8))"
         
 
@@ -131,11 +119,13 @@ final class SQLServerRoutineTests: XCTestCase {
         try await withTimeout(15) { try await self.routineClient.createStoredProcedure(name: procedureName, body: body, options: options) }
 
         // Verify the procedure exists
-        let exists = try await routineClient.procedureExists(name: procedureName)
+        let exists = try await self.routineClient.procedureExists(name: procedureName)
         XCTAssertTrue(exists, "Stored procedure should exist after creation")
+        }
     }
     
     func testCreateStoredProcedureWithExecuteAsOption() async throws {
+        try await inTempDb {
         let procedureName = "test_exec_as_proc_\(UUID().uuidString.prefix(8))"
         
         
@@ -149,7 +139,7 @@ final class SQLServerRoutineTests: XCTestCase {
         try await withTimeout(15) { try await self.routineClient.createStoredProcedure(name: procedureName, body: body, options: options) }
         
         // Validate definition contains EXECUTE AS
-        let definitionResult = try await client.query("""
+        let definitionResult = try await self.client.query("""
         SELECT definition 
         FROM sys.sql_modules 
         WHERE object_id = OBJECT_ID(N'[dbo].[\(procedureName)]')
@@ -158,11 +148,13 @@ final class SQLServerRoutineTests: XCTestCase {
         XCTAssertTrue(definition.uppercased().contains("EXECUTE AS"), "Stored procedure definition should include EXECUTE AS clause, got: \(definition)")
         
         // Execute the procedure to ensure it runs successfully
-        let execResult = try await client.query("EXEC [\(procedureName)]")
+        let execResult = try await self.client.query("EXEC [\(procedureName)]")
         XCTAssertEqual(execResult.first?.column("executed_as")?.string?.lowercased(), "sa")
+        }
     }
 
     func testAlterStoredProcedure() async throws {
+        try await inTempDb {
         let procedureName = "test_alter_proc_\(UUID().uuidString.prefix(8))"
         
 
@@ -183,12 +175,14 @@ final class SQLServerRoutineTests: XCTestCase {
         try await withTimeout(15) { try await self.routineClient.alterStoredProcedure(name: procedureName, body: alteredBody) }
 
         // Test the altered procedure
-        let result = try await client.query("EXEC [\(procedureName)]")
+        let result = try await self.client.query("EXEC [\(procedureName)]")
         XCTAssertEqual(result.count, 1)
         XCTAssertEqual(result.first?.column("status")?.string, "Altered")
+        }
     }
 
     func testDropStoredProcedure() async throws {
+        try await inTempDb {
         let procedureName = "test_drop_proc_\(UUID().uuidString.prefix(8))"
 
         // Create procedure
@@ -200,20 +194,22 @@ final class SQLServerRoutineTests: XCTestCase {
         try await withTimeout(15) { try await self.routineClient.createStoredProcedure(name: procedureName, body: body) }
 
         // Verify it exists
-        var exists = try await routineClient.procedureExists(name: procedureName)
+        var exists = try await self.routineClient.procedureExists(name: procedureName)
         XCTAssertTrue(exists, "Stored procedure should exist after creation")
 
         // Drop the procedure
-        try await routineClient.dropStoredProcedure(name: procedureName)
+        try await self.routineClient.dropStoredProcedure(name: procedureName)
 
         // Verify it's gone
-        exists = try await routineClient.procedureExists(name: procedureName)
+        exists = try await self.routineClient.procedureExists(name: procedureName)
         XCTAssertFalse(exists, "Stored procedure should not exist after being dropped")
+        }
     }
 
     // MARK: - Scalar Function Tests
 
     func testCreateSimpleScalarFunction() async throws {
+        try await inTempDb {
         let functionName = "test_simple_func_\(UUID().uuidString.prefix(8))"
         
 
@@ -230,16 +226,18 @@ final class SQLServerRoutineTests: XCTestCase {
         ) }
 
         // Verify the function exists
-        let exists = try await routineClient.functionExists(name: functionName)
+        let exists = try await self.routineClient.functionExists(name: functionName)
         XCTAssertTrue(exists, "Function should exist after creation")
 
         // Test calling the function
-        let result = try await client.query("SELECT dbo.[\(functionName)]() AS result")
+        let result = try await self.client.query("SELECT dbo.[\(functionName)]() AS result")
         XCTAssertEqual(result.count, 1)
         XCTAssertEqual(result.first?.column("result")?.int, 42)
+        }
     }
 
     func testCreateScalarFunctionWithParameters() async throws {
+        try await inTempDb {
         let functionName = "test_param_func_\(UUID().uuidString.prefix(8))"
         
 
@@ -262,16 +260,18 @@ final class SQLServerRoutineTests: XCTestCase {
         ) }
 
         // Verify the function exists
-        let exists = try await routineClient.functionExists(name: functionName)
+        let exists = try await self.routineClient.functionExists(name: functionName)
         XCTAssertTrue(exists, "Function should exist after creation")
 
         // Test calling the function
-        let result = try await client.query("SELECT dbo.[\(functionName)](10, 20) AS result")
+        let result = try await self.client.query("SELECT dbo.[\(functionName)](10, 20) AS result")
         XCTAssertEqual(result.count, 1)
         XCTAssertEqual(result.first?.column("result")?.int, 30)
+        }
     }
 
     func testCreateScalarFunctionWithDefaultParameter() async throws {
+        try await inTempDb {
         let functionName = "test_default_func_\(UUID().uuidString.prefix(8))"
         
 
@@ -293,14 +293,16 @@ final class SQLServerRoutineTests: XCTestCase {
         ) }
 
         // Test calling the function with default parameter
-        let result = try await client.query("SELECT dbo.[\(functionName)](DEFAULT) AS result")
+        let result = try await self.client.query("SELECT dbo.[\(functionName)](DEFAULT) AS result")
         XCTAssertEqual(result.count, 1)
         XCTAssertEqual(result.first?.column("result")?.int, 20)
+        }
     }
 
     // MARK: - Table-Valued Function Tests
 
     func testCreateTableValuedFunction() async throws {
+        try await inTempDb {
         let functionName = "test_table_func_\(UUID().uuidString.prefix(8))"
         
 
@@ -329,19 +331,21 @@ final class SQLServerRoutineTests: XCTestCase {
         ) }
 
         // Verify the function exists
-        let exists = try await routineClient.functionExists(name: functionName)
+        let exists = try await self.routineClient.functionExists(name: functionName)
         XCTAssertTrue(exists, "Table-valued function should exist after creation")
 
         // Test calling the function
-        let result = try await client.query("SELECT * FROM dbo.[\(functionName)](2) ORDER BY id")
+        let result = try await self.client.query("SELECT * FROM dbo.[\(functionName)](2) ORDER BY id")
         XCTAssertEqual(result.count, 2)
         XCTAssertEqual(result[0].column("id")?.int, 1)
         XCTAssertEqual(result[0].column("value")?.string, "First")
         XCTAssertEqual(result[1].column("id")?.int, 2)
         XCTAssertEqual(result[1].column("value")?.string, "Second")
+        }
     }
 
     func testDropFunction() async throws {
+        try await inTempDb {
         let functionName = "test_drop_func_\(UUID().uuidString.prefix(8))"
 
         // Create function
@@ -350,23 +354,25 @@ final class SQLServerRoutineTests: XCTestCase {
             RETURN 123
         END
         """
-        try await routineClient.createFunction(name: functionName, returnType: .int, body: body)
+        try await self.routineClient.createFunction(name: functionName, returnType: .int, body: body)
 
         // Verify it exists
-        var exists = try await routineClient.functionExists(name: functionName)
+        var exists = try await self.routineClient.functionExists(name: functionName)
         XCTAssertTrue(exists, "Function should exist after creation")
 
         // Drop the function
-        try await routineClient.dropFunction(name: functionName)
+        try await self.routineClient.dropFunction(name: functionName)
 
         // Verify it's gone
-        exists = try await routineClient.functionExists(name: functionName)
+        exists = try await self.routineClient.functionExists(name: functionName)
         XCTAssertFalse(exists, "Function should not exist after being dropped")
+        }
     }
 
     // MARK: - Complex Scenarios
 
     func testCreateComplexStoredProcedureWithMultipleParameterTypes() async throws {
+        try await inTempDb {
         let procedureName = "test_complex_proc_\(UUID().uuidString.prefix(8))"
         
 
@@ -388,7 +394,7 @@ final class SQLServerRoutineTests: XCTestCase {
         try await withTimeout(15) { try await self.routineClient.createStoredProcedure(name: procedureName, parameters: parameters, body: body) }
 
         // Verify the procedure exists
-        let exists = try await routineClient.procedureExists(name: procedureName)
+        let exists = try await self.routineClient.procedureExists(name: procedureName)
         XCTAssertTrue(exists, "Complex stored procedure should exist after creation")
 
         // Test calling the procedure
@@ -404,13 +410,15 @@ final class SQLServerRoutineTests: XCTestCase {
         SELECT @result AS result, @counter AS counter
         """
         
-        let result = try await client.query(callSql)
+        let result = try await self.client.query(callSql)
         XCTAssertEqual(result.count, 1)
         XCTAssertTrue(result.first?.column("result")?.string?.contains("Processed: Test Data") == true)
         XCTAssertEqual(result.first?.column("counter")?.int, 6)
+        }
     }
 
     func testCreateFunctionWithStringReturnType() async throws {
+        try await inTempDb {
         let functionName = "test_string_func_\(UUID().uuidString.prefix(8))"
         
 
@@ -433,14 +441,16 @@ final class SQLServerRoutineTests: XCTestCase {
         ) }
 
         // Test calling the function
-        let result = try await client.query("SELECT dbo.[\(functionName)](N'John', N'Doe') AS full_name")
+        let result = try await self.client.query("SELECT dbo.[\(functionName)](N'John', N'Doe') AS full_name")
         XCTAssertEqual(result.count, 1)
         XCTAssertEqual(result.first?.column("full_name")?.string, "John Doe")
+        }
     }
 
     // MARK: - Error Handling Tests
 
     func testCreateDuplicateStoredProcedure() async throws {
+        try await inTempDb {
         let procedureName = "test_duplicate_proc_\(UUID().uuidString.prefix(8))"
         
 
@@ -451,32 +461,36 @@ final class SQLServerRoutineTests: XCTestCase {
         """
 
         // Create the first procedure
-        try await routineClient.createStoredProcedure(name: procedureName, body: body)
+        try await self.routineClient.createStoredProcedure(name: procedureName, body: body)
 
         // Attempt to create duplicate should fail
         do {
-            try await routineClient.createStoredProcedure(name: procedureName, body: body)
+            try await self.routineClient.createStoredProcedure(name: procedureName, body: body)
             XCTFail("Creating duplicate procedure should have failed")
         } catch {
             // Expected to fail
             XCTAssertTrue(error is SQLServerError)
         }
+        }
     }
 
     func testDropNonExistentStoredProcedure() async throws {
+        try await inTempDb {
         let procedureName = "non_existent_proc_\(UUID().uuidString.prefix(8))"
 
         // Attempt to drop non-existent procedure should fail
         do {
-            try await routineClient.dropStoredProcedure(name: procedureName)
+            try await self.routineClient.dropStoredProcedure(name: procedureName)
             XCTFail("Dropping non-existent procedure should have failed")
         } catch {
             // Expected to fail
             XCTAssertTrue(error is SQLServerError)
         }
+        }
     }
 
     func testCreateStoredProcedureWithInvalidSyntax() async throws {
+        try await inTempDb {
         let procedureName = "test_invalid_proc_\(UUID().uuidString.prefix(8))"
 
         let invalidBody = """
@@ -487,11 +501,12 @@ final class SQLServerRoutineTests: XCTestCase {
 
         // Attempt to create procedure with invalid syntax should fail
         do {
-            try await routineClient.createStoredProcedure(name: procedureName, body: invalidBody)
+            try await self.routineClient.createStoredProcedure(name: procedureName, body: invalidBody)
             XCTFail("Creating procedure with invalid syntax should have failed")
         } catch {
             // Expected to fail
             XCTAssertTrue(error is SQLServerError)
+        }
         }
     }
 }

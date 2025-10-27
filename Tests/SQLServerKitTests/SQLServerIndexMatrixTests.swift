@@ -12,7 +12,7 @@ final class SQLServerIndexMatrixTests: XCTestCase {
         XCTAssertTrue(isLoggingConfigured)
         loadEnvFileIfPresent()
         group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        client = try SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).wait()
+        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).get()
         do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1").get() } } catch { skipDueToEnv = true }
     }
 

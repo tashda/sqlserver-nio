@@ -5,9 +5,9 @@ import NIO
 
 final class SQLServerTableAdministrationTests: XCTestCase {
     private var group: EventLoopGroup!
+    private var baseClient: SQLServerClient!
     private var client: SQLServerClient!
     private var adminClient: SQLServerAdministrationClient!
-    private var testDatabase: String!
 
     private var eventLoop: EventLoop { self.group.next() }
 
@@ -15,27 +15,12 @@ final class SQLServerTableAdministrationTests: XCTestCase {
         XCTAssertTrue(isLoggingConfigured)
         loadEnvFileIfPresent()
         self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        // Use a base client to create the ephemeral DB
-        let base = try SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).wait()
-        self.testDatabase = "adm_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(10))"
-        try await DDLGuard.shared.withLock {
-            _ = try await withTimeout(15) { try await base.execute("CREATE DATABASE [\(self.testDatabase!)]").get() }
-        }
-        self.client = try await makeClient(forDatabase: self.testDatabase, using: group)
-        _ = try? await base.shutdownGracefully().get()
-        self.adminClient = SQLServerAdministrationClient(client: client)
+        self.baseClient = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).get()
+        self.client = self.baseClient
     }
 
     override func tearDown() async throws {
-        // Drop the ephemeral DB with a master-scoped client
-        let master = try SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).wait()
-        try await DDLGuard.shared.withLock {
-            _ = try? await withTimeout(15) {
-                try await master.execute("ALTER DATABASE [\(self.testDatabase!)] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [\(self.testDatabase!)]").get()
-            }
-        }
-        _ = try? await master.shutdownGracefully().get()
-        try await client?.shutdownGracefully().get()
+        try await baseClient?.shutdownGracefully().get()
         try await group?.shutdownGracefully()
         group = nil
     }
@@ -43,27 +28,30 @@ final class SQLServerTableAdministrationTests: XCTestCase {
     // MARK: - Tests
 
     func testDropTable() async throws {
-        let tableName = "test_drop_table_\(UUID().uuidString.prefix(8))"
+        try await inTempDb {
+            let tableName = "test_drop_table_\(UUID().uuidString.prefix(8))"
         // Don't add to tablesToDrop because we are testing the drop functionality itself
 
         // 1. Create a simple table
         let columns = [SQLServerColumnDefinition(name: "id", definition: .standard(.init(dataType: .int)))]
-        try await adminClient.createTable(name: tableName, columns: columns)
+            try await self.adminClient.createTable(name: tableName, columns: columns)
 
         // 2. Verify it exists
-        var tableCount = try await getTableCount(name: tableName)
+            var tableCount = try await self.getTableCount(name: tableName)
         XCTAssertEqual(tableCount, 1, "Table should exist after creation")
 
         // 3. Drop the table
-        try await adminClient.dropTable(name: tableName)
+            try await self.adminClient.dropTable(name: tableName)
 
         // 4. Verify it's gone
-        tableCount = try await getTableCount(name: tableName)
-        XCTAssertEqual(tableCount, 0, "Table should not exist after being dropped")
+            tableCount = try await self.getTableCount(name: tableName)
+            XCTAssertEqual(tableCount, 0, "Table should not exist after being dropped")
+        }
     }
 
     func testCreateTableSimple() async throws {
-        let tableName = "test_simple_table_\(UUID().uuidString.prefix(8))"
+        try await inTempDb {
+            let tableName = "test_simple_table_\(UUID().uuidString.prefix(8))"
         
 
         let columns = [
@@ -71,14 +59,16 @@ final class SQLServerTableAdministrationTests: XCTestCase {
             SQLServerColumnDefinition(name: "name", definition: .standard(.init(dataType: .nvarchar(length: .length(100)))))
         ]
 
-        try await adminClient.createTable(name: tableName, columns: columns)
+            try await self.adminClient.createTable(name: tableName, columns: columns)
 
-        let tableCount = try await getTableCount(name: tableName)
-        XCTAssertEqual(tableCount, 1, "The simple table should have been created.")
+            let tableCount = try await self.getTableCount(name: tableName)
+            XCTAssertEqual(tableCount, 1, "The simple table should have been created.")
+        }
     }
 
     func testCreateTableWithIdentityAndDefaults() async throws {
-        let tableName = "test_identity_defaults_\(UUID().uuidString.prefix(8))"
+        try await inTempDb {
+            let tableName = "test_identity_defaults_\(UUID().uuidString.prefix(8))"
         
 
         let columns = [
@@ -86,7 +76,7 @@ final class SQLServerTableAdministrationTests: XCTestCase {
             SQLServerColumnDefinition(name: "status", definition: .standard(.init(dataType: .varchar(length: .length(20)), defaultValue: "'pending'")))
         ]
 
-        try await adminClient.createTable(name: tableName, columns: columns)
+            try await self.adminClient.createTable(name: tableName, columns: columns)
 
         // Verify Identity Column
         let identitySQL = """
@@ -94,7 +84,7 @@ final class SQLServerTableAdministrationTests: XCTestCase {
         FROM sys.identity_columns
         WHERE object_id = OBJECT_ID('\(tableName)');
         """
-        let identityResult = try await client.query(identitySQL).get()
+            let identityResult = try await self.client.query(identitySQL).get()
         XCTAssertEqual(identityResult.count, 1, "Should find one identity column.")
         XCTAssertEqual(identityResult.first?.column("seed_value")?.int, 10)
         XCTAssertEqual(identityResult.first?.column("increment_value")?.int, 2)
@@ -105,13 +95,15 @@ final class SQLServerTableAdministrationTests: XCTestCase {
         FROM sys.default_constraints
         WHERE parent_object_id = OBJECT_ID('\(tableName)');
         """
-        let defaultResult = try await client.query(defaultSQL).get()
-        XCTAssertEqual(defaultResult.count, 1, "Should find one default constraint.")
-        XCTAssertEqual(defaultResult.first?.column("definition")?.string, "('pending')")
+            let defaultResult = try await self.client.query(defaultSQL).get()
+            XCTAssertEqual(defaultResult.count, 1, "Should find one default constraint.")
+            XCTAssertEqual(defaultResult.first?.column("definition")?.string, "('pending')")
+        }
     }
 
     func testCreateTableWithCommentsAndComputedColumn() async throws {
-        let tableName = "test_comments_computed_\(UUID().uuidString.prefix(8))"
+        try await inTempDb {
+            let tableName = "test_comments_computed_\(UUID().uuidString.prefix(8))"
         
 
         let columns = [
@@ -121,19 +113,19 @@ final class SQLServerTableAdministrationTests: XCTestCase {
         ]
 
         // Execute CREATE TABLE (comments will be added automatically after table creation)
-        try await adminClient.createTable(name: tableName, columns: columns)
+            try await self.adminClient.createTable(name: tableName, columns: columns)
 
         // Add a small delay to ensure transaction is fully committed and visible to other connections
         try await Task.sleep(nanoseconds: 100_000_000) // 100ms
 
         // Verify Comment
         let commentSQL = """
-        SELECT p.value
+        SELECT CAST(p.value AS NVARCHAR(MAX)) AS value
         FROM sys.extended_properties p
         JOIN sys.columns c ON p.major_id = c.object_id AND p.minor_id = c.column_id
         WHERE p.major_id = OBJECT_ID(N'dbo.\(tableName)') AND c.name = N'comment_col';
         """
-        let commentResult = try await client.query(commentSQL).get()
+            let commentResult = try await self.client.query(commentSQL).get()
         XCTAssertEqual(commentResult.count, 1, "Should find one comment.")
         XCTAssertEqual(commentResult.first?.column("value")?.string, "This is a column comment.")
 
@@ -143,13 +135,15 @@ final class SQLServerTableAdministrationTests: XCTestCase {
         FROM sys.computed_columns
         WHERE object_id = OBJECT_ID('dbo.\(tableName)') AND name = 'computed_col';
         """
-        let computedResult = try await client.query(computedSQL).get()
-        XCTAssertEqual(computedResult.count, 1, "Should find one computed column.")
-        XCTAssertEqual(computedResult.first?.column("definition")?.string, "([id]*(10))")
+            let computedResult = try await self.client.query(computedSQL).get()
+            XCTAssertEqual(computedResult.count, 1, "Should find one computed column.")
+            XCTAssertEqual(computedResult.first?.column("definition")?.string, "([id]*(10))")
+        }
     }
 
     func testCreateTableWithVariousConstraints() async throws {
-        let tableName = "test_constraints_\(UUID().uuidString.prefix(8))"
+        try await inTempDb {
+            let tableName = "test_constraints_\(UUID().uuidString.prefix(8))"
         
 
         let columns = [
@@ -159,28 +153,30 @@ final class SQLServerTableAdministrationTests: XCTestCase {
             SQLServerColumnDefinition(name: "not_null_col", definition: .standard(.init(dataType: .int, isNullable: false)))
         ]
 
-        try await adminClient.createTable(name: tableName, columns: columns)
+            try await self.adminClient.createTable(name: tableName, columns: columns)
 
         // Verify Unique Constraint
         let uniqueSQL = "SELECT COUNT(*) as count FROM sys.indexes WHERE object_id = OBJECT_ID('\(tableName)') AND is_unique = 1 AND is_primary_key = 0;"
-        let uniqueResult = try await client.query(uniqueSQL).get()
+            let uniqueResult = try await self.client.query(uniqueSQL).get()
         XCTAssertEqual(uniqueResult.first?.column("count")?.int, 1, "Should find one unique index.")
 
         // Verify Sparse Column
         let sparseSQL = "SELECT is_sparse FROM sys.columns WHERE object_id = OBJECT_ID('\(tableName)') AND name = 'sparse_col';"
-        let sparseResult = try await client.query(sparseSQL).get()
+            let sparseResult = try await self.client.query(sparseSQL).get()
         XCTAssertEqual(sparseResult.first?.column("is_sparse")?.bool, true, "Column should be marked as sparse.")
 
         // Verify Nullability
         let nullableSQL = "SELECT COLUMN_NAME, IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '\(tableName)';"
-        let nullableResult = try await client.query(nullableSQL).get()
-        let nullableDict = Dictionary(uniqueKeysWithValues: nullableResult.map { ($0.column("COLUMN_NAME")!.string!, $0.column("IS_NULLABLE")!.string!) })
-        XCTAssertEqual(nullableDict["sparse_col"], "YES")
-        XCTAssertEqual(nullableDict["not_null_col"], "NO")
+            let nullableResult = try await self.client.query(nullableSQL).get()
+            let nullableDict = Dictionary(uniqueKeysWithValues: nullableResult.map { ($0.column("COLUMN_NAME")!.string!, $0.column("IS_NULLABLE")!.string!) })
+            XCTAssertEqual(nullableDict["sparse_col"], "YES")
+            XCTAssertEqual(nullableDict["not_null_col"], "NO")
+        }
     }
 
     func testCreateTableWithCompositePrimaryKey() async throws {
-        let tableName = "test_composite_pk_\(UUID().uuidString.prefix(8))"
+        try await inTempDb {
+            let tableName = "test_composite_pk_\(UUID().uuidString.prefix(8))"
         
 
         let columns = [
@@ -188,7 +184,7 @@ final class SQLServerTableAdministrationTests: XCTestCase {
             SQLServerColumnDefinition(name: "id2", definition: .standard(.init(dataType: .int, isPrimaryKey: true)))
         ]
 
-        try await adminClient.createTable(name: tableName, columns: columns)
+            try await self.adminClient.createTable(name: tableName, columns: columns)
 
         let pkSQL = """
         SELECT COUNT(ku.COLUMN_NAME) as key_count
@@ -197,12 +193,14 @@ final class SQLServerTableAdministrationTests: XCTestCase {
         ON tc.CONSTRAINT_TYPE = 'PRIMARY KEY' AND tc.CONSTRAINT_NAME = ku.CONSTRAINT_NAME
         WHERE ku.TABLE_NAME = '\(tableName)';
         """
-        let pkResult = try await client.query(pkSQL).get()
-        XCTAssertEqual(pkResult.first?.column("key_count")?.int, 2, "Should have a composite primary key with 2 columns.")
+            let pkResult = try await self.client.query(pkSQL).get()
+            XCTAssertEqual(pkResult.first?.column("key_count")?.int, 2, "Should have a composite primary key with 2 columns.")
+        }
     }
 
     func testCreateTableWithAllDataTypes() async throws {
-        let tableName = "test_all_types_\(UUID().uuidString.prefix(8))"
+        try await inTempDb {
+            let tableName = "test_all_types_\(UUID().uuidString.prefix(8))"
         
 
         let columns: [SQLServerColumnDefinition] = [
@@ -240,10 +238,10 @@ final class SQLServerTableAdministrationTests: XCTestCase {
             .init(name: "t_xml", definition: .standard(.init(dataType: .xml)))
         ]
 
-        try await adminClient.createTable(name: tableName, columns: columns)
+            try await self.adminClient.createTable(name: tableName, columns: columns)
 
         let schemaSQL = "SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '\(tableName)' ORDER BY ORDINAL_POSITION;"
-        let result = try await client.query(schemaSQL).get()
+            let result = try await self.client.query(schemaSQL).get()
 
         let expected: [String: String] = [
             "t_bit": "bit",
@@ -287,10 +285,12 @@ final class SQLServerTableAdministrationTests: XCTestCase {
             let type = column.column("DATA_TYPE")!.string!
             XCTAssertEqual(type, expected[name], "Data type for column '\(name)' did not match.")
         }
+        }
     }
 
     func testAddColumnCommentAfterTableCreation() async throws {
-        let tableName = "test_add_comment_\(UUID().uuidString.prefix(8))"
+        try await inTempDb {
+            let tableName = "test_add_comment_\(UUID().uuidString.prefix(8))"
         
         
         // Create table without comments
@@ -298,53 +298,57 @@ final class SQLServerTableAdministrationTests: XCTestCase {
             .init(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
             .init(name: "name", definition: .standard(.init(dataType: .nvarchar(length: .length(50)))))
         ]
-        try await adminClient.createTable(name: tableName, columns: columns)
+            try await self.adminClient.createTable(name: tableName, columns: columns)
         
         // Add comment after table creation
-        try await adminClient.addColumnComment(
-            tableName: tableName,
-            columnName: "name",
-            comment: "Added after table creation"
-        )
+            try await self.adminClient.addColumnComment(
+                tableName: tableName,
+                columnName: "name",
+                comment: "Added after table creation"
+            )
         
         // Verify comment was added
         let commentSQL = """
-        SELECT p.value
+        SELECT CAST(p.value AS NVARCHAR(MAX)) AS value
         FROM sys.extended_properties p
         JOIN sys.columns c ON p.major_id = c.object_id AND p.minor_id = c.column_id
         WHERE p.major_id = OBJECT_ID(N'dbo.\(tableName)') AND c.name = N'name';
         """
-        let commentResult = try await client.query(commentSQL).get()
-        XCTAssertEqual(commentResult.count, 1, "Should find one comment.")
-        XCTAssertEqual(commentResult.first?.column("value")?.string, "Added after table creation")
+            let commentResult = try await self.client.query(commentSQL).get()
+            XCTAssertEqual(commentResult.count, 1, "Should find one comment.")
+            XCTAssertEqual(commentResult.first?.column("value")?.string, "Added after table creation")
+        }
     }
     
     func testAddTableComment() async throws {
-        let tableName = "test_table_comment_\(UUID().uuidString.prefix(8))"
+        try await inTempDb {
+            let tableName = "test_table_comment_\(UUID().uuidString.prefix(8))"
         
         
         // Create simple table
         let columns: [SQLServerColumnDefinition] = [
             .init(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true)))
         ]
-        try await adminClient.createTable(name: tableName, columns: columns)
+            try await self.adminClient.createTable(name: tableName, columns: columns)
         
         // Add table comment
-        try await adminClient.addTableComment(tableName: tableName, comment: "This is a table comment")
+            try await self.adminClient.addTableComment(tableName: tableName, comment: "This is a table comment")
         
         // Verify table comment was added
         let commentSQL = """
-        SELECT p.value
+        SELECT CAST(p.value AS NVARCHAR(MAX)) AS value
         FROM sys.extended_properties p
         WHERE p.major_id = OBJECT_ID(N'dbo.\(tableName)') AND p.minor_id = 0;
         """
-        let commentResult = try await client.query(commentSQL).get()
-        XCTAssertEqual(commentResult.count, 1, "Should find one table comment.")
-        XCTAssertEqual(commentResult.first?.column("value")?.string, "This is a table comment")
+            let commentResult = try await self.client.query(commentSQL).get()
+            XCTAssertEqual(commentResult.count, 1, "Should find one table comment.")
+            XCTAssertEqual(commentResult.first?.column("value")?.string, "This is a table comment")
+        }
     }
     
     func testMultipleColumnComments() async throws {
-        let tableName = "test_multi_comments_\(UUID().uuidString.prefix(8))"
+        try await inTempDb {
+            let tableName = "test_multi_comments_\(UUID().uuidString.prefix(8))"
         
         
         let columns: [SQLServerColumnDefinition] = [
@@ -352,18 +356,18 @@ final class SQLServerTableAdministrationTests: XCTestCase {
             .init(name: "name", definition: .standard(.init(dataType: .nvarchar(length: .length(100)), comment: "Full name of the entity"))),
             .init(name: "email", definition: .standard(.init(dataType: .nvarchar(length: .length(255)), isNullable: true, comment: "Email address (optional)")))
         ]
-        try await adminClient.createTable(name: tableName, columns: columns)
+            try await self.adminClient.createTable(name: tableName, columns: columns)
         
         // Verify all comments were added
         let commentsSQL = """
-        SELECT c.name as column_name, p.value as comment_value
+        SELECT c.name as column_name, CAST(p.value AS NVARCHAR(MAX)) as comment_value
         FROM sys.extended_properties p
         JOIN sys.columns c ON p.major_id = c.object_id AND p.minor_id = c.column_id
         WHERE p.major_id = OBJECT_ID(N'dbo.\(tableName)')
         ORDER BY c.column_id;
         """
-        let commentsResult = try await client.query(commentsSQL).get()
-        XCTAssertEqual(commentsResult.count, 3, "Should find three column comments.")
+            let commentsResult = try await self.client.query(commentsSQL).get()
+            XCTAssertEqual(commentsResult.count, 3, "Should find three column comments.")
         
         let expectedComments = [
             ("id", "Primary key identifier"),
@@ -377,9 +381,11 @@ final class SQLServerTableAdministrationTests: XCTestCase {
             XCTAssertEqual(columnName, expectedComments[index].0)
             XCTAssertEqual(commentValue, expectedComments[index].1)
         }
+        }
     }
     
     func testCommentWithSpecialCharacters() async throws {
+        try await inTempDb {
         let tableName = "test_special_chars_\(UUID().uuidString.prefix(8))"
         
         
@@ -388,21 +394,23 @@ final class SQLServerTableAdministrationTests: XCTestCase {
             .init(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
             .init(name: "special_col", definition: .standard(.init(dataType: .nvarchar(length: .length(50)), isNullable: true, comment: specialComment)))
         ]
-        try await adminClient.createTable(name: tableName, columns: columns)
+        try await self.adminClient.createTable(name: tableName, columns: columns)
         
         // Verify comment with special characters
         let commentSQL = """
-        SELECT p.value
+        SELECT CAST(p.value AS NVARCHAR(MAX)) AS value
         FROM sys.extended_properties p
         JOIN sys.columns c ON p.major_id = c.object_id AND p.minor_id = c.column_id
         WHERE p.major_id = OBJECT_ID(N'dbo.\(tableName)') AND c.name = N'special_col';
         """
-        let commentResult = try await client.query(commentSQL).get()
+        let commentResult = try await self.client.query(commentSQL).get()
         XCTAssertEqual(commentResult.count, 1, "Should find one comment.")
         XCTAssertEqual(commentResult.first?.column("value")?.string, specialComment)
+        }
     }
     
     func testUpdateColumnComment() async throws {
+        try await inTempDb {
         let tableName = "test_update_comment_\(UUID().uuidString.prefix(8))"
         
         
@@ -410,10 +418,10 @@ final class SQLServerTableAdministrationTests: XCTestCase {
             .init(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
             .init(name: "description", definition: .standard(.init(dataType: .nvarchar(length: .length(100)), isNullable: true, comment: "Original comment")))
         ]
-        try await adminClient.createTable(name: tableName, columns: columns)
+        try await self.adminClient.createTable(name: tableName, columns: columns)
         
         // Update the comment
-        try await adminClient.updateColumnComment(
+        try await self.adminClient.updateColumnComment(
             tableName: tableName,
             columnName: "description",
             comment: "Updated comment"
@@ -421,43 +429,47 @@ final class SQLServerTableAdministrationTests: XCTestCase {
         
         // Verify comment was updated
         let commentSQL = """
-        SELECT p.value
+        SELECT CAST(p.value AS NVARCHAR(MAX)) AS value
         FROM sys.extended_properties p
         JOIN sys.columns c ON p.major_id = c.object_id AND p.minor_id = c.column_id
         WHERE p.major_id = OBJECT_ID(N'dbo.\(tableName)') AND c.name = N'description';
         """
-        let commentResult = try await client.query(commentSQL).get()
+        let commentResult = try await self.client.query(commentSQL).get()
         XCTAssertEqual(commentResult.count, 1, "Should find one comment.")
         XCTAssertEqual(commentResult.first?.column("value")?.string, "Updated comment")
+        }
     }
     
     func testUpdateTableComment() async throws {
+        try await inTempDb {
         let tableName = "test_update_table_comment_\(UUID().uuidString.prefix(8))"
         
         
         let columns: [SQLServerColumnDefinition] = [
             .init(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true)))
         ]
-        try await adminClient.createTable(name: tableName, columns: columns)
+        try await self.adminClient.createTable(name: tableName, columns: columns)
         
         // Add initial table comment
-        try await adminClient.addTableComment(tableName: tableName, comment: "Original table comment")
+        try await self.adminClient.addTableComment(tableName: tableName, comment: "Original table comment")
         
         // Update the table comment
-        try await adminClient.updateTableComment(tableName: tableName, comment: "Updated table comment")
+        try await self.adminClient.updateTableComment(tableName: tableName, comment: "Updated table comment")
         
         // Verify comment was updated
         let commentSQL = """
-        SELECT p.value
+        SELECT CAST(p.value AS NVARCHAR(MAX)) AS value
         FROM sys.extended_properties p
         WHERE p.major_id = OBJECT_ID(N'dbo.\(tableName)') AND p.minor_id = 0;
         """
-        let commentResult = try await client.query(commentSQL).get()
+        let commentResult = try await self.client.query(commentSQL).get()
         XCTAssertEqual(commentResult.count, 1, "Should find one table comment.")
         XCTAssertEqual(commentResult.first?.column("value")?.string, "Updated table comment")
+        }
     }
     
     func testRemoveColumnComment() async throws {
+        try await inTempDb {
         let tableName = "test_remove_comment_\(UUID().uuidString.prefix(8))"
         
         
@@ -465,56 +477,60 @@ final class SQLServerTableAdministrationTests: XCTestCase {
             .init(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
             .init(name: "description", definition: .standard(.init(dataType: .nvarchar(length: .length(100)), isNullable: true, comment: "Comment to be removed")))
         ]
-        try await adminClient.createTable(name: tableName, columns: columns)
+        try await self.adminClient.createTable(name: tableName, columns: columns)
         
         // Verify comment exists
         let initialCommentSQL = """
-        SELECT p.value
+        SELECT CAST(p.value AS NVARCHAR(MAX)) AS value
         FROM sys.extended_properties p
         JOIN sys.columns c ON p.major_id = c.object_id AND p.minor_id = c.column_id
         WHERE p.major_id = OBJECT_ID(N'dbo.\(tableName)') AND c.name = N'description';
         """
-        let initialResult = try await client.query(initialCommentSQL).get()
+        let initialResult = try await self.client.query(initialCommentSQL).get()
         XCTAssertEqual(initialResult.count, 1, "Should find one comment initially.")
         
         // Remove the comment
-        try await adminClient.removeColumnComment(tableName: tableName, columnName: "description")
+        try await self.adminClient.removeColumnComment(tableName: tableName, columnName: "description")
         
         // Verify comment was removed
-        let finalResult = try await client.query(initialCommentSQL).get()
+        let finalResult = try await self.client.query(initialCommentSQL).get()
         XCTAssertEqual(finalResult.count, 0, "Should find no comments after removal.")
+        }
     }
     
     func testRemoveTableComment() async throws {
+        try await inTempDb {
         let tableName = "test_remove_table_comment_\(UUID().uuidString.prefix(8))"
         
         
         let columns: [SQLServerColumnDefinition] = [
             .init(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true)))
         ]
-        try await adminClient.createTable(name: tableName, columns: columns)
+        try await self.adminClient.createTable(name: tableName, columns: columns)
         
         // Add table comment
-        try await adminClient.addTableComment(tableName: tableName, comment: "Comment to be removed")
+        try await self.adminClient.addTableComment(tableName: tableName, comment: "Comment to be removed")
         
         // Verify comment exists
         let initialCommentSQL = """
-        SELECT p.value
+        SELECT CAST(p.value AS NVARCHAR(MAX)) AS value
         FROM sys.extended_properties p
         WHERE p.major_id = OBJECT_ID(N'dbo.\(tableName)') AND p.minor_id = 0;
         """
-        let initialResult = try await client.query(initialCommentSQL).get()
+        let initialResult = try await self.client.query(initialCommentSQL).get()
         XCTAssertEqual(initialResult.count, 1, "Should find one table comment initially.")
         
         // Remove the table comment
-        try await adminClient.removeTableComment(tableName: tableName)
+        try await self.adminClient.removeTableComment(tableName: tableName)
         
         // Verify comment was removed
-        let finalResult = try await client.query(initialCommentSQL).get()
+        let finalResult = try await self.client.query(initialCommentSQL).get()
         XCTAssertEqual(finalResult.count, 0, "Should find no table comments after removal.")
+        }
     }
     
     func testCommentWithLongText() async throws {
+        try await inTempDb {
         let tableName = "test_long_comment_\(UUID().uuidString.prefix(8))"
         
         
@@ -524,21 +540,23 @@ final class SQLServerTableAdministrationTests: XCTestCase {
             .init(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
             .init(name: "long_comment_col", definition: .standard(.init(dataType: .nvarchar(length: .length(50)), isNullable: true, comment: longComment)))
         ]
-        try await adminClient.createTable(name: tableName, columns: columns)
+        try await self.adminClient.createTable(name: tableName, columns: columns)
         
         // Verify long comment was stored correctly
         let commentSQL = """
-        SELECT p.value
+        SELECT CAST(p.value AS NVARCHAR(MAX)) AS value
         FROM sys.extended_properties p
         JOIN sys.columns c ON p.major_id = c.object_id AND p.minor_id = c.column_id
         WHERE p.major_id = OBJECT_ID(N'dbo.\(tableName)') AND c.name = N'long_comment_col';
         """
-        let commentResult = try await client.query(commentSQL).get()
+        let commentResult = try await self.client.query(commentSQL).get()
         XCTAssertEqual(commentResult.count, 1, "Should find one comment.")
         XCTAssertEqual(commentResult.first?.column("value")?.string, longComment)
+        }
     }
     
     func testCommentWithEmptyString() async throws {
+        try await inTempDb {
         let tableName = "test_empty_comment_\(UUID().uuidString.prefix(8))"
         
         
@@ -546,25 +564,27 @@ final class SQLServerTableAdministrationTests: XCTestCase {
             .init(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
             .init(name: "empty_comment_col", definition: .standard(.init(dataType: .nvarchar(length: .length(50)), isNullable: true, comment: "")))
         ]
-        try await adminClient.createTable(name: tableName, columns: columns)
+        try await self.adminClient.createTable(name: tableName, columns: columns)
         
         // Verify empty comment was stored
         let commentSQL = """
-        SELECT p.value
+        SELECT CAST(p.value AS NVARCHAR(MAX)) AS value
         FROM sys.extended_properties p
         JOIN sys.columns c ON p.major_id = c.object_id AND p.minor_id = c.column_id
         WHERE p.major_id = OBJECT_ID(N'dbo.\(tableName)') AND c.name = N'empty_comment_col';
         """
-        let commentResult = try await client.query(commentSQL).get()
+        let commentResult = try await self.client.query(commentSQL).get()
         XCTAssertEqual(commentResult.count, 1, "Should find one comment.")
         
         // In SQL Server, empty strings in extended properties are stored as NULL
         // Accept either nil or empty string as valid for empty comments
         let value = commentResult.first?.column("value")?.string
         XCTAssertTrue(value == nil || value == "", "Empty comment should be nil or empty string, got: \(String(describing: value))")
+        }
     }
     
     func testTableAndColumnCommentsSimultaneously() async throws {
+        try await inTempDb {
         let tableName = "test_both_comments_\(UUID().uuidString.prefix(8))"
         
         
@@ -575,28 +595,29 @@ final class SQLServerTableAdministrationTests: XCTestCase {
         try await withTimeout(15) { try await self.adminClient.createTable(name: tableName, columns: columns) }
         
         // Add table comment
-        try await adminClient.addTableComment(tableName: tableName, comment: "Table level comment")
+        try await self.adminClient.addTableComment(tableName: tableName, comment: "Table level comment")
         
         // Verify table comment
         let tableCommentSQL = """
-        SELECT p.value
+        SELECT CAST(p.value AS NVARCHAR(MAX)) AS value
         FROM sys.extended_properties p
         WHERE p.major_id = OBJECT_ID(N'dbo.\(tableName)') AND p.minor_id = 0;
         """
-        let tableCommentResult = try await client.query(tableCommentSQL).get()
+        let tableCommentResult = try await self.client.query(tableCommentSQL).get()
         XCTAssertEqual(tableCommentResult.count, 1, "Should find one table comment.")
         XCTAssertEqual(tableCommentResult.first?.column("value")?.string, "Table level comment")
         
         // Verify column comments
         let columnCommentsSQL = """
-        SELECT c.name as column_name, p.value as comment_value
+        SELECT c.name as column_name, CAST(p.value AS NVARCHAR(MAX)) as comment_value
         FROM sys.extended_properties p
         JOIN sys.columns c ON p.major_id = c.object_id AND p.minor_id = c.column_id
         WHERE p.major_id = OBJECT_ID(N'dbo.\(tableName)')
         ORDER BY c.column_id;
         """
-        let columnCommentsResult = try await client.query(columnCommentsSQL).get()
+        let columnCommentsResult = try await self.client.query(columnCommentsSQL).get()
         XCTAssertEqual(columnCommentsResult.count, 2, "Should find two column comments.")
+        }
     }
 
     // MARK: - Helpers
@@ -605,5 +626,22 @@ final class SQLServerTableAdministrationTests: XCTestCase {
         let sql = "SELECT COUNT(*) as table_count FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = '\(name)'"
         let result = try await client.query(sql).get()
         return result.first?.column("table_count")?.int ?? 0
+    }
+
+    // Helper to run each test in an ephemeral database using DB-scoped clients
+    private func inTempDb(_ body: @escaping () async throws -> Void) async throws {
+        try await withTemporaryDatabase(client: self.baseClient, prefix: "adm") { db in
+            let dbClient = try await makeClient(forDatabase: db, using: self.group)
+            let prev = self.client
+            self.client = dbClient
+            self.adminClient = SQLServerAdministrationClient(client: dbClient)
+            defer {
+                Task {
+                    _ = try? await dbClient.shutdownGracefully().get()
+                    self.client = prev
+                }
+            }
+            try await body()
+        }
     }
 }

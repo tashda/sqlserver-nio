@@ -11,7 +11,7 @@ final class SQLServerNbcRowBitmapTests: XCTestCase {
         XCTAssertTrue(isLoggingConfigured)
         loadEnvFileIfPresent()
         group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        client = try SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).wait()
+        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).get()
     }
 
     override func tearDown() async throws {
@@ -21,7 +21,8 @@ final class SQLServerNbcRowBitmapTests: XCTestCase {
 
     @available(macOS 12.0, *)
     func testNbcRowNullBitmapOverMultipleBytes() async throws {
-        try await withTemporaryDatabase(client: self.client, prefix: "nbc") { db in
+        try await withTimeout(20) {
+            try await withTemporaryDatabase(client: self.client, prefix: "nbc") { db in
             let table = "nbc_tbl_\(UUID().uuidString.prefix(6))"
             // 20 nullable columns to ensure the null bitmap spans multiple bytes
             var cols: [String] = []
@@ -44,6 +45,7 @@ final class SQLServerNbcRowBitmapTests: XCTestCase {
                 } else {
                     XCTAssertNil(val, "Expected NULL at c\(i)")
                 }
+            }
             }
         }
     }

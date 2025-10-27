@@ -11,7 +11,7 @@ final class SQLServerLegacyLobRoundTripTests: XCTestCase {
         XCTAssertTrue(isLoggingConfigured)
         loadEnvFileIfPresent()
         group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        client = try SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).wait()
+        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).get()
     }
 
     override func tearDown() async throws {
@@ -22,7 +22,8 @@ final class SQLServerLegacyLobRoundTripTests: XCTestCase {
     }
 
     func testNTextAndImageRoundTrip() async throws {
-        try await withTemporaryDatabase(client: self.client, prefix: "lob") { db in
+        try await withTimeout(30) {
+            try await withTemporaryDatabase(client: self.client, prefix: "lob") { db in
             let table = "legacy_lob_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8))"
             // TEXT/NTEXT/IMAGE are deprecated; if this fails on your server config, we will skip.
             do {
@@ -61,11 +62,13 @@ final class SQLServerLegacyLobRoundTripTests: XCTestCase {
             XCTAssertNil(nullRow?.column("t")?.string)
             XCTAssertNil(nullRow?.column("n")?.string)
             XCTAssertNil(nullRow?.column("i")?.bytes)
+            }
         }
     }
 
     func testXmlAndMaxChunkingRoundTrip() async throws {
-        try await withTemporaryDatabase(client: self.client, prefix: "plp") { db in
+        try await withTimeout(60) {
+            try await withTemporaryDatabase(client: self.client, prefix: "plp") { db in
             let table = "plp_roundtrip_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8))"
             _ = try await executeInDb(client: self.client, database: db, """
                 CREATE TABLE [dbo].[\(table)] (
@@ -91,6 +94,7 @@ final class SQLServerLegacyLobRoundTripTests: XCTestCase {
             XCTAssertGreaterThan(row.column("xl")?.int ?? 0, 0)
             XCTAssertEqual(row.column("nvl")?.int, nvPayload.utf16.count * 2)
             XCTAssertEqual(row.column("vbl")?.int, vbPayload.count)
+            }
         }
     }
 }

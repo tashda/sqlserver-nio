@@ -12,7 +12,7 @@ final class SQLServerRoutineParameterMatrixTests: XCTestCase {
         loadEnvFileIfPresent()
         self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         let cfg = makeSQLServerClientConfiguration()
-        self.client = try SQLServerClient.connect(configuration: cfg, eventLoopGroupProvider: .shared(group)).wait()
+        self.client = try await SQLServerClient.connect(configuration: cfg, eventLoopGroupProvider: .shared(group)).get()
     }
 
     override func tearDown() async throws {

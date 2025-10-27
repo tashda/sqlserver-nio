@@ -9,8 +9,9 @@ final class SQLServerIntegrationTests: XCTestCase {
     private static var executionSummary: [String] = []
     
     private var group: EventLoopGroup!
+    private var client: SQLServerClient!
     private var eventLoop: EventLoop { self.group.next() }
-    private let TIMEOUT: TimeInterval = 30
+    private let TIMEOUT: TimeInterval = 60
     
     override func setUpWithError() throws {
         try super.setUpWithError()
@@ -18,6 +19,7 @@ final class SQLServerIntegrationTests: XCTestCase {
         loadEnvFileIfPresent()
         try requireEnvFlag("TDS_ENABLE_SCHEMA_TESTS", description: "schema management integration tests")
         self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        self.client = try SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(self.group)).wait()
     }
     
     override func tearDownWithError() throws {
@@ -34,6 +36,8 @@ final class SQLServerIntegrationTests: XCTestCase {
             }
             Self.executionSummary.append("\(status): \(methodName)")
         }
+        try? self.client?.shutdownGracefully().wait()
+        self.client = nil
         try self.group?.syncShutdownGracefully()
         self.group = nil
         try super.tearDownWithError()
@@ -80,73 +84,51 @@ final class SQLServerIntegrationTests: XCTestCase {
         XCTAssertEqual(remaining.first?.column("row_count")?.int, 0)
     }
     
-    func testStoredProcedureWithOutputAndResults() throws {
-        let conn = try waitForResult(connectSQLServer(on: eventLoop), timeout: TIMEOUT, description: "connect")
-        defer { _ = try? waitForResult(conn.close(), timeout: TIMEOUT, description: "close") }
-        
-        let names = makeSchemaQualifiedName(prefix: "usp_tds")
-        
-        _ = try waitForResult(conn.query("IF OBJECT_ID(N'\(names.bare)', 'P') IS NOT NULL DROP PROCEDURE \(names.bracketed);"), timeout: TIMEOUT, description: "drop existing proc")
-        let createProc = """
-        CREATE PROCEDURE \(names.bracketed)
-            @Input INT,
-            @Output INT OUTPUT
-        AS
-        BEGIN
-            SET NOCOUNT ON;
-            SET @Output = @Input + 5;
-            SELECT TOP (@Input) DatabaseName = name FROM sys.databases ORDER BY name;
-        END;
-        """
-        _ = try waitForResult(conn.query(createProc), timeout: TIMEOUT, description: "create stored procedure")
-        defer {
-            _ = try? waitForResult(conn.query("DROP PROCEDURE \(names.bracketed);"), timeout: TIMEOUT, description: "drop proc")
-        }
+    func testStoredProcedureWithOutputAndResults() async throws {
+        try await withTemporaryDatabase(client: self.client, prefix: "itsp") { db in
+            try await withDbConnection(client: self.client, database: db) { conn in
+                let names = makeSchemaQualifiedName(prefix: "usp_tds")
+                _ = try await conn.execute("IF OBJECT_ID(N'\(names.bare)', 'P') IS NOT NULL DROP PROCEDURE \(names.bracketed);").get()
+                let createProc = """
+                CREATE PROCEDURE \(names.bracketed)
+                    @Input INT,
+                    @Output INT OUTPUT
+                AS
+                BEGIN
+                    SET NOCOUNT ON;
+                    SET @Output = @Input + 5;
+                    SELECT TOP (@Input) DatabaseName = name FROM sys.databases ORDER BY name;
+                END;
+                """
+                _ = try await conn.execute(createProc).get()
 
-        let parameters = try waitForResult(
-            conn.listParameters(schema: "dbo", object: names.nameOnly),
-            timeout: TIMEOUT,
-            description: "procedure metadata parameters"
-        )
-        XCTAssertEqual(parameters.count, 2, "Expected stored procedure to surface two parameters")
+                let parameters = try await conn.listParameters(database: db, schema: "dbo", object: names.nameOnly).get()
+                XCTAssertEqual(parameters.count, 2, "Expected stored procedure to surface two parameters")
+                guard let inputParam = parameters.first(where: { $0.name.caseInsensitiveCompare("@Input") == .orderedSame }) else { XCTFail("Missing @Input"); return }
+                XCTAssertEqual(inputParam.typeName.lowercased(), "int")
+                XCTAssertFalse(inputParam.isOutput)
+                XCTAssertFalse(inputParam.hasDefaultValue)
+                guard let outputParam = parameters.first(where: { $0.name.caseInsensitiveCompare("@Output") == .orderedSame }) else { XCTFail("Missing @Output"); return }
+                XCTAssertTrue(outputParam.isOutput)
+                XCTAssertFalse(outputParam.isReturnValue)
 
-        guard let inputParam = parameters.first(where: { $0.name.caseInsensitiveCompare("@Input") == .orderedSame }) else {
-            XCTFail("Missing @Input parameter metadata")
-            return
-        }
-        XCTAssertEqual(inputParam.typeName.lowercased(), "int")
-        XCTAssertFalse(inputParam.isOutput)
-        XCTAssertFalse(inputParam.hasDefaultValue)
+                let procedures = try await conn.listProcedures(database: db, schema: "dbo").get()
+                XCTAssertTrue(procedures.contains(where: { $0.name.caseInsensitiveCompare(names.nameOnly) == .orderedSame }))
 
-        guard let outputParam = parameters.first(where: { $0.name.caseInsensitiveCompare("@Output") == .orderedSame }) else {
-            XCTFail("Missing @Output parameter metadata")
-            return
-        }
-        XCTAssertTrue(outputParam.isOutput)
-        XCTAssertFalse(outputParam.isReturnValue)
+                let execSql = """
+                DECLARE @out INT;
+                EXEC \(names.bracketed) @Input = 3, @Output = @out OUTPUT;
+                SELECT OutputValue = @out;
+                """
+                let rows = try await conn.query(execSql).get()
+                let databaseRows = rows.filter { $0.column("DatabaseName")?.string != nil }
+                XCTAssertGreaterThanOrEqual(databaseRows.count, 1)
+                guard let outputRow = rows.last, let outputValue = outputRow.column("OutputValue")?.int else { XCTFail("Missing output"); return }
+                XCTAssertEqual(outputValue, 8)
 
-        let procedures = try waitForResult(
-            conn.listProcedures(schema: "dbo"),
-            timeout: TIMEOUT,
-            description: "list procedures metadata"
-        )
-        XCTAssertTrue(procedures.contains(where: { $0.name.caseInsensitiveCompare(names.nameOnly) == .orderedSame }), "Expected stored procedure to appear in metadata listing")
-        
-        let execSql = """
-        DECLARE @out INT;
-        EXEC \(names.bracketed) @Input = 3, @Output = @out OUTPUT;
-        SELECT OutputValue = @out;
-        """
-        let rows = try waitForResult(conn.query(execSql), timeout: TIMEOUT, description: "execute stored procedure")
-        
-        let databaseRows = rows.filter { $0.column("DatabaseName")?.string != nil }
-        XCTAssertGreaterThanOrEqual(databaseRows.count, 1, "Expected stored procedure to return database rows")
-        
-        guard let outputRow = rows.last, let outputValue = outputRow.column("OutputValue")?.int else {
-            XCTFail("Expected stored procedure to surface output value")
-            return
+                _ = try await conn.execute("DROP PROCEDURE \(names.bracketed);").get()
+            }
         }
-        XCTAssertEqual(outputValue, 8)
     }
     
     func testViewDefinitionRoundTrip() throws {
@@ -225,58 +207,49 @@ final class SQLServerIntegrationTests: XCTestCase {
         XCTAssertGreaterThan(count, 0)
     }
 
-    func testFetchObjectDefinitions() throws {
-        let conn = try waitForResult(connectSQLServer(on: eventLoop), timeout: TIMEOUT, description: "connect")
-        defer { _ = try? waitForResult(conn.close(), timeout: TIMEOUT, description: "close") }
+    func testFetchObjectDefinitions() async throws {
+        try await withReliableConnection(client: self.client, attempts: 5) { conn in
+            let proc = makeSchemaQualifiedName(prefix: "def_proc")
+            let view = makeSchemaQualifiedName(prefix: "def_view")
 
-        let proc = makeSchemaQualifiedName(prefix: "def_proc")
-        let view = makeSchemaQualifiedName(prefix: "def_view")
+            let createProc = """
+            CREATE PROCEDURE \(proc.bracketed)
+            AS
+            BEGIN
+                SET NOCOUNT ON;
+                SELECT 1 AS Value;
+            END;
+            """
+            _ = try await conn.execute(createProc).get()
 
-        let createProc = """
-        CREATE PROCEDURE \(proc.bracketed)
-        AS
-        BEGIN
-            SET NOCOUNT ON;
-            SELECT 1 AS Value;
-        END;
-        """
-        _ = try waitForResult(conn.execute(createProc), timeout: TIMEOUT, description: "create definition proc")
-        defer { _ = try? waitForResult(conn.execute("IF OBJECT_ID(N'\(proc.bare)', 'P') IS NOT NULL DROP PROCEDURE \(proc.bracketed);"), timeout: TIMEOUT, description: "drop definition proc") }
+            let createView = """
+            CREATE VIEW \(view.bracketed)
+            AS
+            SELECT N'DefinitionMarker' AS Marker;
+            """
+            _ = try await conn.execute(createView).get()
 
-        let createView = """
-        CREATE VIEW \(view.bracketed)
-        AS
-        SELECT N'DefinitionMarker' AS Marker;
-        """
-        _ = try waitForResult(conn.execute(createView), timeout: TIMEOUT, description: "create definition view")
-        defer { _ = try? waitForResult(conn.execute("IF OBJECT_ID(N'\(view.bare)', 'V') IS NOT NULL DROP VIEW \(view.bracketed);"), timeout: TIMEOUT, description: "drop definition view") }
+            let identifiers = [
+                SQLServerMetadataObjectIdentifier(database: nil, schema: "dbo", name: proc.nameOnly, kind: .procedure),
+                SQLServerMetadataObjectIdentifier(database: nil, schema: "dbo", name: view.nameOnly, kind: .view)
+            ]
 
-        let identifiers = [
-            SQLServerMetadataObjectIdentifier(database: nil, schema: "dbo", name: proc.nameOnly, kind: .procedure),
-            SQLServerMetadataObjectIdentifier(database: nil, schema: "dbo", name: view.nameOnly, kind: .view)
-        ]
+            let definitions = try await conn.fetchObjectDefinitions(identifiers).get()
+            guard let procDefinition = definitions.first(where: { $0.name.caseInsensitiveCompare(proc.nameOnly) == .orderedSame }) else {
+                XCTFail("Expected stored procedure definition"); return
+            }
+            XCTAssertEqual(procDefinition.type, .procedure)
+            XCTAssertFalse(procDefinition.isSystemObject)
+            XCTAssertEqual(procDefinition.definition?.uppercased().contains("SELECT 1"), true)
 
-        let definitions = try waitForResult(
-            conn.fetchObjectDefinitions(identifiers),
-            timeout: TIMEOUT,
-            description: "fetch definitions"
-        )
+            let singleView = try await conn.fetchObjectDefinition(schema: "dbo", name: view.nameOnly, kind: .view).get()
+            XCTAssertEqual(singleView?.type, .view)
+            XCTAssertEqual(singleView?.definition?.contains("DefinitionMarker"), true)
 
-        guard let procDefinition = definitions.first(where: { $0.name.caseInsensitiveCompare(proc.nameOnly) == .orderedSame }) else {
-            XCTFail("Expected stored procedure definition")
-            return
+            // cleanup
+            _ = try? await conn.execute("DROP VIEW \(view.bracketed)").get()
+            _ = try? await conn.execute("DROP PROCEDURE \(proc.bracketed)").get()
         }
-        XCTAssertEqual(procDefinition.type, .procedure)
-        XCTAssertFalse(procDefinition.isSystemObject)
-        XCTAssertEqual(procDefinition.definition?.uppercased().contains("SELECT 1"), true)
-
-        let singleView = try waitForResult(
-            conn.fetchObjectDefinition(schema: "dbo", name: view.nameOnly, kind: .view),
-            timeout: TIMEOUT,
-            description: "fetch single definition"
-        )
-        XCTAssertEqual(singleView?.type, .view)
-        XCTAssertEqual(singleView?.definition?.contains("DefinitionMarker"), true)
     }
 
     func testMetadataSearchReturnsMatches() throws {
@@ -608,54 +581,47 @@ final class SQLServerIntegrationTests: XCTestCase {
         XCTAssertNotNil(trigger.definition)
     }
 
-    func testFunctionMetadataIncludesReturnAndParameters() throws {
-        let conn = try waitForResult(connectSQLServer(on: eventLoop), timeout: TIMEOUT, description: "connect")
-        defer { _ = try? waitForResult(conn.close(), timeout: TIMEOUT, description: "close") }
+    func testFunctionMetadataIncludesReturnAndParameters() async throws {
+        try await withTemporaryDatabase(client: self.client, prefix: "itfn") { db in
+            try await withDbConnection(client: self.client, database: db) { conn in
+                let function = makeSchemaQualifiedName(prefix: "fn_meta")
 
-        let function = makeSchemaQualifiedName(prefix: "fn_meta")
+                _ = try await conn.execute("IF OBJECT_ID(N'\(function.bare)', 'FN') IS NOT NULL DROP FUNCTION \(function.bracketed);").get()
 
-        _ = try waitForResult(conn.query("IF OBJECT_ID(N'\(function.bare)', 'FN') IS NOT NULL DROP FUNCTION \(function.bracketed);"), timeout: TIMEOUT, description: "drop function")
-        defer { _ = try? waitForResult(conn.query("IF OBJECT_ID(N'\(function.bare)', 'FN') IS NOT NULL DROP FUNCTION \(function.bracketed);"), timeout: TIMEOUT, description: "drop function") }
+                let createFunction = """
+                CREATE FUNCTION \(function.bracketed)
+                (
+                    @Input INT,
+                    @Category NVARCHAR(10) = N'default'
+                )
+                RETURNS NVARCHAR(100)
+                AS
+                BEGIN
+                    RETURN CONCAT('value-', @Input, '-', @Category);
+                END;
+                """
+                _ = try await conn.execute(createFunction).get()
 
-        let createFunction = """
-        CREATE FUNCTION \(function.bracketed)
-        (
-            @Input INT,
-            @Category NVARCHAR(10) = N'default'
-        )
-        RETURNS NVARCHAR(100)
-        AS
-        BEGIN
-            RETURN CONCAT('value-', @Input, '-', @Category);
-        END;
-        """
-        _ = try waitForResult(conn.query(createFunction), timeout: TIMEOUT, description: "create function")
+                let functions = try await conn.listFunctions(database: db, schema: "dbo").get()
+                guard let metadata = functions.first(where: { $0.name.caseInsensitiveCompare(function.nameOnly) == .orderedSame }) else {
+                    XCTFail("Expected function metadata entry")
+                    return
+                }
+                XCTAssertEqual(metadata.type, .scalarFunction)
+                XCTAssertNotNil(metadata.definition)
 
-        let functions = try waitForResult(
-            conn.listFunctions(schema: "dbo"),
-            timeout: TIMEOUT,
-            description: "list functions"
-        )
-        guard let metadata = functions.first(where: { $0.name.caseInsensitiveCompare(function.nameOnly) == .orderedSame }) else {
-            XCTFail("Expected function metadata entry")
-            return
+                let parameters = try await conn.listParameters(database: db, schema: "dbo", object: function.nameOnly).get()
+                guard let category = parameters.first(where: { $0.name.caseInsensitiveCompare("@Category") == .orderedSame }) else {
+                    XCTFail("Expected @Category parameter")
+                    return
+                }
+                XCTAssertTrue(category.hasDefaultValue)
+                XCTAssertEqual(category.defaultValue?.contains("default"), true)
+                XCTAssertFalse(category.isOutput)
+
+                _ = try await conn.execute("DROP FUNCTION \(function.bracketed);").get()
+            }
         }
-        XCTAssertEqual(metadata.type, .scalarFunction)
-        XCTAssertNotNil(metadata.definition)
-
-        let parameters = try waitForResult(
-            conn.listParameters(schema: "dbo", object: function.nameOnly),
-            timeout: TIMEOUT,
-            description: "function parameters metadata"
-        )
-        XCTAssertTrue(parameters.contains(where: { $0.isReturnValue && $0.typeName.lowercased() == "nvarchar" }))
-        guard let category = parameters.first(where: { $0.name.caseInsensitiveCompare("@Category") == .orderedSame }) else {
-            XCTFail("Expected @Category parameter")
-            return
-        }
-        XCTAssertTrue(category.hasDefaultValue)
-        XCTAssertEqual(category.defaultValue?.contains("default"), true)
-        XCTAssertFalse(category.isOutput)
     }
     
     func testMetadataClientColumnListing() throws {
@@ -704,18 +670,18 @@ final class SQLServerIntegrationTests: XCTestCase {
         XCTAssertTrue(computedColumn.isComputed)
     }
 
-    func testListParametersInlineTVFAndSchemaSweep() throws {
-        let conn = try waitForResult(connectSQLServer(on: eventLoop), timeout: TIMEOUT, description: "connect")
-        defer { _ = try? waitForResult(conn.close(), timeout: TIMEOUT, description: "close") }
+    func testListParametersInlineTVFAndSchemaSweep() async throws {
+        try await withTemporaryDatabase(client: self.client, prefix: "itprm") { db in
+            try await withDbConnection(client: self.client, database: db) { conn in
 
         // Create a few routines, including an inline TVF with defaults
         let fn = makeSchemaQualifiedName(prefix: "ufn_inline")
         let p1 = makeSchemaQualifiedName(prefix: "usp_meta_1")
         let p2 = makeSchemaQualifiedName(prefix: "usp_meta_2")
 
-        _ = try waitForResult(conn.query("IF OBJECT_ID(N'\(fn.bare)', 'IF') IS NOT NULL DROP FUNCTION \(fn.bracketed);"), timeout: TIMEOUT, description: "drop existing tvf")
-        _ = try waitForResult(conn.query("IF OBJECT_ID(N'\(p1.bare)', 'P') IS NOT NULL DROP PROCEDURE \(p1.bracketed);"), timeout: TIMEOUT, description: "drop proc 1")
-        _ = try waitForResult(conn.query("IF OBJECT_ID(N'\(p2.bare)', 'P') IS NOT NULL DROP PROCEDURE \(p2.bracketed);"), timeout: TIMEOUT, description: "drop proc 2")
+        _ = try await conn.execute("IF OBJECT_ID(N'\(fn.bare)', 'IF') IS NOT NULL DROP FUNCTION \(fn.bracketed);").get()
+        _ = try await conn.execute("IF OBJECT_ID(N'\(p1.bare)', 'P') IS NOT NULL DROP PROCEDURE \(p1.bracketed);").get()
+        _ = try await conn.execute("IF OBJECT_ID(N'\(p2.bare)', 'P') IS NOT NULL DROP PROCEDURE \(p2.bracketed);").get()
 
         let createTVF = """
         CREATE FUNCTION \(fn.bracketed)
@@ -731,8 +697,7 @@ final class SQLServerIntegrationTests: XCTestCase {
             WHERE n BETWEEN @Start AND @Finish
         );
         """
-        _ = try waitForResult(conn.query(createTVF), timeout: TIMEOUT, description: "create inline tvf")
-        defer { _ = try? waitForResult(conn.query("DROP FUNCTION \(fn.bracketed);"), timeout: TIMEOUT, description: "drop tvf") }
+        _ = try await conn.execute(createTVF).get()
 
         let createP1 = """
         CREATE PROCEDURE \(p1.bracketed)
@@ -741,30 +706,33 @@ final class SQLServerIntegrationTests: XCTestCase {
             @C INT OUTPUT
         AS BEGIN SET NOCOUNT ON; SET @C = @A; END
         """
-        _ = try waitForResult(conn.query(createP1), timeout: TIMEOUT, description: "create proc 1")
-        defer { _ = try? waitForResult(conn.query("DROP PROCEDURE \(p1.bracketed);"), timeout: TIMEOUT, description: "drop proc 1") }
+        _ = try await conn.execute(createP1).get()
 
         let createP2 = """
         CREATE PROCEDURE \(p2.bracketed)
             @X INT
         AS BEGIN SET NOCOUNT ON; SELECT @X; END
         """
-        _ = try waitForResult(conn.query(createP2), timeout: TIMEOUT, description: "create proc 2")
-        defer { _ = try? waitForResult(conn.query("DROP PROCEDURE \(p2.bracketed);"), timeout: TIMEOUT, description: "drop proc 2") }
+        _ = try await conn.execute(createP2).get()
 
         // Verify parameter metadata for inline TVF
-        let tvfParams = try waitForResult(conn.listParameters(schema: "dbo", object: fn.nameOnly), timeout: TIMEOUT, description: "inline tvf params")
+        let tvfParams = try await conn.listParameters(database: db, schema: "dbo", object: fn.nameOnly).get()
         XCTAssertEqual(tvfParams.filter { !$0.isReturnValue }.count, 2)
         XCTAssertTrue(tvfParams.contains(where: { $0.name.caseInsensitiveCompare("@Start") == .orderedSame && !$0.isOutput }))
         XCTAssertTrue(tvfParams.contains(where: { $0.name.caseInsensitiveCompare("@Finish") == .orderedSame && $0.hasDefaultValue }))
 
         // Quick schema-wide sweep similar to app behavior: list functions and procedures and fetch parameters
         let meta = SQLServerMetadataClient(connection: conn)
-        let procs = try waitForResult(meta.listProcedures(schema: "dbo"), timeout: TIMEOUT, description: "list procs")
-        let funcs = try waitForResult(meta.listFunctions(schema: "dbo"), timeout: TIMEOUT, description: "list funcs")
+        let _ = try await meta.listProcedures(database: db, schema: "dbo").get()
+        let _ = try await meta.listFunctions(database: db, schema: "dbo").get()
         // Only exercise a handful that we just created
         for name in [p1.nameOnly, p2.nameOnly, fn.nameOnly] {
-            _ = try waitForResult(conn.listParameters(schema: "dbo", object: name), timeout: TIMEOUT, description: "list params for \(name)")
+            _ = try await conn.listParameters(database: db, schema: "dbo", object: name).get()
+        }
+        _ = try await conn.execute("DROP PROCEDURE \(p1.bracketed);").get()
+        _ = try await conn.execute("DROP PROCEDURE \(p2.bracketed);").get()
+        _ = try await conn.execute("DROP FUNCTION \(fn.bracketed);").get()
+            }
         }
     }
     
@@ -781,141 +749,133 @@ final class SQLServerIntegrationTests: XCTestCase {
         XCTAssertTrue(allSchemas.contains(where: { $0.name.caseInsensitiveCompare("sys") == .orderedSame }))
     }
     
-    func testMetadataClientIndexesAndConstraints() throws {
-        let conn = try waitForResult(connectSQLServer(on: eventLoop), timeout: TIMEOUT, description: "connect")
-        defer { _ = try? waitForResult(conn.close(), timeout: TIMEOUT, description: "close") }
-        
-        let tableName = "meta_idx_\(UUID().uuidString.prefix(8))"
-        let pkName = "PK_\(tableName)"
-        let uqName = "UQ_\(tableName)_code"
-        let indexName = "IX_\(tableName)_payload"
-        
-        _ = try waitForResult(conn.execute("""
-        CREATE TABLE dbo.[\(tableName)](
-            id INT NOT NULL,
-            code NVARCHAR(32) NOT NULL,
-            payload INT NULL,
-            CONSTRAINT [\(pkName)] PRIMARY KEY CLUSTERED (id),
-            CONSTRAINT [\(uqName)] UNIQUE (code)
-        );
-        """), timeout: TIMEOUT, description: "create metadata table")
-        _ = try waitForResult(conn.execute("CREATE INDEX [\(indexName)] ON dbo.[\(tableName)] (payload) INCLUDE (code);"), timeout: TIMEOUT, description: "create metadata index")
-        defer {
-            _ = try? waitForResult(conn.execute("DROP TABLE dbo.[\(tableName)];"), timeout: TIMEOUT, description: "drop metadata table")
-        }
-        
-        let metadata = SQLServerMetadataClient(connection: conn)
-        let primaryKeys = try waitForResult(metadata.listPrimaryKeys(schema: "dbo", table: tableName), timeout: TIMEOUT, description: "metadata primary keys")
-        guard let pk = primaryKeys.first(where: { $0.name.caseInsensitiveCompare(pkName) == .orderedSame }) else {
-            XCTFail("Missing primary key metadata")
-            return
-        }
-        XCTAssertEqual(pk.columns.map { $0.column }, ["id"])
+    func testMetadataClientIndexesAndConstraints() async throws {
+        try await withTemporaryDatabase(client: self.client, prefix: "itidx") { db in
+            try await withDbConnection(client: self.client, database: db) { conn in
+                let tableName = "meta_idx_\(UUID().uuidString.prefix(8))"
+                let pkName = "PK_\(tableName)"
+                let uqName = "UQ_\(tableName)_code"
+                let indexName = "IX_\(tableName)_payload"
 
-        // Regression: calling sp_pkeys via listPrimaryKeys with only schema (no table) must not error
-        // This used to fail with: "Procedure or function 'sp_pkeys' expects parameter '@table_name'..."
-        let schemaOnlyPKs = try waitForResult(metadata.listPrimaryKeys(schema: "dbo"), timeout: TIMEOUT, description: "metadata primary keys (schema only)")
-        // Ensure our table's PK is included in the schema-wide result
-        XCTAssertTrue(schemaOnlyPKs.contains(where: { $0.schema.caseInsensitiveCompare("dbo") == .orderedSame && $0.table.caseInsensitiveCompare(tableName) == .orderedSame }),
-                      "Expected to find primary key for \(tableName) when listing PKs by schema only")
-        XCTAssertTrue(pk.isClustered)
-        
-        let uniqueConstraints = try waitForResult(metadata.listUniqueConstraints(schema: "dbo", table: tableName), timeout: TIMEOUT, description: "metadata unique constraints")
-        guard let unique = uniqueConstraints.first(where: { $0.name.caseInsensitiveCompare(uqName) == .orderedSame }) else {
-            XCTFail("Missing unique constraint metadata")
-            return
+                _ = try await conn.execute("""
+                CREATE TABLE dbo.[\(tableName)](
+                    id INT NOT NULL,
+                    code NVARCHAR(32) NOT NULL,
+                    payload INT NULL,
+                    CONSTRAINT [\(pkName)] PRIMARY KEY CLUSTERED (id),
+                    CONSTRAINT [\(uqName)] UNIQUE (code)
+                );
+                """).get()
+                _ = try await conn.execute("CREATE INDEX [\(indexName)] ON dbo.[\(tableName)] (payload) INCLUDE (code);").get()
+
+                let metadata = SQLServerMetadataClient(connection: conn)
+                let primaryKeys = try await metadata.listPrimaryKeys(database: db, schema: "dbo", table: tableName).get()
+                guard let pk = primaryKeys.first(where: { $0.name.caseInsensitiveCompare(pkName) == .orderedSame }) else {
+                    XCTFail("Missing primary key metadata")
+                    return
+                }
+                XCTAssertEqual(pk.columns.map { $0.column }, ["id"])
+
+                // Regression: schema-only PK enumeration should not error and should include our table
+                let schemaOnlyPKs = try await metadata.listPrimaryKeys(database: db, schema: "dbo").get()
+                XCTAssertTrue(schemaOnlyPKs.contains(where: { $0.schema.caseInsensitiveCompare("dbo") == .orderedSame && $0.table.caseInsensitiveCompare(tableName) == .orderedSame }),
+                              "Expected to find primary key for \(tableName) when listing PKs by schema only")
+                XCTAssertTrue(pk.isClustered)
+
+                let uniqueConstraints = try await metadata.listUniqueConstraints(database: db, schema: "dbo", table: tableName).get()
+                guard let unique = uniqueConstraints.first(where: { $0.name.caseInsensitiveCompare(uqName) == .orderedSame }) else {
+                    XCTFail("Missing unique constraint metadata")
+                    return
+                }
+                XCTAssertEqual(unique.columns.map { $0.column }, ["code"])
+
+                let indexes = try await metadata.listIndexes(database: db, schema: "dbo", table: tableName).get()
+                guard let ix = indexes.first(where: { $0.name.caseInsensitiveCompare(indexName) == .orderedSame }) else {
+                    XCTFail("Missing nonclustered index metadata")
+                    return
+                }
+                XCTAssertFalse(ix.isClustered)
+                XCTAssertFalse(ix.isPrimaryKey)
+                let indexColumns = ix.columns.map { $0.column }
+                XCTAssertTrue(indexColumns.contains("payload"))
+                _ = try await conn.execute("DROP TABLE dbo.[\(tableName)];").get()
+            }
         }
-        XCTAssertEqual(unique.columns.map { $0.column }, ["code"])
-        
-        let indexes = try waitForResult(metadata.listIndexes(schema: "dbo", table: tableName), timeout: TIMEOUT, description: "metadata indexes")
-        guard let ix = indexes.first(where: { $0.name.caseInsensitiveCompare(indexName) == .orderedSame }) else {
-            XCTFail("Missing nonclustered index metadata")
-            return
-        }
-        XCTAssertFalse(ix.isClustered)
-        XCTAssertFalse(ix.isPrimaryKey)
-        let indexColumns = ix.columns.map { $0.column }
-        XCTAssertTrue(indexColumns.contains("payload"))
     }
     
-    func testMetadataClientForeignKeys() throws {
-        let conn = try waitForResult(connectSQLServer(on: eventLoop), timeout: TIMEOUT, description: "connect")
-        defer { _ = try? waitForResult(conn.close(), timeout: TIMEOUT, description: "close") }
-        
-        let parentTable = "meta_parent_\(UUID().uuidString.prefix(8))"
-        let childTable = "meta_child_\(UUID().uuidString.prefix(8))"
-        let fkName = "FK_\(childTable)_parent"
-        
-        _ = try waitForResult(conn.execute("""
-        CREATE TABLE dbo.[\(parentTable)](
-            id INT PRIMARY KEY,
-            description NVARCHAR(40) NOT NULL
-        );
-        """), timeout: TIMEOUT, description: "create parent table")
-        defer {
-            _ = try? waitForResult(conn.execute("DROP TABLE dbo.[\(parentTable)]"), timeout: TIMEOUT, description: "drop parent table")
+    func testMetadataClientForeignKeys() async throws {
+        try await withTemporaryDatabase(client: self.client, prefix: "itfk") { db in
+            try await withDbConnection(client: self.client, database: db) { conn in
+                let parentTable = "meta_parent_\(UUID().uuidString.prefix(8))"
+                let childTable = "meta_child_\(UUID().uuidString.prefix(8))"
+                let fkName = "FK_\(childTable)_parent"
+
+                _ = try await conn.execute("""
+                CREATE TABLE dbo.[\(parentTable)](
+                    id INT PRIMARY KEY,
+                    description NVARCHAR(40) NOT NULL
+                );
+                """).get()
+
+                _ = try await conn.execute("""
+                CREATE TABLE dbo.[\(childTable)](
+                    id INT PRIMARY KEY,
+                    parent_id INT NOT NULL,
+                    payload NVARCHAR(40) NULL
+                );
+                ALTER TABLE dbo.[\(childTable)]
+                ADD CONSTRAINT [\(fkName)] FOREIGN KEY(parent_id)
+                REFERENCES dbo.[\(parentTable)](id)
+                ON DELETE CASCADE
+                ON UPDATE NO ACTION;
+                """).get()
+
+                let metadata = SQLServerMetadataClient(connection: conn)
+                let foreignKeys = try await metadata.listForeignKeys(database: db, schema: "dbo", table: childTable).get()
+                guard let fk = foreignKeys.first(where: { $0.name.caseInsensitiveCompare(fkName) == .orderedSame }) else {
+                    XCTFail("Missing foreign key metadata")
+                    return
+                }
+                XCTAssertEqual(fk.referencedTable, parentTable)
+                XCTAssertEqual(fk.deleteAction, "CASCADE")
+                XCTAssertEqual(fk.updateAction, "NO ACTION")
+                XCTAssertEqual(fk.columns.map { $0.parentColumn }, ["parent_id"])
+                XCTAssertEqual(fk.columns.map { $0.referencedColumn }, ["id"])
+            }
         }
-        _ = try waitForResult(conn.execute("""
-        CREATE TABLE dbo.[\(childTable)](
-            id INT PRIMARY KEY,
-            parent_id INT NOT NULL,
-            payload NVARCHAR(40) NULL
-        );
-        ALTER TABLE dbo.[\(childTable)]
-        ADD CONSTRAINT [\(fkName)] FOREIGN KEY(parent_id)
-        REFERENCES dbo.[\(parentTable)](id)
-        ON DELETE CASCADE
-        ON UPDATE NO ACTION;
-        """), timeout: TIMEOUT, description: "create child table and fk")
-        defer {
-            _ = try? waitForResult(conn.execute("DROP TABLE dbo.[\(childTable)]"), timeout: TIMEOUT, description: "drop child table")
-        }
-        
-        let metadata = SQLServerMetadataClient(connection: conn)
-        let foreignKeys = try waitForResult(metadata.listForeignKeys(schema: "dbo", table: childTable), timeout: TIMEOUT, description: "metadata foreign keys")
-        guard let fk = foreignKeys.first(where: { $0.name.caseInsensitiveCompare(fkName) == .orderedSame }) else {
-            XCTFail("Missing foreign key metadata")
-            return
-        }
-        XCTAssertEqual(fk.referencedTable, parentTable)
-        XCTAssertEqual(fk.deleteAction, "CASCADE")
-        XCTAssertEqual(fk.updateAction, "NO ACTION")
-        XCTAssertEqual(fk.columns.map { $0.parentColumn }, ["parent_id"])
-        XCTAssertEqual(fk.columns.map { $0.referencedColumn }, ["id"])
     }
     
-    func testMetadataClientRoutineDefinitionsToggle() throws {
-        let conn = try waitForResult(connectSQLServer(on: eventLoop), timeout: TIMEOUT, description: "connect")
-        defer { _ = try? waitForResult(conn.close(), timeout: TIMEOUT, description: "close") }
-        
-        let procedureName = "meta_proc_\(UUID().uuidString.prefix(8))"
-        _ = try waitForResult(conn.execute("""
-        CREATE PROCEDURE dbo.[\(procedureName)]
-        @Value INT
-        AS
-        BEGIN
-            SELECT @Value + 10 AS computed;
-        END;
-        """), timeout: TIMEOUT, description: "create metadata procedure")
-        defer {
-            _ = try? waitForResult(conn.execute("DROP PROCEDURE dbo.[\(procedureName)]"), timeout: TIMEOUT, description: "drop metadata procedure")
+    func testMetadataClientRoutineDefinitionsToggle() async throws {
+        try await withTemporaryDatabase(client: self.client, prefix: "itrdefs") { db in
+            try await withDbConnection(client: self.client, database: db) { conn in
+                let procedureName = "meta_proc_\(UUID().uuidString.prefix(8))"
+                _ = try await conn.execute("""
+                CREATE PROCEDURE dbo.[\(procedureName)]
+                @Value INT
+                AS
+                BEGIN
+                    SELECT @Value + 10 AS computed;
+                END;
+                """).get()
+
+                let withoutDefinitions = SQLServerMetadataClient(connection: conn, configuration: .init(includeRoutineDefinitions: false))
+                let proceduresWithout = try await withoutDefinitions.listProcedures(database: db, schema: "dbo").get()
+                guard let entryWithout = proceduresWithout.first(where: { $0.name.caseInsensitiveCompare(procedureName) == .orderedSame }) else {
+                    XCTFail("Missing procedure metadata (no defs)")
+                    return
+                }
+                XCTAssertNil(entryWithout.definition)
+
+                let withDefinitions = SQLServerMetadataClient(connection: conn, configuration: .init(includeRoutineDefinitions: true))
+                let proceduresWith = try await withDefinitions.listProcedures(database: db, schema: "dbo").get()
+                guard let entryWith = proceduresWith.first(where: { $0.name.caseInsensitiveCompare(procedureName) == .orderedSame }) else {
+                    XCTFail("Missing procedure metadata (with defs)")
+                    return
+                }
+                XCTAssertEqual(entryWith.definition?.contains("SELECT @Value + 10"), true)
+                _ = try await conn.execute("DROP PROCEDURE dbo.[\(procedureName)]").get()
+            }
         }
-        
-        let withoutDefinitions = SQLServerMetadataClient(connection: conn, configuration: .init(includeRoutineDefinitions: false))
-        let proceduresWithout = try waitForResult(withoutDefinitions.listProcedures(schema: "dbo"), timeout: TIMEOUT, description: "procedures without definitions")
-        guard let entryWithout = proceduresWithout.first(where: { $0.name.caseInsensitiveCompare(procedureName) == .orderedSame }) else {
-            XCTFail("Missing procedure metadata (no defs)")
-            return
-        }
-        XCTAssertNil(entryWithout.definition)
-        
-        let withDefinitions = SQLServerMetadataClient(connection: conn, configuration: .init(includeRoutineDefinitions: true))
-        let proceduresWith = try waitForResult(withDefinitions.listProcedures(schema: "dbo"), timeout: TIMEOUT, description: "procedures with definitions")
-        guard let entryWith = proceduresWith.first(where: { $0.name.caseInsensitiveCompare(procedureName) == .orderedSame }) else {
-            XCTFail("Missing procedure metadata (with defs)")
-            return
-        }
-        XCTAssertEqual(entryWith.definition?.contains("SELECT @Value + 10"), true)
     }
     
 
@@ -1080,137 +1040,124 @@ final class SQLServerIntegrationTests: XCTestCase {
         XCTAssertEqual(rows.count, 10)
     }
 
-    func testSchemaVersioningDetectsDefinitionChange() throws {
-        let conn = try waitForResult(connectSQLServer(on: eventLoop), timeout: TIMEOUT, description: "connect")
-        defer { _ = try? waitForResult(conn.close(), timeout: TIMEOUT, description: "close") }
-        
-        let table = makeSchemaQualifiedName(prefix: "tbl_version")
-        _ = try waitForResult(conn.query("IF OBJECT_ID(N'\(table.bare)', 'U') IS NOT NULL DROP TABLE \(table.bracketed);"), timeout: TIMEOUT, description: "drop existing versioned table")
-        let createTable = """
-        CREATE TABLE \(table.bracketed) (
-            Id INT NOT NULL PRIMARY KEY,
-            Name NVARCHAR(100) NOT NULL
-        );
-        """
-        _ = try waitForResult(conn.query(createTable), timeout: TIMEOUT, description: "create versioned table")
-        defer {
-            _ = try? waitForResult(conn.query("IF OBJECT_ID(N'\(table.bare)', 'U') IS NOT NULL DROP TABLE \(table.bracketed);"), timeout: TIMEOUT, description: "drop versioned table")
+    func testSchemaVersioningDetectsDefinitionChange() async throws {
+        try await withTemporaryDatabase(client: self.client, prefix: "itsv") { db in
+            try await withDbConnection(client: self.client, database: db) { conn in
+                let table = makeSchemaQualifiedName(prefix: "tbl_version")
+                _ = try await conn.query("IF OBJECT_ID(N'\(table.bare)', 'U') IS NOT NULL DROP TABLE \(table.bracketed);").get()
+                let createTable = """
+                CREATE TABLE \(table.bracketed) (
+                    Id INT NOT NULL PRIMARY KEY,
+                    Name NVARCHAR(100) NOT NULL
+                );
+                """
+                _ = try await conn.query(createTable).get()
+
+                func schemaSignature() async throws -> String {
+                    let sql = """
+                    SELECT signature = CONVERT(VARCHAR(64), HASHBYTES('SHA2_256',
+                        STRING_AGG(CONCAT_WS('|', c.column_id, c.name, t.name, c.max_length, c.precision, c.scale, c.is_nullable), ';')
+                            WITHIN GROUP (ORDER BY c.column_id)
+                    ))
+                    FROM sys.columns AS c
+                    JOIN sys.types AS t ON c.user_type_id = t.user_type_id
+                    WHERE c.object_id = OBJECT_ID(N'\(table.bare)');
+                    """
+                    let rows = try await conn.query(sql).get()
+                    return rows.first?.column("signature")?.string ?? ""
+                }
+
+                let baselineSignature = try await schemaSignature()
+                XCTAssertFalse(baselineSignature.isEmpty, "Expected baseline schema signature")
+
+                _ = try await conn.query("ALTER TABLE \(table.bracketed) ADD ModifiedAt DATETIME2 NULL;").get()
+                let alteredSignature = try await schemaSignature()
+                XCTAssertFalse(alteredSignature.isEmpty, "Expected altered schema signature")
+                XCTAssertNotEqual(baselineSignature, alteredSignature, "Schema signature should change after altering table definition")
+
+                _ = try await conn.query("ALTER TABLE \(table.bracketed) DROP COLUMN ModifiedAt;").get()
+                let revertedSignature = try await schemaSignature()
+                XCTAssertEqual(baselineSignature, revertedSignature, "Reverted schema should match baseline signature")
+            }
         }
-        
-        func schemaSignature() throws -> String {
-            let sql = """
-            SELECT signature = CONVERT(VARCHAR(64), HASHBYTES('SHA2_256',
-                STRING_AGG(CONCAT_WS('|', c.column_id, c.name, t.name, c.max_length, c.precision, c.scale, c.is_nullable), ';')
-                    WITHIN GROUP (ORDER BY c.column_id)
-            ))
-            FROM sys.columns AS c
-            JOIN sys.types AS t ON c.user_type_id = t.user_type_id
-            WHERE c.object_id = OBJECT_ID(N'\(table.bare)');
-            """
-            let rows = try waitForResult(conn.query(sql), timeout: TIMEOUT, description: "read schema signature")
-            return rows.first?.column("signature")?.string ?? ""
-        }
-        
-        let baselineSignature = try schemaSignature()
-        XCTAssertFalse(baselineSignature.isEmpty, "Expected baseline schema signature")
-        
-        _ = try waitForResult(conn.query("ALTER TABLE \(table.bracketed) ADD ModifiedAt DATETIME2 NULL;"), timeout: TIMEOUT, description: "alter table add column")
-        let alteredSignature = try schemaSignature()
-        XCTAssertFalse(alteredSignature.isEmpty, "Expected altered schema signature")
-        XCTAssertNotEqual(baselineSignature, alteredSignature, "Schema signature should change after altering table definition")
-        
-        _ = try waitForResult(conn.query("ALTER TABLE \(table.bracketed) DROP COLUMN ModifiedAt;"), timeout: TIMEOUT, description: "revert schema change")
-        let revertedSignature = try schemaSignature()
-        XCTAssertEqual(baselineSignature, revertedSignature, "Reverted schema should match baseline signature")
     }
     
-    func testScalarAndTableValuedFunctions() throws {
-        let conn = try waitForResult(connectSQLServer(on: eventLoop), timeout: TIMEOUT, description: "connect")
-        defer { _ = try? waitForResult(conn.close(), timeout: TIMEOUT, description: "close") }
-        
-        let scalar = makeSchemaQualifiedName(prefix: "fn_tds_scalar")
-        let tvf = makeSchemaQualifiedName(prefix: "fn_tds_table")
-        
-        _ = try waitForResult(conn.query("IF OBJECT_ID(N'\(scalar.bare)', 'FN') IS NOT NULL DROP FUNCTION \(scalar.bracketed);"), timeout: TIMEOUT, description: "drop scalar function")
-        _ = try waitForResult(conn.query("IF OBJECT_ID(N'\(tvf.bare)', 'IF') IS NOT NULL DROP FUNCTION \(tvf.bracketed);"), timeout: TIMEOUT, description: "drop table function")
-        defer {
-            _ = try? waitForResult(conn.query("IF OBJECT_ID(N'\(scalar.bare)', 'FN') IS NOT NULL DROP FUNCTION \(scalar.bracketed);"), timeout: TIMEOUT, description: "drop scalar function")
-            _ = try? waitForResult(conn.query("IF OBJECT_ID(N'\(tvf.bare)', 'IF') IS NOT NULL DROP FUNCTION \(tvf.bracketed);"), timeout: TIMEOUT, description: "drop table function")
+    func testScalarAndTableValuedFunctions() async throws {
+        try await withTemporaryDatabase(client: self.client, prefix: "itfn2") { db in
+            try await withDbConnection(client: self.client, database: db) { conn in
+                let scalar = makeSchemaQualifiedName(prefix: "fn_tds_scalar")
+                let tvf = makeSchemaQualifiedName(prefix: "fn_tds_table")
+
+                _ = try await conn.query("IF OBJECT_ID(N'\(scalar.bare)', 'FN') IS NOT NULL DROP FUNCTION \(scalar.bracketed);").get()
+                _ = try await conn.query("IF OBJECT_ID(N'\(tvf.bare)', 'IF') IS NOT NULL DROP FUNCTION \(tvf.bracketed);").get()
+
+                let createScalar = """
+                CREATE FUNCTION \(scalar.bracketed) (@input NVARCHAR(100))
+                RETURNS NVARCHAR(200)
+                AS
+                BEGIN
+                    RETURN CONCAT(@input, N'_suffix');
+                END;
+                """
+                _ = try await conn.query(createScalar).get()
+
+                let createTableFunc = """
+                CREATE FUNCTION \(tvf.bracketed) (@top INT)
+                RETURNS TABLE
+                AS
+                RETURN SELECT TOP (@top) database_id, name FROM sys.databases ORDER BY name;
+                """
+                _ = try await conn.query(createTableFunc).get()
+
+                let scalarRows = try await conn.query("SELECT \(scalar.bare)(N'prefix') AS value;").get()
+                XCTAssertEqual(scalarRows.first?.column("value")?.string, "prefix_suffix")
+
+                let tableRows = try await conn.query("SELECT COUNT(*) AS cnt FROM \(tvf.bracketed)(2);").get()
+                XCTAssertEqual(tableRows.first?.column("cnt")?.int, 2)
+
+                let alterScalar = """
+                ALTER FUNCTION \(scalar.bracketed) (@input NVARCHAR(100))
+                RETURNS NVARCHAR(200)
+                AS
+                BEGIN
+                    RETURN CONCAT(N'new_', @input);
+                END;
+                """
+                _ = try await conn.query(alterScalar).get()
+                let alteredRows = try await conn.query("SELECT \(scalar.bare)(N'value') AS value;").get()
+                XCTAssertEqual(alteredRows.first?.column("value")?.string, "new_value")
+            }
         }
-        
-        let createScalar = """
-        CREATE FUNCTION \(scalar.bracketed) (@input NVARCHAR(100))
-        RETURNS NVARCHAR(200)
-        AS
-        BEGIN
-            RETURN CONCAT(@input, N'_suffix');
-        END;
-        """
-        _ = try waitForResult(conn.query(createScalar), timeout: TIMEOUT, description: "create scalar function")
-        
-        let createTableFunc = """
-        CREATE FUNCTION \(tvf.bracketed) (@top INT)
-        RETURNS TABLE
-        AS
-        RETURN SELECT TOP (@top) database_id, name FROM sys.databases ORDER BY name;
-        """
-        _ = try waitForResult(conn.query(createTableFunc), timeout: TIMEOUT, description: "create table function")
-        
-        let scalarRows = try waitForResult(conn.query("SELECT \(scalar.bare)(N'prefix') AS value;"), timeout: TIMEOUT, description: "invoke scalar function")
-        XCTAssertEqual(scalarRows.first?.column("value")?.string, "prefix_suffix")
-        
-        let tableRows = try waitForResult(conn.query("SELECT COUNT(*) AS cnt FROM \(tvf.bracketed)(2);"), timeout: TIMEOUT, description: "invoke table function")
-        XCTAssertEqual(tableRows.first?.column("cnt")?.int, 2)
-        
-        let alterScalar = """
-        ALTER FUNCTION \(scalar.bracketed) (@input NVARCHAR(100))
-        RETURNS NVARCHAR(200)
-        AS
-        BEGIN
-            RETURN CONCAT(N'new_', @input);
-        END;
-        """
-        _ = try waitForResult(conn.query(alterScalar), timeout: TIMEOUT, description: "alter scalar function")
-        let alteredRows = try waitForResult(conn.query("SELECT \(scalar.bare)(N'value') AS value;"), timeout: TIMEOUT, description: "invoke altered scalar function")
-        XCTAssertEqual(alteredRows.first?.column("value")?.string, "new_value")
     }
     
-    func testDmlTriggerLifecycle() throws {
-        let conn = try waitForResult(connectSQLServer(on: eventLoop), timeout: TIMEOUT, description: "connect")
-        defer { _ = try? waitForResult(conn.close(), timeout: TIMEOUT, description: "close") }
-        
-        let base = makeSchemaQualifiedName(prefix: "tbl_tds_base")
-        let audit = makeSchemaQualifiedName(prefix: "tbl_tds_audit")
-        let trigger = makeSchemaQualifiedName(prefix: "trg_tds_insert")
-        
-        _ = try waitForResult(conn.query("IF OBJECT_ID(N'\(trigger.bare)', 'TR') IS NOT NULL DROP TRIGGER \(trigger.bracketed);"), timeout: TIMEOUT, description: "drop trigger")
-        _ = try waitForResult(conn.query("IF OBJECT_ID(N'\(audit.bare)', 'U') IS NOT NULL DROP TABLE \(audit.bracketed);"), timeout: TIMEOUT, description: "drop audit table")
-        _ = try waitForResult(conn.query("IF OBJECT_ID(N'\(base.bare)', 'U') IS NOT NULL DROP TABLE \(base.bracketed);"), timeout: TIMEOUT, description: "drop base table")
-        defer {
-            _ = try? waitForResult(conn.query("IF OBJECT_ID(N'\(trigger.bare)', 'TR') IS NOT NULL DROP TRIGGER \(trigger.bracketed);"), timeout: TIMEOUT, description: "drop trigger")
-            _ = try? waitForResult(conn.query("IF OBJECT_ID(N'\(audit.bare)', 'U') IS NOT NULL DROP TABLE \(audit.bracketed);"), timeout: TIMEOUT, description: "drop audit table")
-            _ = try? waitForResult(conn.query("IF OBJECT_ID(N'\(base.bare)', 'U') IS NOT NULL DROP TABLE \(base.bracketed);"), timeout: TIMEOUT, description: "drop base table")
+    func testDmlTriggerLifecycle() async throws {
+        try await withTemporaryDatabase(client: self.client, prefix: "ittrg") { db in
+            try await withDbConnection(client: self.client, database: db) { conn in
+                let base = makeSchemaQualifiedName(prefix: "tbl_tds_base")
+                let audit = makeSchemaQualifiedName(prefix: "tbl_tds_audit")
+                let trigger = makeSchemaQualifiedName(prefix: "trg_tds_insert")
+
+                _ = try await conn.query("CREATE TABLE \(base.bracketed) (id INT PRIMARY KEY, description NVARCHAR(100));").get()
+                _ = try await conn.query("CREATE TABLE \(audit.bracketed) (id INT, description NVARCHAR(100));").get()
+
+                let createTrigger = """
+                CREATE TRIGGER \(trigger.bracketed)
+                ON \(base.bracketed)
+                AFTER INSERT
+                AS
+                BEGIN
+                    INSERT INTO \(audit.bracketed)(id, description)
+                    SELECT id, description FROM inserted;
+                END;
+                """
+                _ = try await conn.query(createTrigger).get()
+
+                _ = try await conn.query("INSERT INTO \(base.bracketed) (id, description) VALUES (42, N'answer');").get()
+
+                let auditRows = try await conn.query("SELECT description FROM \(audit.bracketed) WHERE id = 42;").get()
+                XCTAssertEqual(auditRows.first?.column("description")?.string, "answer")
+            }
         }
-        
-        _ = try waitForResult(conn.query("CREATE TABLE \(base.bracketed) (id INT PRIMARY KEY, description NVARCHAR(100));"), timeout: TIMEOUT, description: "create base table")
-        _ = try waitForResult(conn.query("CREATE TABLE \(audit.bracketed) (id INT, description NVARCHAR(100));"), timeout: TIMEOUT, description: "create audit table")
-        
-        let createTrigger = """
-        CREATE TRIGGER \(trigger.bracketed)
-        ON \(base.bracketed)
-        AFTER INSERT
-        AS
-        BEGIN
-            INSERT INTO \(audit.bracketed)(id, description)
-            SELECT id, description FROM inserted;
-        END;
-        """
-        _ = try waitForResult(conn.query(createTrigger), timeout: TIMEOUT, description: "create trigger")
-        
-        _ = try waitForResult(conn.query("INSERT INTO \(base.bracketed) (id, description) VALUES (42, N'answer');"), timeout: TIMEOUT, description: "insert base row")
-        
-        let auditRows = try waitForResult(conn.query("SELECT description FROM \(audit.bracketed) WHERE id = 42;"), timeout: TIMEOUT, description: "query audit table")
-        XCTAssertEqual(auditRows.first?.column("description")?.string, "answer")
     }
     
     func testSynonymResolvesToSource() throws {

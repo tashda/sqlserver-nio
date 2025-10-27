@@ -1,7 +1,9 @@
 import Foundation
 import Logging
 import NIO
-import SQLServerKit
+import NIOPosix
+import SQLServerTDS
+@testable import SQLServerKit
 import XCTest
 
 // MARK: - Logging
@@ -82,8 +84,16 @@ func loadEnvFileIfPresent(path: String = ".env") {
         let value = String(trimmedValue)
         
         guard !key.isEmpty else { return }
-        setenv(key, value, 1)
+        // Respect variables already provided by the test host (e.g. Xcode test plan).
+        // Only set values from .env when the key is not already present.
+        if getenv(key) == nil {
+            setenv(key, value, 1)
+        }
     }
+
+    // Do not inject a default TDS_TEST_OPERATION_TIMEOUT_SECONDS here.
+    // Test environments can opt-in via .env or the test plan to avoid
+    // scheduling timeouts on loops that may be torn down mid-run.
 }
 
 // MARK: - Test Configuration
@@ -95,7 +105,7 @@ func makeSQLServerConnectionConfiguration() -> SQLServerConnection.Configuration
     let password = env("TDS_PASSWORD") ?? "SwiftTDS!"
     let database = env("TDS_DATABASE") ?? "swift_tds_database"
 
-    return SQLServerConnection.Configuration(
+    var cfg = SQLServerConnection.Configuration(
         hostname: hostname,
         port: port,
         login: .init(
@@ -109,19 +119,46 @@ func makeSQLServerConnectionConfiguration() -> SQLServerConnection.Configuration
             includeRoutineDefinitions: true
         ),
         retryConfiguration: SQLServerRetryConfiguration(
-            maximumAttempts: 8,
+            maximumAttempts: 5,
             backoffStrategy: { attempt in
                 let base: Int64 = 250 // ms
-                let delay = base << (attempt - 1) // 250, 500, 1000, ...
+                let delay = base << (attempt - 1) // 250, 500, 1000
                 return .milliseconds(delay)
+            },
+            shouldRetry: { error in
+                if let se = error as? SQLServerError {
+                    switch se {
+                    case .connectionClosed, .transient, .timeout:
+                        return true
+                    default:
+                        return false
+                    }
+                }
+                // Fall back to common underlying error types
+                if let tds = error as? TDSError {
+                    if case .connectionClosed = tds { return true }
+                }
+                if let ch = error as? ChannelError {
+                    switch ch {
+                    case .ioOnClosedChannel, .outputClosed, .eof:
+                        return true
+                    default:
+                        break
+                    }
+                }
+                if error is NIOConnectionError { return true }
+                return false
             }
         )
     )
+    // Force direct endpoint usage to avoid unstable SQL Browser/alternate ports in tests
+    cfg.transparentNetworkIPResolution = false
+    return cfg
 }
 
 func makeSQLServerClientConfiguration() -> SQLServerClient.Configuration {
     let pool = SQLServerConnectionPool.Configuration(
-        maximumConcurrentConnections: 1,
+        maximumConcurrentConnections: 4,
         minimumIdleConnections: 1,
         connectionIdleTimeout: .seconds(60),
         validationQuery: "SELECT 1;"
@@ -134,7 +171,8 @@ func makeSQLServerClientConfiguration() -> SQLServerClient.Configuration {
 }
 
 func connectSQLServer(on eventLoop: EventLoop) -> EventLoopFuture<SQLServerConnection> {
-    SQLServerConnection.connect(configuration: makeSQLServerConnectionConfiguration(), on: eventLoop)
+    SQLServerConnection
+        .connect(configuration: makeSQLServerConnectionConfiguration(), on: eventLoop)
 }
 
 
@@ -153,9 +191,19 @@ func makeSchemaQualifiedName(prefix: String, schema: String = "dbo") -> (bare: S
     return (bare, bracketed, name)
 }
 
+func envFlagEnabled(_ key: String) -> Bool {
+    guard var value = env(key) else { return false }
+    value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    switch value.lowercased() {
+    case "1", "true", "yes", "on": return true
+    default: return false
+    }
+}
+
 func requireEnvFlag(_ key: String, description: String) throws {
-    guard env(key) == "1" else {
-        throw XCTSkip("Skipping \(description). Set \(key)=1 to enable.")
+    guard envFlagEnabled(key) else {
+        let current = env(key) ?? "<nil>"
+        throw XCTSkip("Skipping \(description). Set \(key)=1 to enable (currently: \(current)).")
     }
 }
 
@@ -206,6 +254,31 @@ extension XCTestCase {
     }
 }
 
+// MARK: - Agent Preflight Helper
+
+/// Asserts that the SQL Server Agent environment is ready for tests and provides actionable
+/// guidance if not. Uses the SQLServerAgentClient preflight to check Agent status and, optionally,
+/// proxy prerequisites.
+func assertAgentPreflight(_ connection: SQLServerConnection, requireProxyPrereqs: Bool = false, timeout: TimeInterval) throws {
+    let agent = SQLServerAgentClient(connection: connection)
+    // Avoid relying on XCTestCase extension helpers here to prevent symbol ordering
+    // issues during filtered builds. Use a simple semaphore-based wait.
+    let sema = DispatchSemaphore(value: 0)
+    var firstError: Error?
+    agent.preflightAgentEnvironment(requireProxyPrereqs: requireProxyPrereqs).whenComplete { result in
+        if case .failure(let error) = result {
+            firstError = error
+        }
+        sema.signal()
+    }
+    let waitResult = sema.wait(timeout: .now() + timeout)
+    guard waitResult == .success else { throw TestTimeoutError.timedOut(timeout: timeout, description: "agent preflight") }
+    if let error = firstError {
+        XCTFail(String(describing: error))
+        throw error
+    }
+}
+
 extension NSRegularExpression {
     convenience init(_ pattern: String) {
         do {
@@ -253,6 +326,7 @@ func runWithRetry(_ client: SQLServerClient, _ sql: String, attempts: Int = 3, d
 func withTemporaryDatabase(
     client: SQLServerClient,
     prefix: String = "tmpdb",
+    configureIsolation: Bool = true,
     body: @escaping (_ database: String) async throws -> Void
 ) async throws {
     let db = "\(prefix)_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))"
@@ -261,16 +335,58 @@ func withTemporaryDatabase(
     }
     // Wait for the database to come ONLINE and accept queries
     do {
-        _ = try await withTimeout(10) {
-            try await withRetry(attempts: 8, delayNs: 250_000_000) {
+        _ = try await withTimeout(15) {
+            try await withRetry(attempts: 12, delayNs: 250_000_000) {
                 // Check ONLINE state
                 let rows = try await client.query("SELECT state_desc FROM sys.databases WHERE name = N'\(db)' ").get()
                 guard rows.first?.column("state_desc")?.string == "ONLINE" else {
                     throw SQLServerError.timeout(description: "database not ONLINE yet", underlying: nil)
                 }
-                // Also verify a simple query using a DB-scoped connection
-                let _: [TDSRow] = try await withDbConnection(client: client, database: db) { conn in
-                    try await conn.query("SELECT 1 AS ready").get()
+                // Verify a simple query using fresh DB-scoped connections (stability warmup)
+                for _ in 0..<3 {
+                    let _: [TDSRow] = try await withDbConnection(client: client, database: db) { conn in
+                        try await conn.query("SELECT 1 AS ready").get()
+                    }
+                }
+                return ()
+            }
+        }
+        if configureIsolation {
+        // Enforce blocking semantics expected by isolation tests
+            _ = try await withTimeout(10) {
+                try await client.execute("ALTER DATABASE [\(db)] SET ALLOW_SNAPSHOT_ISOLATION OFF").get()
+            }
+            _ = try await withTimeout(10) {
+                try await client.execute("ALTER DATABASE [\(db)] SET READ_COMMITTED_SNAPSHOT OFF").get()
+            }
+            // Wait until database leaves transition state after options changed
+            _ = try await withTimeout(10) {
+                try await withRetry(attempts: 10, delayNs: 300_000_000) {
+                    let rows = try await client.query("""
+                        SELECT state_desc, is_read_committed_snapshot_on, snapshot_isolation_state_desc
+                        FROM sys.databases WHERE name = N'\(db)'
+                    """).get()
+                    guard let row = rows.first,
+                          row.column("state_desc")?.string == "ONLINE",
+                          (row.column("is_read_committed_snapshot_on")?.int ?? 0) == 0,
+                          row.column("snapshot_isolation_state_desc")?.string?.uppercased() == "OFF" else {
+                        throw SQLServerError.timeout(description: "database options not applied yet", underlying: nil)
+                    }
+                    return ()
+                }
+            }
+            // Small grace period to allow engine to fully settle after state changes
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+        // For stability on some environments: ensure AUTO_CLOSE is OFF so newly created DBs don't flap state
+        _ = try await withTimeout(10) {
+            try await client.execute("ALTER DATABASE [\(db)] SET AUTO_CLOSE OFF").get()
+        }
+        _ = try await withTimeout(10) {
+            try await withRetry(attempts: 6, delayNs: 200_000_000) {
+                let rows = try await client.query("SELECT is_auto_close_on FROM sys.databases WHERE name = N'\(db)'").get()
+                guard (rows.first?.column("is_auto_close_on")?.int ?? 1) == 0 else {
+                    throw SQLServerError.timeout(description: "AUTO_CLOSE not OFF yet", underlying: nil)
                 }
                 return ()
             }
@@ -287,7 +403,7 @@ func withTemporaryDatabase(
         await runWithRetry(client, "ALTER DATABASE [\(db)] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [\(db)]")
         throw error
     }
-    try await DDLGuard.shared.withLock {
+    await DDLGuard.shared.withLock {
         _ = try? await withTimeout(15) {
             try await client.execute("ALTER DATABASE [\(db)] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [\(db)]").get()
         }
@@ -334,6 +450,18 @@ func withDbConnection<T>(
     try await client.withConnection { connection in
         _ = try await connection.changeDatabase(database).get()
         return try await operation(connection)
+    }
+}
+
+// Retry wrapper for flaky connection closures during tests
+@available(macOS 12.0, *)
+func withReliableConnection<T>(
+    client: SQLServerClient,
+    attempts: Int = 3,
+    _ operation: @escaping (SQLServerConnection) async throws -> T
+) async throws -> T {
+    try await withRetry(attempts: attempts) {
+        try await client.withConnection(operation)
     }
 }
 
@@ -389,5 +517,19 @@ func withTimeout<T>(_ seconds: TimeInterval, _ operation: @escaping () async thr
         let result = try await group.next()!
         group.cancelAll()
         return result
+    }
+}
+// Tiny helper to run an async block from sync context during setUpWithError.
+func awaitTask<T>(_ body: @escaping () async throws -> T) throws -> T {
+    var result: Result<T, Error>!
+    let sema = DispatchSemaphore(value: 0)
+    Task {
+        do { result = .success(try await body()) } catch { result = .failure(error) }
+        sema.signal()
+    }
+    sema.wait()
+    switch result! {
+    case .success(let value): return value
+    case .failure(let error): throw error
     }
 }

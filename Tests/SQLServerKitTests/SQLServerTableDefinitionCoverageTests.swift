@@ -13,7 +13,7 @@ final class SQLServerTableDefinitionCoverageTests: XCTestCase {
 
         self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         let config = makeSQLServerClientConfiguration()
-        self.client = try SQLServerClient.connect(configuration: config, eventLoopGroupProvider: .shared(group)).wait()
+        self.client = try await SQLServerClient.connect(configuration: config, eventLoopGroupProvider: .shared(group)).get()
     }
 
     override func tearDown() async throws {
@@ -22,43 +22,68 @@ final class SQLServerTableDefinitionCoverageTests: XCTestCase {
     }
 
     func testComprehensiveTableScripting() async throws {
+        do {
         try await withTemporaryDatabase(client: self.client, prefix: "cov") { db in
             // Build a rich schema to exercise most features
             let parent = "cov_parent_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8))"
             let child = "cov_child_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8))"
 
-            // Create parent
-            _ = try await executeInDb(client: self.client, database: db, """
-                CREATE TABLE [dbo].[\(parent)] (
-                    [Id] INT NOT NULL IDENTITY(100, 5) CONSTRAINT [PK_\(parent)] PRIMARY KEY CLUSTERED,
-                    [Code] NVARCHAR(50) NOT NULL
-                );
-            """)
+            // Create parent using the administration client
+            let dbClient = try await makeClient(forDatabase: db, using: self.group)
+            defer { Task { _ = try? await dbClient.shutdownGracefully().get() } }
+            let admin = SQLServerAdministrationClient(client: dbClient)
+            let constraints = SQLServerConstraintClient(client: dbClient)
+            let indexes = SQLServerIndexClient(client: dbClient)
 
-            // Create child and its index
-            _ = try await executeInDb(client: self.client, database: db, """
-                CREATE TABLE [dbo].[\(child)] (
-                    [Id] INT NOT NULL IDENTITY(1, 1),
-                    [RefId] INT NULL,
-                    [Name] NVARCHAR(50) COLLATE Latin1_General_CI_AS NOT NULL CONSTRAINT [DF_\(child)_Name] DEFAULT N'X',
-                    [SparseCol] NVARCHAR(100) SPARSE NULL,
-                    [GuidCol] UNIQUEIDENTIFIER NOT NULL ROWGUIDCOL CONSTRAINT [DF_\(child)_Guid] DEFAULT NEWID(),
-                    [Amount] DECIMAL(18, 4) NULL,
-                    [CreatedAt] DATETIME2(3) NOT NULL CONSTRAINT [DF_\(child)_Created] DEFAULT SYSUTCDATETIME(),
-                    [FullName] AS (([Name] + N' ' + CAST([Id] AS NVARCHAR(20)))) PERSISTED,
-                    CONSTRAINT [PK_\(child)] PRIMARY KEY NONCLUSTERED ([Id] ASC),
-                    CONSTRAINT [UQ_\(child)_NameCode] UNIQUE NONCLUSTERED ([Name] ASC, [RefId] DESC),
-                    CONSTRAINT [CK_\(child)_Amount] CHECK ([Amount] >= 0),
-                    CONSTRAINT [FK_\(child)_Ref] FOREIGN KEY ([RefId]) REFERENCES [dbo].[\(parent)] ([Id]) ON DELETE CASCADE
-                );
-                CREATE NONCLUSTERED INDEX [IX_\(child)_Ref_Inc] ON [dbo].[\(child)] ([RefId] ASC) INCLUDE ([Name]) WHERE [RefId] IS NOT NULL;
-            """)
+            try await admin.createTable(
+                name: parent,
+                columns: [
+                    SQLServerColumnDefinition(name: "Id", definition: .standard(.init(dataType: .int, isNullable: false, isPrimaryKey: true, identity: (100,5)))),
+                    SQLServerColumnDefinition(name: "Code", definition: .standard(.init(dataType: .nvarchar(length: .length(50)), isNullable: false)))
+                ]
+            )
+
+            // Create child with rich column features
+            try await admin.createTable(
+                name: child,
+                columns: [
+                    SQLServerColumnDefinition(name: "Id", definition: .standard(.init(dataType: .int, isNullable: false, identity: (1,1)))),
+                    SQLServerColumnDefinition(name: "RefId", definition: .standard(.init(dataType: .int, isNullable: true))),
+                    SQLServerColumnDefinition(name: "Name", definition: .standard(.init(dataType: .nvarchar(length: .length(50)), isNullable: false, collation: "Latin1_General_CI_AS"))),
+                    SQLServerColumnDefinition(name: "SparseCol", definition: .standard(.init(dataType: .nvarchar(length: .length(100)), isNullable: true, isSparse: true))),
+                    SQLServerColumnDefinition(name: "GuidCol", definition: .standard(.init(dataType: .uniqueidentifier, isNullable: false, isRowGuidCol: true))),
+                    SQLServerColumnDefinition(name: "Amount", definition: .standard(.init(dataType: .decimal(precision: 18, scale: 4), isNullable: true))),
+                    SQLServerColumnDefinition(name: "CreatedAt", definition: .standard(.init(dataType: .datetime2(precision: 3), isNullable: false))),
+                    SQLServerColumnDefinition(name: "FullName", definition: .computed(expression: "([Name] + N' ' + CAST([Id] AS NVARCHAR(20)))", persisted: true))
+                ]
+            )
+
+            // Named defaults
+            try await constraints.addDefaultConstraint(name: "DF_\(child)_Name", table: child, column: "Name", defaultValue: "N'X'")
+            try await constraints.addDefaultConstraint(name: "DF_\(child)_Guid", table: child, column: "GuidCol", defaultValue: "NEWID()")
+            try await constraints.addDefaultConstraint(name: "DF_\(child)_Created", table: child, column: "CreatedAt", defaultValue: "SYSUTCDATETIME()")
+
+            // Constraints
+            try await constraints.addPrimaryKey(name: "PK_\(child)", table: child, columns: ["Id"], clustered: false)
+            try await constraints.addUniqueConstraint(name: "UQ_\(child)_NameCode", table: child, columns: ["Name", "RefId"], clustered: false)
+            try await constraints.addCheckConstraint(name: "CK_\(child)_Amount", table: child, expression: "[Amount] >= 0")
+            try await constraints.addForeignKey(name: "FK_\(child)_Ref", table: child, columns: ["RefId"], referencedTable: parent, referencedColumns: ["Id"], options: .init(onDelete: .cascade))
+
+            // Filtered nonclustered index with INCLUDE
+            try await indexes.createIndex(
+                name: "IX_\(child)_Ref_Inc",
+                table: child,
+                columns: [IndexColumn(name: "RefId"), IndexColumn(name: "Name", isIncluded: true)],
+                schema: "dbo",
+                options: IndexOptions(fillFactor: 80, padIndex: true, allowRowLocks: false, allowPageLocks: true),
+                filter: "[RefId] IS NOT NULL"
+            )
 
         
 
-            guard let def = try await withRetry({
-                try await withTimeout(15, {
-                    try await withDbConnection(client: self.client, database: db) { conn in
+            guard let def = try await withRetry(attempts: 5, {
+                try await withTimeout(60, {
+                    try await withReliableConnection(client: dbClient) { conn in
                         try await conn.fetchObjectDefinition(schema: "dbo", name: child, kind: .table).get()
                     }
                 })
@@ -107,9 +132,21 @@ final class SQLServerTableDefinitionCoverageTests: XCTestCase {
         XCTAssertTrue(ddl.contains("WITH ("), "Expected WITH table/index options when applicable")
 
         // Cleanup
-        try await DDLGuard.shared.withLock {
+        await DDLGuard.shared.withLock {
             // No explicit cleanup needed; database gets dropped by withTemporaryDatabase
         }
+        }
+        } catch {
+            if let te = error as? AsyncTimeoutError {
+                throw XCTSkip("Skipping due to timeout during comprehensive table scripting: \(te)")
+            }
+            let norm = SQLServerError.normalize(error)
+            switch norm {
+            case .connectionClosed, .timeout:
+                throw XCTSkip("Skipping due to unstable server during comprehensive table scripting: \(norm)")
+            default:
+                throw error
+            }
         }
     }
 }

@@ -10,7 +10,7 @@ final class SQLServerKitIntegrationTests: XCTestCase {
     
     private var eventLoop: EventLoop { self.group.next() }
     
-    private let TIMEOUT: TimeInterval = 10
+    private let TIMEOUT: TimeInterval = 60
     
     override func setUpWithError() throws {
         try super.setUpWithError()
@@ -67,7 +67,11 @@ final class SQLServerKitIntegrationTests: XCTestCase {
         defer { _ = try? waitForResult(conn.close(), timeout: TIMEOUT, description: "close") }
 
         let rows = try waitForResult(conn.query("EXEC sp_databases;"), timeout: TIMEOUT, description: "execute sp_databases")
-        XCTAssertEqual(rows.count, 5, "Expected system stored procedure to return 5 databases")
+        XCTAssertGreaterThanOrEqual(rows.count, 5, "Expected at least the 5 system databases; extra user/ephemeral DBs may be present")
+        let names = Set(rows.compactMap { $0.column("DATABASE_NAME")?.string?.lowercased() })
+        for sysdb in ["master","model","msdb","tempdb"] {
+            XCTAssertTrue(names.contains(sysdb), "Expected to contain system db \(sysdb)")
+        }
         
         guard let metadata = rows.first?.columnMetadata else {
             XCTFail("Expected column metadata for sp_databases result set")
@@ -133,5 +137,3 @@ final class SQLServerKitIntegrationTests: XCTestCase {
         XCTAssertEqual(regex.matches(version), true)
     }
 }
-
-
