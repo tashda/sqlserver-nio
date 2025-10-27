@@ -11,7 +11,7 @@ final class SQLServerAdventureWorksRoutineTests: XCTestCase {
         XCTAssertTrue(isLoggingConfigured)
         loadEnvFileIfPresent()
         group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        client = try SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).wait()
+        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).get()
     }
 
     override func tearDown() async throws {
@@ -31,4 +31,3 @@ final class SQLServerAdventureWorksRoutineTests: XCTestCase {
         }
     }
 }
-
