@@ -12,7 +12,7 @@ final class SQLServerForeignKeyCascadeMatrixTests: XCTestCase {
         XCTAssertTrue(isLoggingConfigured)
         loadEnvFileIfPresent()
         group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        client = try SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).wait()
+        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).get()
         do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1").get() } } catch { skipDueToEnv = true }
     }
 
@@ -43,12 +43,23 @@ final class SQLServerForeignKeyCascadeMatrixTests: XCTestCase {
 
             for (i, c) in cases.enumerated() {
                 let fk = "FK_\(i)_\(UUID().uuidString.prefix(4))"
+                // Seed fresh state before adding new FK
+                _ = try await executeInDb(client: self.client, database: db, "TRUNCATE TABLE [dbo].[\(child)]")
+                _ = try await executeInDb(client: self.client, database: db, "TRUNCATE TABLE [dbo].[\(parent)]")
                 _ = try await executeInDb(client: self.client, database: db, "ALTER TABLE [dbo].[\(child)] ADD CONSTRAINT [\(fk)] FOREIGN KEY(pid) REFERENCES [dbo].[\(parent)](id) ON DELETE \(c.del) ON UPDATE \(c.upd);")
-                // Seed
                 _ = try await executeInDb(client: self.client, database: db, "INSERT INTO [dbo].[\(parent)](id) VALUES (1);")
                 _ = try await executeInDb(client: self.client, database: db, "INSERT INTO [dbo].[\(child)](id, pid, v) VALUES (11, 1, N'x');")
-                // Delete parent
-                _ = try await executeInDb(client: self.client, database: db, "DELETE FROM [dbo].[\(parent)] WHERE id = 1;")
+                // Delete parent; for NO ACTION we expect a failure
+                if c.del == "NO ACTION" {
+                    do {
+                        _ = try await executeInDb(client: self.client, database: db, "DELETE FROM [dbo].[\(parent)] WHERE id = 1;")
+                        XCTFail("Expected NO ACTION delete to fail due to FK constraint")
+                    } catch {
+                        // expected — continue
+                    }
+                } else {
+                    _ = try await executeInDb(client: self.client, database: db, "DELETE FROM [dbo].[\(parent)] WHERE id = 1;")
+                }
                 // Check child
                 let rows = try await queryInDb(client: self.client, database: db, "SELECT COUNT(*) AS cnt, SUM(CASE WHEN pid IS NULL THEN 1 ELSE 0 END) AS nulls, SUM(CASE WHEN pid = 0 THEN 1 ELSE 0 END) AS defs FROM [dbo].[\(child)]")
                 guard let r = rows.first else { XCTFail("Missing row"); continue }
@@ -58,8 +69,8 @@ final class SQLServerForeignKeyCascadeMatrixTests: XCTestCase {
                 if c.del == "CASCADE" { XCTAssertEqual(cnt, 0, "CASCADE should remove child") }
                 if c.expectNullOnDelete { XCTAssertEqual(nulls, 1, "SET NULL should null pid") }
                 if c.expectDefaultOnDelete { XCTAssertEqual(defs, 1, "SET DEFAULT should set pid=0") }
-                // Reset child table for next case
-                _ = try await executeInDb(client: self.client, database: db, "TRUNCATE TABLE [dbo].[\(child)]")
+                // Drop FK for this case to avoid interference across cases
+                _ = try await executeInDb(client: self.client, database: db, "ALTER TABLE [dbo].[\(child)] DROP CONSTRAINT [\(fk)]")
             }
         }
     }

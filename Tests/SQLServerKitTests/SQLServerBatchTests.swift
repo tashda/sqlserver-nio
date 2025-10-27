@@ -13,7 +13,7 @@ final class SQLServerBatchTests: XCTestCase {
         
         self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         let config = makeSQLServerClientConfiguration()
-        self.client = try SQLServerClient.connect(configuration: config, eventLoopGroupProvider: .shared(group)).wait()
+        self.client = try await SQLServerClient.connect(configuration: config, eventLoopGroupProvider: .shared(group)).get()
     }
     
     override func tearDown() async throws {
@@ -91,7 +91,7 @@ final class SQLServerBatchTests: XCTestCase {
         
         // Verify table comment
         let commentResult = try await client.query("""
-        SELECT p.value
+        SELECT CAST(p.value AS NVARCHAR(4000)) AS value
         FROM sys.extended_properties p
         WHERE p.major_id = OBJECT_ID(N'dbo.\(tableName)') AND p.minor_id = 0
         """).get()
@@ -180,7 +180,7 @@ final class SQLServerBatchTests: XCTestCase {
         
         // Verify table comment
         let tableCommentResult = try await client.query("""
-        SELECT p.value
+        SELECT CAST(p.value AS NVARCHAR(4000)) AS value
         FROM sys.extended_properties p
         WHERE p.major_id = OBJECT_ID(N'dbo.\(tableName)') AND p.minor_id = 0
         """).get()
@@ -188,7 +188,7 @@ final class SQLServerBatchTests: XCTestCase {
         
         // Verify column comment
         let columnCommentResult = try await client.query("""
-        SELECT p.value
+        SELECT CAST(p.value AS NVARCHAR(4000)) AS value
         FROM sys.extended_properties p
         JOIN sys.columns c ON p.major_id = c.object_id AND p.minor_id = c.column_id
         WHERE p.major_id = OBJECT_ID(N'dbo.\(tableName)') AND c.name = N'id'
