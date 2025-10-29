@@ -54,6 +54,14 @@
   "defaultOptions" : {
     "environmentVariableEntries" : [
       {
+        "key" : "TDS_ENABLE_AGENT_TESTS",
+        "value" : "1"
+      },
+      {
+        "key" : "TDS_ENABLE_ADVENTUREWORKS",
+        "value" : "1"
+      },
+      {
         "key" : "TDS_ENABLE_SCHEMA_TEST",
         "value" : "1"
       }

@@ -74,7 +74,11 @@ public final class PipelineOrganizationHandler: ChannelDuplexHandler, RemovableC
     private func _write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) throws {
         switch self.state {
         case .start:
-            let sslHandshakeState = SSLHandshakeState(inputBuffer: context.channel.allocator.buffer(capacity: 1024), outputBuffer: context.channel.allocator.buffer(capacity: 1024), outputPromise: context.eventLoop.makePromise())
+            let sslHandshakeState = SSLHandshakeState(
+                inputBuffer: context.channel.allocator.buffer(capacity: 1024),
+                outputBuffer: context.channel.allocator.buffer(capacity: 1024),
+                outputPromise: PromiseTracker.makeTrackedPromise(on: context.eventLoop, label: "PipelineHandshake.output")
+            )
             updateSSLHandshakeState(sslHandshakeState, data: data, promise: promise)
         case .sslHandshake(let sslHandshakeState):
             updateSSLHandshakeState(sslHandshakeState, data: data, promise: promise)
@@ -157,3 +161,4 @@ public struct SSLHandshakeState {
         self.outputBuffer.writeBuffer(&buffer)
     }
 }
+

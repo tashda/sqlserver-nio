@@ -1,4 +1,5 @@
 import NIO
+import NIOEmbedded
 import NIOCore
 import NIOConcurrencyHelpers
 import Logging
@@ -117,7 +118,8 @@ public final class SQLServerConnectionPool {
         self.eventLoopGroup = eventLoopGroup
         self.logger = logger
         self.connectionFactory = connectionFactory
-        self.ensureMinimumIdleConnections()
+        // Do not prefill on init. Allow lazy creation or explicit start() to prefill,
+        // mirroring SSMS/JDBC behavior where connections are created on demand.
     }
 
     public func checkout(on eventLoop: EventLoop? = nil) -> EventLoopFuture<PooledConnection> {
@@ -164,21 +166,39 @@ public final class SQLServerConnectionPool {
         }
 
         if alreadyShuttingDown {
-            return eventLoopGroup.next().makeSucceededFuture(())
+            // Avoid scheduling onto a possibly closing event loop; return a pre-completed future
+            // backed by an active loop if available, otherwise use the event loop of an active
+            // connection or an EmbeddedEventLoop fallback.
+            return makeImmediateSucceededFuture(on: eventLoopGroup)
         }
 
         waiting.forEach { request in
-            request.eventLoop.execute {
-                request.promise.fail(Error.shutdown)
-            }
+            request.promise.fail(Error.shutdown)
         }
 
         if connectionsToClose.isEmpty {
-            return eventLoopGroup.next().makeSucceededFuture(())
+            return makeImmediateSucceededFuture(on: eventLoopGroup)
         }
 
         let futures = connectionsToClose.map { $0.close() }
-        return EventLoopFuture.andAllSucceed(futures, on: eventLoopGroup.next())
+        // Avoid selecting a new loop from a group that is shutting down; chain completion
+        // onto the event loop of the first connection being closed, which is guaranteed
+        // to remain valid for the duration of the close.
+        if let first = connectionsToClose.first {
+            return EventLoopFuture.andAllSucceed(futures, on: first.eventLoop)
+        } else {
+            return makeImmediateSucceededFuture(on: eventLoopGroup)
+        }
+    }
+
+    private func makeImmediateSucceededFuture(on group: EventLoopGroup) -> EventLoopFuture<Void> {
+        // Try to pick an active loop without causing new registrations; fall back to an embedded loop
+        // only for immediate success futures to avoid scheduling onto a closing loop.
+        if let loop = (self.idle.first?.connection.eventLoop) ?? (self.waiters.first?.eventLoop) ?? Optional(group.next()) {
+            return loop.makeSucceededFuture(())
+        }
+        let embedded = EmbeddedEventLoop()
+        return embedded.makeSucceededFuture(())
     }
 
     private func process(request: PoolRequest) {
@@ -206,7 +226,6 @@ public final class SQLServerConnectionPool {
     }
 
     fileprivate func release(_ connection: TDSConnection, close: Bool) -> EventLoopFuture<Void> {
-        let promise = connection.eventLoop.makePromise(of: Void.self)
         var shouldEnsure = false
 
         let action: Action = lock.withLock {
@@ -235,12 +254,11 @@ public final class SQLServerConnectionPool {
             return .none
         }
 
-        promise.succeed(())
         run(action)
         if shouldEnsure {
             ensureMinimumIdleConnections()
         }
-        return promise.futureResult
+        return connection.eventLoop.makeSucceededFuture(())
     }
 
     private func run(_ action: Action) {
@@ -257,9 +275,7 @@ public final class SQLServerConnectionPool {
         case .close(let connection):
             _ = connection.close()
         case .fail(let request, let error):
-            request.eventLoop.execute {
-                request.promise.fail(error)
-            }
+            request.promise.fail(error)
         case .none:
             break
         }
@@ -391,9 +407,7 @@ public final class SQLServerConnectionPool {
             connection.rawSql(validationQuery).whenComplete { result in
                 switch result {
                 case .success:
-                    request.eventLoop.execute {
-                        request.promise.succeed(connection)
-                    }
+                    request.promise.succeed(connection)
                 case .failure(let error):
                     self.logger.warning("Validation query failed: \(error)")
                     _ = connection.close()
@@ -405,9 +419,7 @@ public final class SQLServerConnectionPool {
                 }
             }
         } else {
-            request.eventLoop.execute {
-                request.promise.succeed(connection)
-            }
+            request.promise.succeed(connection)
         }
     }
 

@@ -97,12 +97,29 @@ public final class SQLServerIndexClient {
     
     // MARK: - Index Creation
     
+    private func dropIndexIfExistsSQL(name: String, table: String, schema: String) -> String {
+        let escapedIndexName = Self.escapeIdentifier(name)
+        let escapedTableName = Self.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let fullTableName = "\(schemaPrefix)\(escapedTableName)"
+        return """
+        IF EXISTS (
+            SELECT 1 FROM sys.indexes
+            WHERE name = N\(escapedIndexName)
+              AND object_id = OBJECT_ID(N\(fullTableName))
+        )
+        DROP INDEX \(escapedIndexName) ON \(fullTableName);
+        """
+    }
+
     public func createIndex(
         name: String,
         table: String,
         columns: [IndexColumn],
         schema: String = "dbo",
-        options: IndexOptions? = nil
+        options: IndexOptions? = nil,
+        filter: String? = nil,
+        dropIfExists: Bool = false
     ) -> EventLoopFuture<Void> {
         let promise = client.eventLoopGroup.next().makePromise(of: Void.self)
         if #available(macOS 12.0, *) {
@@ -121,12 +138,19 @@ public final class SQLServerIndexClient {
         table: String,
         columns: [IndexColumn],
         schema: String = "dbo",
-        options: IndexOptions? = nil
+        options: IndexOptions? = nil,
+        filter: String? = nil,
+        dropIfExists: Bool = false
     ) async throws {
         let escapedIndexName = Self.escapeIdentifier(name)
         let escapedTableName = Self.escapeIdentifier(table)
         let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
+
+        if dropIfExists {
+            let dropSql = dropIndexIfExistsSQL(name: name, table: table, schema: schema)
+            _ = try await client.execute(dropSql)
+        }
         
         // Separate key columns from included columns
         let keyColumns = columns.filter { !$0.isIncluded }
@@ -149,7 +173,11 @@ public final class SQLServerIndexClient {
             let includedColumnList = includedColumns.map { Self.escapeIdentifier($0.name) }.joined(separator: ", ")
             sql += " INCLUDE (\(includedColumnList))"
         }
-        
+        // Filtered index
+        if let f = filter, !f.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            sql += " WHERE \(f)"
+        }
+
         // Add options
         if let options = options {
             var optionParts: [String] = []
@@ -199,7 +227,9 @@ public final class SQLServerIndexClient {
         table: String,
         columns: [IndexColumn],
         schema: String = "dbo",
-        options: IndexOptions? = nil
+        options: IndexOptions? = nil,
+        filter: String? = nil,
+        dropIfExists: Bool = false
     ) -> EventLoopFuture<Void> {
         let promise = client.eventLoopGroup.next().makePromise(of: Void.self)
         if #available(macOS 12.0, *) {
@@ -218,12 +248,19 @@ public final class SQLServerIndexClient {
         table: String,
         columns: [IndexColumn],
         schema: String = "dbo",
-        options: IndexOptions? = nil
+        options: IndexOptions? = nil,
+        filter: String? = nil,
+        dropIfExists: Bool = false
     ) async throws {
         let escapedIndexName = Self.escapeIdentifier(name)
         let escapedTableName = Self.escapeIdentifier(table)
         let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
+
+        if dropIfExists {
+            let dropSql = dropIndexIfExistsSQL(name: name, table: table, schema: schema)
+            _ = try await client.execute(dropSql)
+        }
         
         // Separate key columns from included columns
         let keyColumns = columns.filter { !$0.isIncluded }
@@ -246,7 +283,10 @@ public final class SQLServerIndexClient {
             let includedColumnList = includedColumns.map { Self.escapeIdentifier($0.name) }.joined(separator: ", ")
             sql += " INCLUDE (\(includedColumnList))"
         }
-        
+        if let f = filter, !f.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            sql += " WHERE \(f)"
+        }
+
         // Add options (same as regular index)
         if let options = options {
             var optionParts: [String] = []
@@ -288,6 +328,63 @@ public final class SQLServerIndexClient {
             }
         }
         
+        _ = try await client.execute(sql)
+    }
+
+    // MARK: - Columnstore Indexes
+
+    public func createColumnstoreIndex(
+        name: String,
+        table: String,
+        clustered: Bool,
+        columns: [String] = [],
+        schema: String = "dbo",
+        dropIfExists: Bool = false
+    ) -> EventLoopFuture<Void> {
+        let promise = client.eventLoopGroup.next().makePromise(of: Void.self)
+        if #available(macOS 12.0, *) {
+            promise.completeWithTask {
+                try await self.createColumnstoreIndex(
+                    name: name,
+                    table: table,
+                    clustered: clustered,
+                    columns: columns,
+                    schema: schema,
+                    dropIfExists: dropIfExists
+                )
+            }
+        } else {
+            promise.fail(SQLServerError.unsupportedPlatform)
+        }
+        return promise.futureResult
+    }
+
+    @available(macOS 12.0, *)
+    public func createColumnstoreIndex(
+        name: String,
+        table: String,
+        clustered: Bool,
+        columns: [String] = [],
+        schema: String = "dbo",
+        dropIfExists: Bool = false
+    ) async throws {
+        let escapedIndexName = Self.escapeIdentifier(name)
+        let escapedTableName = Self.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let fullTableName = "\(schemaPrefix)\(escapedTableName)"
+
+        if dropIfExists {
+            let dropSql = dropIndexIfExistsSQL(name: name, table: table, schema: schema)
+            _ = try await client.execute(dropSql)
+        }
+
+        let kind = clustered ? "CLUSTERED COLUMNSTORE" : "NONCLUSTERED COLUMNSTORE"
+        var sql = "CREATE \(kind) INDEX \(escapedIndexName) ON \(fullTableName)"
+        if !clustered && !columns.isEmpty {
+            let list = columns.map { Self.escapeIdentifier($0) }.joined(separator: ", ")
+            sql += " (\(list))"
+        }
+        sql += ";"
         _ = try await client.execute(sql)
     }
     

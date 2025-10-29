@@ -11,6 +11,8 @@ public enum SQLServerError: Swift.Error, CustomStringConvertible, LocalizedError
     case protocolError(TDSError)
     case unsupportedPlatform
     case sqlExecutionError(message: String)
+    // Specific transient error that should generally be retried: SQL Server deadlock (error 1205)
+    case deadlockDetected(message: String)
     case invalidArgument(String)
     case transient(Swift.Error)
     case unknown(Swift.Error)
@@ -35,6 +37,8 @@ public enum SQLServerError: Swift.Error, CustomStringConvertible, LocalizedError
             return "SQLServerError.unsupportedPlatform"
         case .sqlExecutionError(let message):
             return "SQLServerError.sqlExecutionError(\(message))"
+        case .deadlockDetected(let message):
+            return "SQLServerError.deadlockDetected(\(message))"
         case .invalidArgument(let message):
             return "SQLServerError.invalidArgument(\(message))"
         case .transient(let error):

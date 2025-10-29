@@ -46,8 +46,14 @@ public struct TDSData: CustomStringConvertible, CustomDebugStringConvertible {
             }
         case .guid:
             description = self.uuid?.uuidString
-        case .xml:
+        case .xml, .json:
             description = self.string?.description
+        case .vector:
+            if let bytes = self.bytes {
+                description = "0x" + bytes.map { String(format: "%02X", $0) }.joined()
+            } else {
+                description = nil
+            }
         case .clrUdt:
             fatalError("Unimplemented")
         case .sqlVariant:
@@ -80,6 +86,10 @@ public struct TDSData: CustomStringConvertible, CustomDebugStringConvertible {
         return self.description
     }
 }
+
+// TDSData carries ByteBuffer which is not statically Sendable across threads.
+// Our connection model confines usage to an event loop; mark as unchecked.
+extension TDSData: @unchecked Sendable {}
 
 extension TDSData: TDSDataConvertible {
     public static var tdsMetadata: Metadata {

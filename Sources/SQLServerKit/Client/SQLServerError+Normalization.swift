@@ -13,13 +13,19 @@ extension SQLServerError {
                 return .connectionClosed
             case .invalidCredentials:
                 return .authenticationFailed
+            case .protocolError(let message):
+                // Map protocol errors that explicitly signal a timeout to SQLServerError.timeout
+                if message.localizedCaseInsensitiveContains("timeout") {
+                    return .timeout(description: message, underlying: tds)
+                }
+                return .protocolError(tds)
             default:
                 return .protocolError(tds)
             }
         }
         if let channelError = error as? ChannelError {
             switch channelError {
-            case .ioOnClosedChannel, .outputClosed, .eof:
+            case .ioOnClosedChannel, .outputClosed, .eof, .alreadyClosed:
                 return .connectionClosed
             default:
                 return .unknown(channelError)

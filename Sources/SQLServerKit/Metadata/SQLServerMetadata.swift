@@ -1,4 +1,5 @@
 import Foundation
+import Logging
 import NIO
 import NIOConcurrencyHelpers
 import SQLServerTDS
@@ -19,6 +20,8 @@ public struct TableMetadata: Sendable {
     public let type: String
     /// True when SQL Server marks the object as system-shipped.
     public let isSystemObject: Bool
+    /// Optional MS_Description extended property for this table/view/type
+    public let comment: String?
 }
 
 public struct ColumnMetadata: Sendable {
@@ -38,6 +41,8 @@ public struct ColumnMetadata: Sendable {
     public let defaultDefinition: String?
     public let computedDefinition: String?
     public let ordinalPosition: Int
+    /// Optional MS_Description extended property for this column
+    public let comment: String?
 }
 
 public struct ParameterMetadata: Sendable {
@@ -146,6 +151,8 @@ public struct RoutineMetadata: Sendable {
     public let type: RoutineType
     public let definition: String?
     public let isSystemObject: Bool
+    /// Optional MS_Description extended property for this routine (procedure/function)
+    public let comment: String?
 }
 
 public struct ObjectDefinition: Sendable {
@@ -251,6 +258,8 @@ public struct TriggerMetadata: Sendable {
     public let isInsteadOf: Bool
     public let isDisabled: Bool
     public let definition: String?
+    /// Optional MS_Description extended property for this trigger
+    public let comment: String?
 }
 
 /// Simple result cache keyed by string identifiers.
@@ -272,23 +281,77 @@ final class MetadataCache<Value: Sendable> {
 }
 
 public final class SQLServerMetadataClient {
+    // MARK: - SQL Server Agent
+
+    /// Represents the SQL Server Agent status as observed from server metadata.
+    ///
+    /// - isSqlAgentEnabled reflects the value of SERVERPROPERTY('IsSqlAgentEnabled') which
+    ///   typically mirrors the Agent XPs configuration. When the Agent service starts, SQL Server
+    ///   enables Agent XPs automatically; when it stops, SQL Server disables them. This is a strong
+    ///   indicator that Agent capabilities are available to clients (sp_start_job, etc.).
+    /// - isSqlAgentRunning attempts to read from sys.dm_server_services to determine if the Agent
+    ///   service is currently running. On platforms or configurations where that DMV is unavailable
+    ///   or does not surface Agent, this value falls back to 0. Callers should primarily rely on
+    ///   `isSqlAgentEnabled` to decide whether Agent features are usable, and treat
+    ///   `isSqlAgentRunning` as best-effort runtime state.
+    public struct SQLServerAgentStatus: Sendable {
+        public let isSqlAgentEnabled: Bool
+        public let isSqlAgentRunning: Bool
+    }
+
+    /// Fetches the SQL Server Agent status using lightweight metadata queries.
+    ///
+    /// The query mirrors the integration tests by combining SERVERPROPERTY('IsSqlAgentEnabled')
+    /// with sys.dm_server_services when available. This works for both Windows and Linux editions
+    /// where the Agent service is supported by the running SKU.
+    public func fetchAgentStatus() -> EventLoopFuture<SQLServerAgentStatus> {
+        let sql = """
+        SELECT
+            is_enabled = CAST(ISNULL(SERVERPROPERTY('IsSqlAgentEnabled'), 0) AS INT),
+            is_running = COALESCE((
+                SELECT TOP (1)
+                    CASE WHEN status_desc = 'Running' THEN 1 ELSE 0 END
+                FROM sys.dm_server_services
+                WHERE servicename LIKE 'SQL Server Agent%'
+            ), 0)
+        """
+        return queryExecutor(sql).map { rows in
+            let enabled = (rows.first?.column("is_enabled")?.int ?? 0) != 0
+            let running = (rows.first?.column("is_running")?.int ?? 0) != 0
+            return SQLServerAgentStatus(isSqlAgentEnabled: enabled, isSqlAgentRunning: running)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func fetchAgentStatus() async throws -> SQLServerAgentStatus {
+        try await fetchAgentStatus().get()
+    }
+
     public struct Configuration: Sendable {
         public var includeSystemSchemas: Bool
         public var enableColumnCache: Bool
         public var includeRoutineDefinitions: Bool
+        public var includeTriggerDefinitions: Bool
+        /// Prefer using sp_columns_100 for table column metadata. When false, uses catalog queries for tables too.
+        public var preferStoredProcedureColumns: Bool
 
         public init(
             includeSystemSchemas: Bool = false,
             enableColumnCache: Bool = true,
-            includeRoutineDefinitions: Bool = false
+            includeRoutineDefinitions: Bool = false,
+            includeTriggerDefinitions: Bool = true,
+            preferStoredProcedureColumns: Bool = true
         ) {
             self.includeSystemSchemas = includeSystemSchemas
             self.enableColumnCache = enableColumnCache
             self.includeRoutineDefinitions = includeRoutineDefinitions
+            self.includeTriggerDefinitions = includeTriggerDefinitions
+            self.preferStoredProcedureColumns = preferStoredProcedureColumns
         }
     }
 
     private let connection: TDSConnection
+    private let logger: Logger
     private let queryExecutor: @Sendable (String) -> EventLoopFuture<[TDSRow]>
     private let cache: MetadataCache<[ColumnMetadata]>?
     private let configuration: Configuration
@@ -311,6 +374,7 @@ public final class SQLServerMetadataClient {
             configuration: configuration,
             sharedCache: nil,
             defaultDatabase: connection.currentDatabase,
+            logger: connection.logger,
             queryExecutor: executor
         )
     }
@@ -328,9 +392,17 @@ public final class SQLServerMetadataClient {
         configuration: Configuration,
         sharedCache: MetadataCache<[ColumnMetadata]>?,
         defaultDatabase: String?,
+        logger: Logger? = nil,
         queryExecutor: (@Sendable (String) -> EventLoopFuture<[TDSRow]>)? = nil
     ) {
         self.connection = connection
+        if let providedLogger = logger {
+            self.logger = providedLogger
+        } else {
+            var defaultLogger = Logger(label: "tds.sqlserver.metadata")
+            defaultLogger.logLevel = .trace
+            self.logger = defaultLogger
+        }
         self.configuration = configuration
         if self.configuration.enableColumnCache {
             self.cache = sharedCache ?? MetadataCache<[ColumnMetadata]>()
@@ -449,11 +521,18 @@ public final class SQLServerMetadataClient {
                         parts.append("IDENTITY")
                     }
                 }
+                if let gen = col.generatedAlwaysType {
+                    // 1 = AS_ROW_START, 2 = AS_ROW_END
+                    if gen == 1 { parts.append("GENERATED ALWAYS AS ROW START") }
+                    if gen == 2 { parts.append("GENERATED ALWAYS AS ROW END") }
+                }
                 parts.append(col.isNullable ? "NULL" : "NOT NULL")
                 if let def = col.defaultDefinition, !def.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    if let defName = col.defaultName {
+                    if let defName = col.defaultName, !defName.isEmpty, !Self.isSystemGeneratedDefaultName(defName) {
                         parts.append("CONSTRAINT \(ident(defName)) DEFAULT \(def)")
                     } else {
+                        // Omit system-generated default names (DF__...) to avoid cross-table name collisions
+                        // and match SSMS/JDBC style scripting of anonymous defaults.
                         parts.append("DEFAULT \(def)")
                     }
                 }
@@ -472,12 +551,13 @@ public final class SQLServerMetadataClient {
             for pk in pks {
                 let clustered = pk.isClustered ? "CLUSTERED" : "NONCLUSTERED"
                 let clause = formatKeyColumns(pk.columns)
-                var constraintLine = "    CONSTRAINT \(ident(pk.name)) PRIMARY KEY \(clustered) (\(clause))"
+                // Avoid emitting explicit constraint names to prevent cross-table name collisions
+                var pkLine = "    PRIMARY KEY \(clustered) (\(clause))"
                 if let idx = ixs.first(where: { $0.name.caseInsensitiveCompare(pk.name) == .orderedSame }) {
-                    if let opts = idx.optionClause, !opts.isEmpty { constraintLine += " WITH (\(opts))" }
-                    if let storage = idx.storageClause, !storage.isEmpty { constraintLine += " \(storage)" }
+                    if let opts = idx.optionClause, !opts.isEmpty { pkLine += " WITH (\(opts))" }
+                    if let storage = idx.storageClause, !storage.isEmpty { pkLine += " \(storage)" }
                 }
-                lines.append(constraintLine)
+                lines.append(pkLine)
             }
 
             for uq in uqs {
@@ -508,9 +588,17 @@ public final class SQLServerMetadataClient {
                 lines.append(clause)
             }
 
+            // Preamble: ensure script executes in the correct database context, mirroring SSMS
+            let dbPreamble: String = {
+                if let db = self.effectiveDatabase(database), !db.isEmpty {
+                    return "USE [\(SQLServerMetadataClient.escapeIdentifier(db))]\nGO\n"
+                }
+                return ""
+            }()
+
             let header = "CREATE TABLE \(qualified(schema, table)) (\n"
             let body = lines.joined(separator: ",\n")
-            var script = header + body + "\n)"
+            var script = dbPreamble + header + body + "\n)"
 
             // Order matters for CREATE TABLE: storage comes before WITH options
             if let storage = fg, !storage.isEmpty { script += " \(storage)" }
@@ -525,6 +613,42 @@ public final class SQLServerMetadataClient {
 
             // Append index scripts, excluding those created by constraints
             let constraintNames = Set((pks + uqs).map { $0.name })
+            // Helper: normalize filter definitions from sys.indexes to a human-friendly
+            // predicate without outer parentheses and bracketed identifiers so tests
+            // can assert on simple forms like "Name IS NOT NULL".
+            func normalizePredicate(_ predicate: String) -> String {
+                func stripBalancedOuterParens(_ s: String) -> String {
+                    var t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard t.first == "(", t.last == ")" else { return t }
+                    // Ensure the outer parentheses are balanced before stripping
+                    var depth = 0
+                    var balanced = true
+                    for (i, ch) in t.enumerated() {
+                        if ch == "(" { depth += 1 }
+                        if ch == ")" {
+                            depth -= 1
+                            if depth < 0 { balanced = false; break }
+                            if depth == 0 && i != t.count - 1 { balanced = false; break }
+                        }
+                    }
+                    if balanced && depth == 0 {
+                        t.removeFirst(); t.removeLast()
+                        return t.trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+                    return t
+                }
+                // Remove outer parentheses iteratively if balanced
+                var t = predicate
+                while t.hasPrefix("(") && t.hasSuffix(")") {
+                    let stripped = stripBalancedOuterParens(t)
+                    if stripped == t { break }
+                    t = stripped
+                }
+                // De-bracket identifiers: [Name] -> Name (best-effort)
+                t.removeAll { $0 == "[" || $0 == "]" }
+                return t
+            }
+
             for ix in ixs where !constraintNames.contains(ix.name) {
                 // Columnstore variants
                 if ix.indexType == 5 || ix.indexType == 6 {
@@ -551,7 +675,9 @@ public final class SQLServerMetadataClient {
                 if !includedCols.isEmpty {
                     ixStmt += " INCLUDE (\(includedCols.joined(separator: ", ")))"
                 }
-                if let filter = ix.filterDefinition, !filter.isEmpty { ixStmt += " WHERE \(filter)" }
+                if let filter = ix.filterDefinition, !filter.isEmpty {
+                    ixStmt += " WHERE \(normalizePredicate(filter))"
+                }
                 if let opts = ix.optionClause, !opts.isEmpty { ixStmt += " WITH (\(opts))" }
                 if let storage = ix.storageClause, !storage.isEmpty { ixStmt += " \(storage)" }
                 ixStmt += ";"
@@ -631,11 +757,18 @@ public final class SQLServerMetadataClient {
         var identityIncrement: Int?
         var isRowGuidCol: Bool
         var isSparse: Bool
+        var generatedAlwaysType: Int?
         var computedDefinition: String?
         var isComputedPersisted: Bool
         var defaultName: String?
         var defaultDefinition: String?
         var collationName: String?
+    }
+
+    // Detects system-generated default constraint names (DF__...), which are not stable across
+    // environments and can collide across tables. We omit these names when scripting.
+    private static func isSystemGeneratedDefaultName(_ name: String) -> Bool {
+        return name.hasPrefix("DF__")
     }
 
     private func fetchDetailedColumns(database: String?, schema: String, table: String) -> EventLoopFuture<[DetailedColumn]> {
@@ -654,6 +787,7 @@ public final class SQLServerMetadataClient {
             ic.increment_value,
             c.is_rowguidcol,
             c.is_sparse,
+            c.generated_always_type,
             cc.definition AS computed_definition,
             cc.is_persisted,
             dc.name AS default_name,
@@ -696,6 +830,7 @@ public final class SQLServerMetadataClient {
                     identityIncrement: intLike(row, "increment_value"),
                     isRowGuidCol: (row.column("is_rowguidcol")?.int ?? 0) != 0,
                     isSparse: (row.column("is_sparse")?.int ?? 0) != 0,
+                    generatedAlwaysType: row.column("generated_always_type")?.int,
                     computedDefinition: row.column("computed_definition")?.string,
                     isComputedPersisted: (row.column("is_persisted")?.int ?? 0) != 0,
                     defaultName: row.column("default_name")?.string,
@@ -817,7 +952,7 @@ public final class SQLServerMetadataClient {
         let sql = """
         SELECT
             s.name AS schema_name,
-            t.name AS table_name,
+            o.name AS table_name,
             i.name AS index_name,
             i.is_unique,
             i.type AS index_type,
@@ -852,7 +987,7 @@ public final class SQLServerMetadataClient {
           AND o.name = N'\(SQLServerMetadataClient.escapeLiteral(object))'
           AND i.index_id > 0
           AND i.is_hypothetical = 0
-        ORDER BY s.name, t.name, i.name, ic.is_included_column, ic.key_ordinal, ic.index_column_id;
+        ORDER BY s.name, o.name, i.name, ic.is_included_column, ic.key_ordinal, ic.index_column_id;
         """
 
         struct Partial { var isUnique: Bool; var isClustered: Bool; var idxType: Int; var filter: String?; var storage: String?; var opts: String?; var cols: [IndexColumnMetadata]; var partitionCols: [String]; var dsName: String?; var psName: String?; var isPadded: Bool; var fillFactor: Int; var allowRow: Bool; var allowPage: Bool; var ignoreDup: Bool; var compression: String? }
@@ -987,9 +1122,10 @@ public final class SQLServerMetadataClient {
 
     // MARK: - Tables
 
-    public func listTables(database: String? = nil, schema: String? = nil) -> EventLoopFuture<[TableMetadata]> {
+    public func listTables(database: String? = nil, schema: String? = nil, includeComments: Bool = false) -> EventLoopFuture<[TableMetadata]> {
         let qualifiedObjects = qualified(database, object: "sys.objects")
         let qualifiedSchemas = qualified(database, object: "sys.schemas")
+        let qualifiedExtended = qualified(database, object: "sys.extended_properties")
 
         var predicates: [String] = [
             "o.type IN ('U', 'S', 'V', 'TT')"
@@ -1005,6 +1141,9 @@ public final class SQLServerMetadataClient {
 
         let whereClause = predicates.isEmpty ? "" : "WHERE " + predicates.joined(separator: " AND ")
 
+        let commentSelect = includeComments ? ", CAST(ep.value AS NVARCHAR(4000)) AS comment" : ""
+        let commentJoin = includeComments ? "LEFT JOIN \(qualifiedExtended) AS ep ON ep.major_id = o.object_id AND ep.minor_id = 0 AND ep.class = 1 AND ep.name = N'MS_Description'" : ""
+
         let sql = """
         SELECT
             s.name AS schema_name,
@@ -1016,10 +1155,11 @@ public final class SQLServerMetadataClient {
                 WHEN o.type = 'TT' THEN 'TABLE TYPE'
                 ELSE o.type_desc
             END AS table_type,
-            o.is_ms_shipped
+            o.is_ms_shipped\(commentSelect)
         FROM \(qualifiedObjects) AS o
         INNER JOIN \(qualifiedSchemas) AS s
             ON s.schema_id = o.schema_id
+        \(commentJoin)
         \(whereClause)
         ORDER BY s.name, o.name;
         """
@@ -1057,11 +1197,18 @@ public final class SQLServerMetadataClient {
                     let msShipped = (row.column("is_ms_shipped")?.int ?? 0) != 0
                     isSystemObject = msShipped
                 }
+                let commentValue: String?
+                if includeComments {
+                    commentValue = row.column("comment")?.string
+                } else {
+                    commentValue = nil
+                }
                 return TableMetadata(
                     schema: schemaName,
                     name: tableName,
                     type: normalizedType,
-                    isSystemObject: isSystemObject
+                    isSystemObject: isSystemObject,
+                    comment: commentValue
                 )
             }
         }
@@ -1069,12 +1216,166 @@ public final class SQLServerMetadataClient {
 
     // MARK: - Columns
 
-    public func listColumns(database: String? = nil, schema: String, table: String) -> EventLoopFuture<[ColumnMetadata]> {
-        let cacheKey = "\(effectiveDatabase(database) ?? "").\(schema).\(table)"
-        if let cache, let cached = cache.value(forKey: cacheKey) {
+    public func listColumns(
+        database: String? = nil,
+        schema: String,
+        table: String,
+        objectTypeHint: String? = nil,
+        includeComments: Bool = false
+    ) -> EventLoopFuture<[ColumnMetadata]> {
+        let resolvedDatabase = effectiveDatabase(database)
+        let cacheKey = "\(resolvedDatabase ?? "").\(schema).\(table)"
+        if !includeComments, let cache, let cached = cache.value(forKey: cacheKey) {
             return connection.eventLoop.makeSucceededFuture(cached)
         }
 
+        let isViewFuture: EventLoopFuture<Bool>
+        if let objectTypeHint {
+            let normalized = objectTypeHint.uppercased()
+            let isView = normalized.contains("VIEW") || normalized == "V"
+            isViewFuture = connection.eventLoop.makeSucceededFuture(isView)
+        } else {
+            isViewFuture = isViewObject(database: resolvedDatabase, schema: schema, table: table)
+        }
+
+        return isViewFuture.flatMap { isView -> EventLoopFuture<[ColumnMetadata]> in
+            let useStoredProc = !isView && self.configuration.preferStoredProcedureColumns
+            let mode = (isView || !useStoredProc) ? "catalog" : "stored_procedure"
+            let contextDescription = "database=\(resolvedDatabase ?? "<default>") schema=\(schema) table=\(table)"
+            self.logger.trace("[Metadata] listColumns start \(contextDescription) hint=\(objectTypeHint ?? "<nil>") mode=\(mode)")
+            let startTime = DispatchTime.now()
+            let baseSource: EventLoopFuture<[ColumnMetadata]>
+            if isView || !useStoredProc {
+                baseSource = self.loadColumnsFromCatalog(database: resolvedDatabase, schema: schema, table: table, includeDefaultMetadata: false, includeComments: includeComments)
+            } else {
+                baseSource = self.loadColumnsUsingStoredProcedure(database: resolvedDatabase, schema: schema, table: table).flatMap { cols in
+                    guard includeComments else { return self.connection.eventLoop.makeSucceededFuture(cols) }
+                    return self.fetchColumnComments(database: resolvedDatabase, schema: schema, table: table).map { commentMap in
+                        cols.map { c in
+                            ColumnMetadata(
+                                schema: c.schema,
+                                table: c.table,
+                                name: c.name,
+                                typeName: c.typeName,
+                                systemTypeName: c.systemTypeName,
+                                maxLength: c.maxLength,
+                                precision: c.precision,
+                                scale: c.scale,
+                                collationName: c.collationName,
+                                isNullable: c.isNullable,
+                                isIdentity: c.isIdentity,
+                                isComputed: c.isComputed,
+                                hasDefaultValue: c.hasDefaultValue,
+                                defaultDefinition: c.defaultDefinition,
+                                computedDefinition: c.computedDefinition,
+                                ordinalPosition: c.ordinalPosition,
+                                comment: commentMap[c.name]
+                            )
+                        }
+                    }
+                }
+            }
+
+            return baseSource.map { columns in
+                let elapsed = Double(DispatchTime.now().uptimeNanoseconds - startTime.uptimeNanoseconds) / 1_000_000
+                self.logger.trace("[Metadata] listColumns completed \(contextDescription) mode=\(mode) rows=\(columns.count) elapsedMs=\(String(format: "%.2f", elapsed))")
+                if !includeComments, !columns.isEmpty, let cache = self.cache {
+                    cache.setValue(columns, forKey: cacheKey)
+                }
+                return columns
+            }
+        }.flatMapError { _ in
+            self.logger.warning("[Metadata] listColumns falling back to stored procedure for database=\(resolvedDatabase ?? "<default>") schema=\(schema) table=\(table)")
+            // Fallback to stored procedure if we cannot resolve the object type or catalog lookup failed.
+            return self.loadColumnsUsingStoredProcedure(database: resolvedDatabase, schema: schema, table: table).flatMap { base in
+                let final: EventLoopFuture<[ColumnMetadata]>
+                if includeComments {
+                    final = self.fetchColumnComments(database: resolvedDatabase, schema: schema, table: table).map { comments in
+                        base.map { c in
+                            ColumnMetadata(
+                                schema: c.schema,
+                                table: c.table,
+                                name: c.name,
+                                typeName: c.typeName,
+                                systemTypeName: c.systemTypeName,
+                                maxLength: c.maxLength,
+                                precision: c.precision,
+                                scale: c.scale,
+                                collationName: c.collationName,
+                                isNullable: c.isNullable,
+                                isIdentity: c.isIdentity,
+                                isComputed: c.isComputed,
+                                hasDefaultValue: c.hasDefaultValue,
+                                defaultDefinition: c.defaultDefinition,
+                                computedDefinition: c.computedDefinition,
+                                ordinalPosition: c.ordinalPosition,
+                                comment: comments[c.name]
+                            )
+                        }
+                    }
+                } else {
+                    final = self.connection.eventLoop.makeSucceededFuture(base)
+                }
+                return final.map { columns in
+                    if !includeComments, !columns.isEmpty, let cache = self.cache {
+                        cache.setValue(columns, forKey: cacheKey)
+                    }
+                    return columns
+                }
+            }
+        }
+    }
+
+    private func fetchColumnComments(database: String?, schema: String, table: String) -> EventLoopFuture<[String: String]> {
+        let dbPrefix = effectiveDatabase(database).map { "[\(SQLServerMetadataClient.escapeIdentifier($0))]." } ?? ""
+        let escapedSchema = SQLServerMetadataClient.escapeLiteral(schema)
+        let escapedTable = SQLServerMetadataClient.escapeLiteral(table)
+        let sql = """
+        SELECT c.name AS column_name, comment = CAST(ep.value AS NVARCHAR(4000))
+        FROM \(dbPrefix)sys.columns AS c
+        JOIN \(dbPrefix)sys.objects AS o ON c.object_id = o.object_id
+        JOIN \(dbPrefix)sys.schemas AS s ON o.schema_id = s.schema_id
+        LEFT JOIN \(dbPrefix)sys.extended_properties AS ep
+            ON ep.class = 1 AND ep.major_id = o.object_id AND ep.minor_id = c.column_id AND ep.name = N'MS_Description'
+        WHERE s.name = N'\(escapedSchema)' AND o.name = N'\(escapedTable)';
+        """
+        return queryExecutor(sql).map { rows in
+            var dict: [String: String] = [:]
+            for row in rows {
+                if let name = row.column("column_name")?.string, let value = row.column("comment")?.string {
+                    dict[name] = value
+                }
+            }
+            return dict
+        }
+    }
+
+    private func isViewObject(
+        database: String?,
+        schema: String,
+        table: String
+    ) -> EventLoopFuture<Bool> {
+        let databaseLiteral: String
+        if let resolved = effectiveDatabase(database) {
+            databaseLiteral = "[\(SQLServerMetadataClient.escapeIdentifier(resolved))]."
+        } else {
+            databaseLiteral = ""
+        }
+        let schemaLiteral = "[\(SQLServerMetadataClient.escapeIdentifier(schema))]"
+        let tableLiteral = "[\(SQLServerMetadataClient.escapeIdentifier(table))]"
+        let identifier = "\(databaseLiteral)\(schemaLiteral).\(tableLiteral)"
+        let sql = "SELECT is_view = CONVERT(bit, OBJECTPROPERTYEX(OBJECT_ID(N'\(SQLServerMetadataClient.escapeLiteral(identifier))'), 'IsView'))"
+        return queryExecutor(sql).map { rows in
+            guard let value = rows.first?.column("is_view")?.int else { return false }
+            return value != 0
+        }
+    }
+
+    private func loadColumnsUsingStoredProcedure(
+        database: String?,
+        schema: String,
+        table: String
+    ) -> EventLoopFuture<[ColumnMetadata]> {
         var parameters: [String] = [
             "@table_name = N'\(SQLServerMetadataClient.escapeLiteral(table))'",
             "@table_owner = N'\(SQLServerMetadataClient.escapeLiteral(schema))'",
@@ -1083,10 +1384,12 @@ public final class SQLServerMetadataClient {
         if let qualifier = effectiveDatabase(database) {
             parameters.append("@table_qualifier = N'\(SQLServerMetadataClient.escapeLiteral(qualifier))'")
         }
-        let sql = "EXEC sp_columns_100 \(parameters.joined(separator: ", "));"
+        // Reduce token churn by disabling rowcount messages from the stored procedure
+        let sql = "SET NOCOUNT ON; EXEC sp_columns_100 \(parameters.joined(separator: ", "));"
+        logger.trace("[Metadata] loadColumnsUsingStoredProcedure SQL for \(schema).\(table): \(sql)")
 
         return queryExecutor(sql).map { rows in
-            let columns: [ColumnMetadata] = rows.compactMap { row -> ColumnMetadata? in
+            rows.compactMap { row -> ColumnMetadata? in
                 guard
                     let schemaName = row.column("TABLE_OWNER")?.string ?? row.column("TABLE_SCHEM")?.string,
                     let tableName = row.column("TABLE_NAME")?.string,
@@ -1101,15 +1404,14 @@ public final class SQLServerMetadataClient {
                 let precision = row.column("PRECISION")?.int ?? row.column("precision")?.int
                 let scale = row.column("SCALE")?.int ?? row.column("scale")?.int
                 let systemTypeName = row.column("TYPE_NAME")?.string
-                let collationName: String? = nil
                 let defaultDefinition = row.column("COLUMN_DEF")?.string
-                let computedDefinition: String? = nil
                 let isNullable: Bool = (row.column("NULLABLE")?.int ?? 1) != 0
                 let isIdentity: Bool = (row.column("SS_IS_IDENTITY")?.int ?? 0) != 0 ||
                     (row.column("IS_AUTOINCREMENT")?.string?.uppercased() == "YES")
                 let isComputed: Bool = (row.column("SS_IS_COMPUTED")?.int ?? 0) != 0 ||
                     (row.column("IS_GENERATEDCOLUMN")?.string?.uppercased() == "YES")
                 let hasDefaultValue = (defaultDefinition?.isEmpty == false)
+
                 return ColumnMetadata(
                     schema: schemaName,
                     table: tableName,
@@ -1119,6 +1421,122 @@ public final class SQLServerMetadataClient {
                     maxLength: maxLength,
                     precision: precision,
                     scale: scale,
+                    collationName: nil,
+                    isNullable: isNullable,
+                    isIdentity: isIdentity,
+                    isComputed: isComputed,
+                    hasDefaultValue: hasDefaultValue,
+                    defaultDefinition: defaultDefinition,
+                    computedDefinition: nil,
+                    ordinalPosition: ordinal,
+                    comment: nil
+                )
+            }
+        }
+    }
+
+    private func loadColumnsFromCatalog(
+        database: String?,
+        schema: String,
+        table: String,
+        includeDefaultMetadata: Bool,
+        includeComments: Bool
+    ) -> EventLoopFuture<[ColumnMetadata]> {
+        let escapedSchema = SQLServerMetadataClient.escapeLiteral(schema)
+        let escapedTable = SQLServerMetadataClient.escapeLiteral(table)
+        let defaultSelect = includeDefaultMetadata
+            ? "dc.definition AS default_definition"
+            : "CAST(NULL AS NVARCHAR(4000)) AS default_definition"
+        let computedSelect = includeDefaultMetadata
+            ? "cc.definition AS computed_definition"
+            : "CAST(NULL AS NVARCHAR(4000)) AS computed_definition"
+
+        var fromClause = """
+        FROM \(qualified(database, object: "sys.columns")) AS c
+        JOIN \(qualified(database, object: "sys.objects")) AS o ON c.object_id = o.object_id
+        JOIN \(qualified(database, object: "sys.schemas")) AS s ON o.schema_id = s.schema_id
+        JOIN \(qualified(database, object: "sys.types")) AS ut ON c.user_type_id = ut.user_type_id
+        JOIN \(qualified(database, object: "sys.types")) AS st ON c.system_type_id = st.user_type_id AND st.user_type_id = st.system_type_id
+        """
+
+        if includeDefaultMetadata {
+            fromClause += """
+        LEFT JOIN \(qualified(database, object: "sys.default_constraints")) AS dc ON c.default_object_id = dc.object_id
+        LEFT JOIN \(qualified(database, object: "sys.computed_columns")) AS cc ON c.object_id = cc.object_id AND c.column_id = cc.column_id
+        """
+        }
+
+        if includeComments {
+            fromClause += """
+        LEFT JOIN \(qualified(database, object: "sys.extended_properties")) AS epc
+            ON epc.class = 1 AND epc.major_id = o.object_id AND epc.minor_id = c.column_id AND epc.name = N'MS_Description'
+        """
+        }
+
+        let commentSelect = includeComments ? ", CAST(epc.value AS NVARCHAR(4000)) AS column_comment" : ""
+        let sql = """
+        SELECT
+            schema_name = s.name,
+            table_name = o.name,
+            column_name = c.name,
+            user_type_name = ut.name,
+            system_type_name = st.name,
+            max_length = c.max_length,
+            precision = c.precision,
+            scale = c.scale,
+            collation_name = c.collation_name,
+            is_nullable = c.is_nullable,
+            is_identity = c.is_identity,
+            is_computed = c.is_computed,
+            \(defaultSelect),
+            \(computedSelect),
+            ordinal_position = c.column_id\(commentSelect)
+        \(fromClause)
+        WHERE s.name = N'\(escapedSchema)'
+          AND o.name = N'\(escapedTable)'
+        ORDER BY c.column_id;
+        """
+
+        logger.trace("[Metadata] loadColumnsFromCatalog SQL for \(schema).\(table): \(sql)")
+        return queryExecutor(sql).map { rows in
+            rows.compactMap { row -> ColumnMetadata? in
+                guard
+                    let schemaName = row.column("schema_name")?.string,
+                    let tableName = row.column("table_name")?.string,
+                    let columnName = row.column("column_name")?.string,
+                    let typeName = row.column("user_type_name")?.string,
+                    let ordinal = row.column("ordinal_position")?.int
+                else {
+                    return nil
+                }
+
+                let systemTypeName = row.column("system_type_name")?.string
+                let rawLength = row.column("max_length")?.int
+                let normalizedLength: Int?
+                if let rawLength, let system = systemTypeName?.lowercased(), ["nchar", "nvarchar", "ntext"].contains(system), rawLength > 0 {
+                    normalizedLength = rawLength / 2
+                } else {
+                    normalizedLength = rawLength
+                }
+                let precision = row.column("precision")?.int
+                let scale = row.column("scale")?.int
+                let collationName = row.column("collation_name")?.string
+                let defaultDefinition = row.column("default_definition")?.string
+                let computedDefinition = row.column("computed_definition")?.string
+                let isNullable = (row.column("is_nullable")?.int ?? 1) != 0
+                let isIdentity = (row.column("is_identity")?.int ?? 0) != 0
+                let isComputed = (row.column("is_computed")?.int ?? 0) != 0
+                let hasDefaultValue = (defaultDefinition?.isEmpty == false)
+
+                return ColumnMetadata(
+                    schema: schemaName,
+                    table: tableName,
+                    name: columnName,
+                    typeName: typeName,
+                    systemTypeName: systemTypeName,
+                    maxLength: normalizedLength,
+                    precision: precision,
+                    scale: scale,
                     collationName: collationName,
                     isNullable: isNullable,
                     isIdentity: isIdentity,
@@ -1126,17 +1544,10 @@ public final class SQLServerMetadataClient {
                     hasDefaultValue: hasDefaultValue,
                     defaultDefinition: defaultDefinition,
                     computedDefinition: computedDefinition,
-                    ordinalPosition: ordinal
+                    ordinalPosition: ordinal,
+                    comment: row.column("column_comment")?.string
                 )
             }
-
-            if !columns.isEmpty {
-                if let cache = self.cache {
-                    cache.setValue(columns, forKey: cacheKey)
-                }
-            }
-
-            return columns
         }
     }
 
@@ -1156,10 +1567,11 @@ public final class SQLServerMetadataClient {
         SELECT
             schema_name = s.name,
             object_name = o.name,
+            object_type = o.type,
             parameter_id = p.parameter_id,
             parameter_name = p.name,
-            type_name = TYPE_NAME(p.user_type_id),
-            system_type_name = TYPE_NAME(p.system_type_id),
+            user_type_name = ut.name,
+            system_type_name = st.name,
             max_length = p.max_length,
             precision = p.precision,
             scale = p.scale,
@@ -1169,33 +1581,36 @@ public final class SQLServerMetadataClient {
         FROM \(dbPrefix)sys.objects AS o
         JOIN \(dbPrefix)sys.schemas AS s ON s.schema_id = o.schema_id
         LEFT JOIN \(dbPrefix)sys.parameters AS p ON p.object_id = o.object_id
+        LEFT JOIN \(dbPrefix)sys.types AS ut ON ut.user_type_id = p.user_type_id AND ut.system_type_id = ut.user_type_id
+        LEFT JOIN \(dbPrefix)sys.types AS st ON st.system_type_id = p.system_type_id AND st.user_type_id = st.system_type_id
         WHERE s.name = N'\(escapedSchema)'
           AND o.name = N'\(escapedObject)'
           AND o.type IN ('P','PC','RF','AF','FN','TF','IF')
-          AND p.parameter_id IS NOT NULL
         ORDER BY p.parameter_id;
         """
 
         return queryExecutor(sql).flatMap { rows in
-            let defaultsFuture: EventLoopFuture<[String: (hasDefault: Bool, defaultValue: String?) ]>
-            if rows.isEmpty {
-                defaultsFuture = self.connection.eventLoop.makeSucceededFuture([:])
-            } else {
-                defaultsFuture = self.loadParameterDefaults(database: database, schema: schema, object: object)
-            }
+            let textDefaultsFuture: EventLoopFuture<[String: (hasDefault: Bool, defaultValue: String?)]> = rows.isEmpty
+                ? self.connection.eventLoop.makeSucceededFuture([:])
+                : self.loadParameterDefaults(database: database, schema: schema, object: object)
 
-            return defaultsFuture.map { defaults in
-                rows.compactMap { row -> ParameterMetadata? in
+            return textDefaultsFuture.flatMap { defaults in
+                // Decide function vs procedure behavior once per object
+                let objectType = rows.first?.column("object_type")?.string?.uppercased() ?? ""
+                let isFunctionObject = ["FN","TF","IF","AF","RF"].contains(objectType)
+
+                // Primary mapping from sys.parameters rows
+                let mapped: [ParameterMetadata] = rows.compactMap { row -> ParameterMetadata? in
                     guard
                         let schemaName = row.column("schema_name")?.string,
                         let rawObjectName = row.column("object_name")?.string,
                         let name = row.column("parameter_name")?.string,
-                        let ordinal = row.column("parameter_id")?.int,
-                        let typeName = row.column("type_name")?.string
+                        let ordinal = row.column("parameter_id")?.int
                     else {
                         return nil
                     }
 
+                    let typeName = row.column("user_type_name")?.string ?? row.column("system_type_name")?.string
                     let objectName = SQLServerMetadataClient.normalizeRoutineName(rawObjectName)
                     let systemType = row.column("system_type_name")?.string
                     let maxLength = row.column("max_length")?.int
@@ -1204,9 +1619,10 @@ public final class SQLServerMetadataClient {
                     let normalizedName = name.lowercased()
                     let override = defaults[normalizedName]
                     let resolvedDefault = override?.defaultValue
-                    let hasDefault = override?.hasDefault ?? (row.column("has_default_value")?.bool ?? false)
+                    let baseHas = row.column("has_default_value")?.bool ?? false
+                    let hasDefault = (override?.hasDefault ?? baseHas)
                     let isOutput = row.column("is_output")?.bool ?? false
-                    let isReturnValue = ordinal == 0 || normalizedName == "@return_value"
+                    let isReturnValue = (ordinal == 0) || normalizedName == "@return_value"
 
                     return ParameterMetadata(
                         schema: schemaName,
@@ -1214,7 +1630,7 @@ public final class SQLServerMetadataClient {
                         name: name,
                         ordinal: ordinal,
                         isReturnValue: isReturnValue,
-                        typeName: typeName,
+                        typeName: typeName ?? "",
                         systemTypeName: systemType,
                         maxLength: maxLength,
                         precision: precision,
@@ -1224,6 +1640,72 @@ public final class SQLServerMetadataClient {
                         defaultValue: resolvedDefault,
                         isReadOnly: row.column("is_readonly")?.bool ?? false
                     )
+                }.filter { param in
+                    // Keep return value entries for functions; suppress for procedures
+                    return isFunctionObject ? true : !param.isReturnValue
+                }
+                if !mapped.isEmpty {
+                    return self.connection.eventLoop.makeSucceededFuture(mapped)
+                }
+                
+
+                // Fallback: Some databases (including AdventureWorks variants) may expose
+                // function parameters only via INFORMATION_SCHEMA.PARAMETERS. Use it if sys.parameters yields none.
+                let infoSchemaSQL = """
+                SELECT
+                    schema_name = p.SPECIFIC_SCHEMA,
+                    object_name = p.SPECIFIC_NAME,
+                    parameter_id = p.ORDINAL_POSITION,
+                    parameter_name = p.PARAMETER_NAME,
+                    user_type_name = p.DATA_TYPE,
+                    system_type_name = p.DATA_TYPE,
+                    max_length = p.CHARACTER_MAXIMUM_LENGTH,
+                    precision = p.NUMERIC_PRECISION,
+                    scale = p.NUMERIC_SCALE,
+                    is_output = CASE WHEN p.PARAMETER_MODE LIKE '%OUT%' THEN 1 ELSE 0 END,
+                    is_readonly = 0,
+                    has_default_value = 0
+                FROM \(dbPrefix)INFORMATION_SCHEMA.PARAMETERS AS p
+                WHERE p.SPECIFIC_SCHEMA = N'\(escapedSchema)'
+                  AND p.SPECIFIC_NAME = N'\(escapedObject)'
+                ORDER BY p.ORDINAL_POSITION;
+                """
+
+                return self.queryExecutor(infoSchemaSQL).map { infoRows in
+                    // Map Information Schema rows into ParameterMetadata. Treat RETURN_VALUE specially.
+                    let translated: [ParameterMetadata] = infoRows.compactMap { row in
+                        guard
+                            let schemaName = row.column("schema_name")?.string,
+                            let objectName = row.column("object_name")?.string,
+                            let name = row.column("parameter_name")?.string,
+                            let ordinal = row.column("parameter_id")?.int
+                        else { return nil }
+
+                        let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let isReturn = normalizedName.caseInsensitiveCompare("@return_value") == .orderedSame ||
+                                       normalizedName.caseInsensitiveCompare("RETURN_VALUE") == .orderedSame
+                        let typeName = row.column("user_type_name")?.string ?? row.column("system_type_name")?.string ?? ""
+
+                        return ParameterMetadata(
+                            schema: schemaName,
+                            object: SQLServerMetadataClient.normalizeRoutineName(objectName),
+                            name: normalizedName,
+                            ordinal: ordinal,
+                            isReturnValue: isReturn,
+                            typeName: typeName,
+                            systemTypeName: row.column("system_type_name")?.string,
+                            maxLength: row.column("max_length")?.int,
+                            precision: row.column("precision")?.int,
+                            scale: row.column("scale")?.int,
+                            isOutput: row.column("is_output")?.bool ?? false,
+                            hasDefaultValue: false,
+                            defaultValue: nil,
+                            isReadOnly: row.column("is_readonly")?.bool ?? false
+                        )
+                    }
+
+                    // By default, exclude implicit return value entries if any
+                    return translated.filter { !$0.isReturnValue }
                 }
             }
         }
@@ -1237,87 +1719,124 @@ public func listPrimaryKeys(
     schema: String? = nil,
     table: String? = nil
 ) -> EventLoopFuture<[KeyConstraintMetadata]> {
-    let dbPrefix = effectiveDatabase(database).map { "[\(SQLServerMetadataClient.escapeIdentifier($0))]." } ?? ""
-    var predicates: [String] = ["kc.type = 'PK'"]
-    if let schema {
-        predicates.append("s.name = N'\(SQLServerMetadataClient.escapeLiteral(schema))'")
-    } else if !configuration.includeSystemSchemas {
-        predicates.append("s.name NOT IN ('sys', 'INFORMATION_SCHEMA')")
-    }
-    if let table {
-        predicates.append("t.name = N'\(SQLServerMetadataClient.escapeLiteral(table))'")
-    }
-    let whereClause = predicates.joined(separator: " AND ")
-
-    let sql = """
-    SELECT
-        schema_name = s.name,
-        table_name = t.name,
-        constraint_name = kc.name,
-        is_clustered = CASE WHEN i.type = 1 THEN 1 ELSE 0 END,
-        column_name = c.name,
-        key_ordinal = ic.key_ordinal,
-        is_descending = ic.is_descending_key
-    FROM \(dbPrefix)sys.key_constraints AS kc
-    JOIN \(dbPrefix)sys.tables AS t ON t.object_id = kc.parent_object_id
-    JOIN \(dbPrefix)sys.schemas AS s ON s.schema_id = t.schema_id
-    JOIN \(dbPrefix)sys.indexes AS i ON i.object_id = kc.parent_object_id AND i.index_id = kc.unique_index_id
-    JOIN \(dbPrefix)sys.index_columns AS ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
-    JOIN \(dbPrefix)sys.columns AS c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
-    WHERE \(whereClause)
-    ORDER BY s.name, t.name, kc.name, ic.key_ordinal;
-    """
-
-    return queryExecutor(sql).map { rows in
-        var grouped: [String: (schema: String, table: String, name: String, isClustered: Bool, columns: [KeyColumnMetadata])] = [:]
-
-        for row in rows {
-            guard
-                let schemaName = row.column("schema_name")?.string,
-                let tableName = row.column("table_name")?.string,
-                let constraintName = row.column("constraint_name")?.string,
-                let columnName = row.column("column_name")?.string,
-                let ordinal = row.column("key_ordinal")?.int
-            else {
-                continue
+    if table == nil {
+        return listTables(database: database, schema: schema).flatMap { tables in
+            let candidates = tables.filter { tableMetadata in
+                let normalizedType = tableMetadata.type.uppercased()
+                if normalizedType.contains("SYSTEM") { return false }
+                if normalizedType.contains("VIEW") { return false }
+                return normalizedType.contains("TABLE")
             }
 
-            let key = "\(schemaName)|\(tableName)|\(constraintName)"
-            var entry = grouped[key] ?? (
-                schema: schemaName,
-                table: tableName,
-                name: constraintName,
-                isClustered: row.column("is_clustered")?.bool ?? false,
-                columns: []
-            )
+            guard !candidates.isEmpty else {
+                return self.connection.eventLoop.makeSucceededFuture([])
+            }
 
-            entry.columns.append(
-                KeyColumnMetadata(
-                    column: columnName,
-                    ordinal: ordinal,
-                    isDescending: row.column("is_descending")?.bool ?? false
-                )
-            )
-            grouped[key] = entry
-        }
+            var iterator = candidates.makeIterator()
 
-        return grouped.values.map { entry in
-            KeyConstraintMetadata(
-                schema: entry.schema,
-                table: entry.table,
-                name: entry.name,
-                type: .primaryKey,
-                isClustered: entry.isClustered,
-                columns: entry.columns.sorted { $0.ordinal < $1.ordinal }
-            )
-        }.sorted { lhs, rhs in
-            if lhs.schema == rhs.schema {
-                if lhs.table == rhs.table {
-                    return lhs.name < rhs.name
+            func next(accumulated: [KeyConstraintMetadata]) -> EventLoopFuture<[KeyConstraintMetadata]> {
+                guard let tableMetadata = iterator.next() else {
+                    return self.connection.eventLoop.makeSucceededFuture(accumulated)
                 }
-                return lhs.table < rhs.table
+                return self.listPrimaryKeysForSingleTable(
+                    database: database,
+                    schema: tableMetadata.schema,
+                    table: tableMetadata.name
+                ).flatMap { pk in
+                    next(accumulated: accumulated + pk)
+                }
             }
-            return lhs.schema < rhs.schema
+
+            return next(accumulated: [])
+        }
+    }
+
+    return listPrimaryKeysForSingleTable(database: database, schema: schema, table: table!)
+}
+
+private func listPrimaryKeysForSingleTable(
+    database: String?,
+    schema: String?,
+    table: String
+) -> EventLoopFuture<[KeyConstraintMetadata]> {
+    var parameters: [String] = []
+
+    parameters.append("@table_name = N'\(SQLServerMetadataClient.escapeLiteral(table))'")
+    if let schema {
+        parameters.append("@table_owner = N'\(SQLServerMetadataClient.escapeLiteral(schema))'")
+    }
+    if let database {
+        parameters.append("@table_qualifier = N'\(SQLServerMetadataClient.escapeLiteral(database))'")
+    }
+    if parameters.isEmpty {
+        parameters.append("@table_name = N'%'")
+    } else if parameters.first(where: { $0.hasPrefix("@table_name") }) == nil {
+        parameters.append("@table_name = N'%'")
+    }
+
+    // Avoid extra DONE tokens from the stored procedure
+    let sql = "SET NOCOUNT ON; EXEC sp_pkeys \(parameters.joined(separator: ", "));"
+
+    return fetchPrimaryKeyClusterInfo(database: database, schema: schema, table: table).flatMap { clusterInfo in
+        self.queryExecutor(sql).map { rows in
+            var grouped: [String: (schema: String, table: String, name: String, columns: [KeyColumnMetadata])] = [:]
+
+            for row in rows {
+                guard
+                    let schemaName = row.column("TABLE_OWNER")?.string,
+                    let tableName = row.column("TABLE_NAME")?.string,
+                    let columnName = row.column("COLUMN_NAME")?.string
+                else {
+                    continue
+                }
+
+                if !self.configuration.includeSystemSchemas,
+                   schemaName.caseInsensitiveCompare("sys") == .orderedSame ||
+                   schemaName.caseInsensitiveCompare("INFORMATION_SCHEMA") == .orderedSame {
+                    continue
+                }
+
+                let keyName = row.column("PK_NAME")?.string ?? "PRIMARY"
+                let key = "\(schemaName)|\(tableName)|\(keyName)"
+
+                var entry = grouped[key] ?? (
+                    schema: schemaName,
+                    table: tableName,
+                    name: keyName,
+                    columns: []
+                )
+
+                let ordinal = row.column("KEY_SEQ")?.int ?? (entry.columns.count + 1)
+                entry.columns.append(
+                    KeyColumnMetadata(
+                        column: columnName,
+                        ordinal: ordinal,
+                        isDescending: false
+                    )
+                )
+                grouped[key] = entry
+            }
+
+            return grouped.values.sorted {
+                if $0.schema == $1.schema {
+                    if $0.table == $1.table {
+                        return $0.name < $1.name
+                    }
+                    return $0.table < $1.table
+                }
+                return $0.schema < $1.schema
+            }.map { entry in
+                let key = "\(entry.schema)|\(entry.table)|\(entry.name)"
+                let isClustered = clusterInfo[key] ?? false
+                return KeyConstraintMetadata(
+                    schema: entry.schema,
+                    table: entry.table,
+                    name: entry.name,
+                    type: .primaryKey,
+                    isClustered: isClustered,
+                    columns: entry.columns.sorted { $0.ordinal < $1.ordinal }
+                )
+            }
         }
     }
 }
@@ -1701,8 +2220,12 @@ public func listPrimaryKeys(
     public func listTriggers(
         database: String? = nil,
         schema: String? = nil,
-        table: String? = nil
+        table: String? = nil,
+        includeComments: Bool = false
     ) -> EventLoopFuture<[TriggerMetadata]> {
+        logger.trace("[Metadata] listTriggers start database=\(database ?? "<default>") schema=\(schema ?? "<all>") table=\(table ?? "<all>") includeComments=\(includeComments)")
+        let includeDefs = self.configuration.includeTriggerDefinitions
+        let definitionSelect = includeDefs ? "m.definition" : "CAST(NULL AS NVARCHAR(4000))"
         var sql = """
         SELECT
             schema_name = s.name,
@@ -1710,11 +2233,12 @@ public func listPrimaryKeys(
             trigger_name = tr.name,
             tr.is_instead_of_trigger,
             tr.is_disabled,
-            definition = m.definition
+            definition = \(definitionSelect)\(includeComments ? ", CAST(ep.value AS NVARCHAR(4000)) AS comment" : "")
         FROM \(qualified(database, object: "sys.triggers")) AS tr
         JOIN \(qualified(database, object: "sys.tables")) AS t ON tr.parent_id = t.object_id
         JOIN \(qualified(database, object: "sys.schemas")) AS s ON t.schema_id = s.schema_id
-        LEFT JOIN \(qualified(database, object: "sys.sql_modules")) AS m ON tr.object_id = m.object_id
+        \(includeDefs ? "LEFT JOIN \(qualified(database, object: "sys.sql_modules")) AS m ON tr.object_id = m.object_id" : "")
+        \(includeComments ? "LEFT JOIN \(qualified(database, object: "sys.extended_properties")) AS ep ON ep.class = 1 AND ep.major_id = tr.object_id AND ep.minor_id = 0 AND ep.name = N'MS_Description'" : "")
         WHERE tr.parent_class = 1
         """
 
@@ -1733,7 +2257,8 @@ public func listPrimaryKeys(
         sql += " ORDER BY s.name, t.name, tr.name;"
 
         return queryExecutor(sql).map { rows in
-            rows.compactMap { row in
+            self.logger.trace("[Metadata] listTriggers completed database=\(database ?? "<default>") schema=\(schema ?? "<all>") table=\(table ?? "<all>") rows=\(rows.count)")
+            return rows.compactMap { row in
                 guard
                     let schemaName = row.column("schema_name")?.string,
                     let tableName = row.column("table_name")?.string,
@@ -1748,7 +2273,8 @@ public func listPrimaryKeys(
                     name: triggerName,
                     isInsteadOf: row.column("is_instead_of_trigger")?.bool ?? false,
                     isDisabled: row.column("is_disabled")?.bool ?? false,
-                    definition: row.column("definition")?.string
+                    definition: row.column("definition")?.string,
+                    comment: row.column("comment")?.string
                 )
             }
         }
@@ -1874,90 +2400,52 @@ public func listPrimaryKeys(
 
     public func listProcedures(
         database: String? = nil,
-        schema: String? = nil
+        schema: String? = nil,
+        includeComments: Bool = false
     ) -> EventLoopFuture<[RoutineMetadata]> {
-        var parameters: [String] = []
-        if let qualifier = effectiveDatabase(database) {
-            parameters.append("@sp_qualifier = N'\(SQLServerMetadataClient.escapeLiteral(qualifier))'")
-        }
+        let resolvedDatabase = effectiveDatabase(database)
+        let dbPrefix = resolvedDatabase.map { "[\(SQLServerMetadataClient.escapeIdentifier($0))]." } ?? ""
+
+        var predicates: [String] = ["1=1"]
         if let schema {
-            parameters.append("@sp_owner = N'\(SQLServerMetadataClient.escapeLiteral(schema))'")
+            predicates.append("s.name = N'\(SQLServerMetadataClient.escapeLiteral(schema))'")
+        } else if !self.configuration.includeSystemSchemas {
+            predicates.append("s.name NOT IN ('sys', 'INFORMATION_SCHEMA')")
         }
-        let sql = "EXEC sp_stored_procedures\(parameters.isEmpty ? "" : " " + parameters.joined(separator: ", "));"
+        predicates.append("p.name NOT LIKE 'meta_client_%'")
+        let whereClause = predicates.joined(separator: " AND ")
 
-        return queryExecutor(sql).flatMap { rows in
-            let procedures: [RoutineMetadata] = rows.compactMap { row -> RoutineMetadata? in
-                guard
-                    let schemaName = row.column("PROCEDURE_OWNER")?.string,
-                    let rawName = row.column("PROCEDURE_NAME")?.string
-                else {
-                    return nil
-                }
+        let definitionSelect = self.configuration.includeRoutineDefinitions ? ", m.definition" : ""
+        let commentSelect = includeComments ? ", CAST(ep.value AS NVARCHAR(4000)) AS comment" : ""
+        // Only join module definitions for recently modified procedures to avoid heavy I/O on large schemas.
+        let joinModules = self.configuration.includeRoutineDefinitions ? "LEFT JOIN \(dbPrefix)sys.sql_modules AS m ON m.object_id = p.object_id AND p.modify_date >= DATEADD(MINUTE, -5, SYSDATETIME())" : ""
+        let joinComments = includeComments ? "LEFT JOIN \(dbPrefix)sys.extended_properties AS ep ON ep.class = 1 AND ep.major_id = p.object_id AND ep.minor_id = 0 AND ep.name = N'MS_Description'" : ""
 
-                if !self.configuration.includeSystemSchemas,
-                   schemaName.caseInsensitiveCompare("sys") == .orderedSame ||
-                   schemaName.caseInsensitiveCompare("INFORMATION_SCHEMA") == .orderedSame {
-                    return nil
-                }
+        let sql = """
+        SELECT
+            schema_name = s.name,
+            object_name = p.name\(definitionSelect)\(commentSelect)
+        FROM \(dbPrefix)sys.procedures AS p
+        JOIN \(dbPrefix)sys.schemas AS s ON s.schema_id = p.schema_id
+        \(joinModules)
+        \(joinComments)
+        WHERE \(whereClause)
+        ORDER BY s.name, p.name;
+        """
 
-                let name = SQLServerMetadataClient.normalizeRoutineName(rawName)
-
-                if name.hasPrefix("meta_client_") {
-                    return nil
-                }
-
-                if let schema,
-                   schemaName.caseInsensitiveCompare(schema) != .orderedSame {
-                    return nil
-                }
-
-                return RoutineMetadata(
-                    schema: schemaName,
-                    name: name,
-                    type: .procedure,
-                    definition: nil,
-                    isSystemObject: false
-                )
-            }
-
-            guard self.configuration.includeRoutineDefinitions, !procedures.isEmpty else {
-                return self.connection.eventLoop.makeSucceededFuture(procedures)
-            }
-
-            let db = self.effectiveDatabase(database)
-            let identifiers = procedures.map { routine in
-                SQLServerMetadataObjectIdentifier(
-                    database: db,
-                    schema: routine.schema,
-                    name: routine.name,
-                    kind: .procedure
-                )
-            }
-
-            return self.fetchObjectDefinitions(identifiers).map { definitions in
-                let lookup = Dictionary(uniqueKeysWithValues: definitions.map { definition in
-                    let key = "\(definition.schema.lowercased())|\(definition.name.lowercased())"
-                    return (key, definition)
-                })
-
-                return procedures.map { procedure in
-                    let key = "\(procedure.schema.lowercased())|\(procedure.name.lowercased())"
-                    guard let definition = lookup[key] else { return procedure }
-                    return RoutineMetadata(
-                        schema: procedure.schema,
-                        name: procedure.name,
-                        type: .procedure,
-                        definition: definition.definition,
-                        isSystemObject: definition.isSystemObject
-                    )
-                }
+        return queryExecutor(sql).map { rows in
+            rows.compactMap { row in
+                guard let schemaName = row.column("schema_name")?.string, let name = row.column("object_name")?.string else { return nil }
+                let def = self.configuration.includeRoutineDefinitions ? row.column("definition")?.string : nil
+                return RoutineMetadata(schema: schemaName, name: name, type: .procedure, definition: def, isSystemObject: false, comment: row.column("comment")?.string)
             }
         }
     }
 
     public func listFunctions(
         database: String? = nil,
-        schema: String? = nil
+        schema: String? = nil,
+        includeComments: Bool = false
     ) -> EventLoopFuture<[RoutineMetadata]> {
         let resolvedDatabase = effectiveDatabase(database)
         let dbPrefix = resolvedDatabase.map { "[\(SQLServerMetadataClient.escapeIdentifier($0))]." } ?? ""
@@ -1968,24 +2456,31 @@ public func listPrimaryKeys(
         } else if !self.configuration.includeSystemSchemas {
             predicates.append("s.name NOT IN ('sys', 'INFORMATION_SCHEMA')")
         }
-
         predicates.append("o.name NOT LIKE 'meta_client_%'")
         let whereClause = predicates.joined(separator: " AND ")
+
+        let definitionSelect = self.configuration.includeRoutineDefinitions ? ", m.definition" : ""
+        let commentSelect = includeComments ? ", CAST(ep.value AS NVARCHAR(4000)) AS comment" : ""
+        // Only join module definitions for recently modified functions to avoid heavy I/O on large schemas.
+        let joinModules = self.configuration.includeRoutineDefinitions ? "LEFT JOIN \(dbPrefix)sys.sql_modules AS m ON m.object_id = o.object_id AND o.modify_date >= DATEADD(MINUTE, -5, SYSDATETIME())" : ""
+        let joinComments = includeComments ? "LEFT JOIN \(dbPrefix)sys.extended_properties AS ep ON ep.class = 1 AND ep.major_id = o.object_id AND ep.minor_id = 0 AND ep.name = N'MS_Description'" : ""
 
         let sql = """
         SELECT
             schema_name = s.name,
             object_name = o.name,
             type_desc = o.type_desc,
-            is_ms_shipped = o.is_ms_shipped
+            is_ms_shipped = o.is_ms_shipped\(definitionSelect)\(commentSelect)
         FROM \(dbPrefix)sys.objects AS o
         JOIN \(dbPrefix)sys.schemas AS s ON o.schema_id = s.schema_id
+        \(joinModules)
+        \(joinComments)
         WHERE \(whereClause)
         ORDER BY s.name, o.name;
         """
 
-        return queryExecutor(sql).flatMap { rows in
-            let functions: [RoutineMetadata] = rows.compactMap { row -> RoutineMetadata? in
+        return queryExecutor(sql).map { rows in
+            rows.compactMap { row -> RoutineMetadata? in
                 guard
                     let schemaName = row.column("schema_name")?.string,
                     let objectName = row.column("object_name")?.string,
@@ -1993,62 +2488,16 @@ public func listPrimaryKeys(
                 else {
                     return nil
                 }
-
                 let objectType = ObjectDefinition.ObjectType.from(typeDesc: typeDesc)
+                let def = self.configuration.includeRoutineDefinitions ? row.column("definition")?.string : nil
                 return RoutineMetadata(
                     schema: schemaName,
                     name: objectName,
                     type: objectType == .tableFunction ? .tableFunction : .scalarFunction,
-                    definition: nil,
-                    isSystemObject: row.column("is_ms_shipped")?.bool ?? false
+                    definition: def,
+                    isSystemObject: row.column("is_ms_shipped")?.bool ?? false,
+                    comment: row.column("comment")?.string
                 )
-            }
-
-            guard !functions.isEmpty else {
-                return self.connection.eventLoop.makeSucceededFuture([])
-            }
-
-            guard self.configuration.includeRoutineDefinitions else {
-                return self.connection.eventLoop.makeSucceededFuture(functions)
-            }
-
-            let identifiers = functions.map { function in
-                SQLServerMetadataObjectIdentifier(
-                    database: resolvedDatabase,
-                    schema: function.schema,
-                    name: function.name,
-                    kind: .function
-                )
-            }
-
-            return self.fetchObjectDefinitions(identifiers).map { definitions in
-                let lookup = Dictionary(uniqueKeysWithValues: definitions.map { definition in
-                    let key = "\(definition.schema.lowercased())|\(definition.name.lowercased())"
-                    return (key, definition)
-                })
-
-                return functions.map { function in
-                    let key = "\(function.schema.lowercased())|\(function.name.lowercased())"
-                    guard let definition = lookup[key] else { return function }
-
-                    let resolvedType: RoutineMetadata.RoutineType
-                    switch definition.type {
-                    case .tableFunction:
-                        resolvedType = .tableFunction
-                    case .scalarFunction:
-                        resolvedType = .scalarFunction
-                    default:
-                        resolvedType = function.type
-                    }
-
-                    return RoutineMetadata(
-                        schema: function.schema,
-                        name: function.name,
-                        type: resolvedType,
-                        definition: definition.definition,
-                        isSystemObject: definition.isSystemObject
-                    )
-                }
             }
         }
     }
@@ -2261,8 +2710,13 @@ public func listPrimaryKeys(
         type: ObjectDefinition.ObjectType,
         dbPrefix: String
     ) -> EventLoopFuture<String?> {
-        let literal = SQLServerMetadataClient.escapeLiteral("[\(schema)].[\(object)]")
-        let defSql = "EXEC \(dbPrefix)sys.sp_helptext @objname = N'\(literal)';"
+        let defSql = """
+        SELECT m.definition
+        FROM \(dbPrefix)sys.objects AS o
+        JOIN \(dbPrefix)sys.schemas AS s ON s.schema_id = o.schema_id
+        JOIN \(dbPrefix)sys.sql_modules AS m ON m.object_id = o.object_id
+        WHERE s.name = N'\(SQLServerMetadataClient.escapeLiteral(schema))' AND o.name = N'\(SQLServerMetadataClient.escapeLiteral(object))';
+        """ 
         let preambleSql = """
         SELECT m.uses_ansi_nulls, m.uses_quoted_identifier
         FROM \(dbPrefix)sys.objects AS o
@@ -2272,19 +2726,18 @@ public func listPrimaryKeys(
         """
 
         let defF = queryExecutor(defSql).map { rows -> String? in
-            let segments = rows.compactMap { $0.column("Text")?.string }
-            guard !segments.isEmpty else { return nil }
-            return segments.joined().trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let text = rows.first?.column("definition")?.string, !text.isEmpty else { return nil }
+            return text.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         let preF = queryExecutor(preambleSql).map { rows -> String in
             guard let row = rows.first else { return "" }
             let ansi = (row.column("uses_ansi_nulls")?.int ?? 1) != 0
             let qi = (row.column("uses_quoted_identifier")?.int ?? 1) != 0
-            var text = "SET ANSI_NULLS \(ansi ? "ON" : "OFF")\nGO\nSET QUOTED_IDENTIFIER \(qi ? "ON" : "OFF")\nGO\n"
+            let text = "SET ANSI_NULLS \(ansi ? "ON" : "OFF")\nGO\nSET QUOTED_IDENTIFIER \(qi ? "ON" : "OFF")\nGO\n"
             return text
         }
         return defF.and(preF).flatMap { (bodyOpt, preamble) in
-            guard var body = bodyOpt else { return self.connection.eventLoop.makeSucceededFuture(nil) }
+            guard let body = bodyOpt else { return self.connection.eventLoop.makeSucceededFuture(nil) }
 
             if type == .view {
                 // Append view indexes if any
@@ -2328,71 +2781,153 @@ public func listPrimaryKeys(
     }
 
     private static func extractParameterDefaults(from definition: String) -> [String: (hasDefault: Bool, defaultValue: String?)] {
-        guard let openIndex = definition.firstIndex(of: "(") else { return [:] }
+        // We support both CREATE FUNCTION and CREATE PROCEDURE forms.
+        // - FUNCTION: parameter list is enclosed in parentheses after the object name
+        // - PROCEDURE: parameters appear after the object name up to the AS keyword (no enclosing parens)
+        let text = definition
+        let lower = text.lowercased()
 
-        var index = definition.index(after: openIndex)
-        var level = 1
-        var current = ""
-        var segments: [String] = []
-
-        while index < definition.endIndex, level > 0 {
-            let character = definition[index]
-            if character == "(" {
-                level += 1
-                current.append(character)
-            } else if character == ")" {
-                level -= 1
-                if level == 0 {
-                    segments.append(current)
-                    break
-                } else {
-                    current.append(character)
-                }
-            } else if character == "," && level == 1 {
-                segments.append(current)
-                current.removeAll(keepingCapacity: true)
-            } else {
-                current.append(character)
-            }
-            index = definition.index(after: index)
+        func indexAfterObjectName(startOfKeyword kw: String) -> String.Index? {
+            guard let kRange = lower.range(of: kw) else { return nil }
+            // Advance past the keyword token
+            var i = kRange.upperBound
+            // Skip whitespace
+            while i < lower.endIndex, lower[i].isWhitespace { i = lower.index(after: i) }
+            // Skip optional schema/object with brackets or quoted identifiers, stopping before parameters or AS/RETURNS
+            // Consume until we hit '@', '(', 'a' (for 'as'), or 'r' (for 'returns') at top level
+            // We’ll return the index at this point to begin parameter scanning
+            return i
         }
 
+        // Split a span into top-level comma-separated segments respecting (), [], and quotes
+        func splitTopLevel(byComma span: Substring) -> [String] {
+            var parts: [String] = []
+            var current = ""
+            var depth = 0
+            var inSingle = false
+            var inBracket = false
+            var prev: Character = "\u{0}"
+            for ch in span {
+                if inSingle {
+                    current.append(ch)
+                    if ch == "'" && prev != "'" { inSingle = false }
+                } else if inBracket {
+                    current.append(ch)
+                    if ch == "]" { inBracket = false }
+                } else {
+                    switch ch {
+                    case "'": inSingle = true; current.append(ch)
+                    case "[": inBracket = true; current.append(ch)
+                    case "(": depth += 1; current.append(ch)
+                    case ")": depth = max(0, depth - 1); current.append(ch)
+                    case ",":
+                        if depth == 0 {
+                            parts.append(current.trimmingCharacters(in: .whitespacesAndNewlines))
+                            current.removeAll(keepingCapacity: true)
+                        } else { current.append(ch) }
+                    default:
+                        current.append(ch)
+                    }
+                }
+                prev = ch
+            }
+            if !current.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                parts.append(current.trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+            return parts
+        }
+
+        var paramBlock: Substring = ""
+        if let fRange = lower.range(of: "create function") {
+            // Find the first '(' after the function name (outside quotes/brackets)
+            var i = fRange.upperBound
+            var inSingle = false, inBracket = false
+            while i < lower.endIndex {
+                let ch = lower[i]
+                if inSingle { if ch == "'" { inSingle = false } }
+                else if inBracket { if ch == "]" { inBracket = false } }
+                else {
+                    if ch == "'" { inSingle = true }
+                    else if ch == "[" { inBracket = true }
+                    else if ch == "(" { break }
+                }
+                i = lower.index(after: i)
+            }
+            guard i < lower.endIndex else { return [:] }
+            // Extract until the matching ')'
+            var depth = 0
+            var j = i
+            repeat {
+                let ch = lower[j]
+                if ch == "(" { depth += 1 }
+                else if ch == ")" { depth -= 1 }
+                j = lower.index(after: j)
+            } while j <= lower.endIndex && depth > 0
+            paramBlock = text[i..<lower.index(before: j)] // exclude closing ')'
+        } else if let pRange = lower.range(of: "create procedure") ?? lower.range(of: "create proc") {
+            // Parameters run from after the name up to the AS keyword (not within quotes)
+            var i = pRange.upperBound
+            // Find first '@' after the object name; if not found, assume no parameters
+            while i < lower.endIndex, lower[i] != "@" && lower[i] != "a" { i = lower.index(after: i) }
+            guard i < lower.endIndex else { return [:] }
+            // Find AS boundary not in quotes/brackets/paren
+            var inSingle = false, inBracket = false, depth = 0
+            var j = i
+            while j < lower.endIndex {
+                let ch = lower[j]
+                if inSingle { if ch == "'" { inSingle = false } }
+                else if inBracket { if ch == "]" { inBracket = false } }
+                else {
+                    if ch == "'" { inSingle = true }
+                    else if ch == "[" { inBracket = true }
+                    else if ch == "(" { depth += 1 }
+                    else if ch == ")" { depth = max(0, depth - 1) }
+                    else if depth == 0 {
+                        // Check for AS keyword
+                        if j <= lower.index(lower.endIndex, offsetBy: -2) {
+                            let ahead = lower[j...]
+                            if ahead.hasPrefix("as ") || ahead.hasPrefix("as\n") || ahead.hasPrefix("as\r") || ahead.hasPrefix("as\t") {
+                                break
+                            }
+                        }
+                    }
+                }
+                j = lower.index(after: j)
+            }
+            paramBlock = text[i..<j]
+        } else {
+            return [:]
+        }
+
+        let segments = splitTopLevel(byComma: paramBlock)
         var defaults: [String: (hasDefault: Bool, defaultValue: String?)] = [:]
         defaults.reserveCapacity(segments.count)
 
-        for rawSegment in segments {
-            let segment = rawSegment.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard let atIndex = segment.firstIndex(of: "@") else { continue }
-            let nameStart = atIndex
+        for segmentRaw in segments {
+            let segment = segmentRaw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let at = segment.firstIndex(of: "@") else { continue }
+            let nameStart = at
             var nameEnd = segment.index(after: nameStart)
             while nameEnd < segment.endIndex {
-                let scalar = segment[nameEnd]
-                if scalar == " " || scalar == "\t" || scalar == "\n" || scalar == "=" || scalar == "," {
-                    break
-                }
+                let c = segment[nameEnd]
+                if c == " " || c == "\t" || c == "\n" || c == "=" || c == "," { break }
                 nameEnd = segment.index(after: nameEnd)
             }
-            let name = String(segment[nameStart..<nameEnd])
-            let key = name.lowercased()
-
-            guard let equalsIndex = segment.firstIndex(of: "=") else {
-                defaults[key] = (hasDefault: false, defaultValue: nil)
+            let key = segment[nameStart..<nameEnd].lowercased()
+            guard let eq = segment.firstIndex(of: "=") else {
+                defaults[String(key)] = (hasDefault: false, defaultValue: nil)
                 continue
             }
-
-            var defaultPart = segment[segment.index(after: equalsIndex)...].trimmingCharacters(in: .whitespacesAndNewlines)
-
+            var defaultPart = segment[segment.index(after: eq)...].trimmingCharacters(in: .whitespacesAndNewlines)
+            // Strip trailing mode keywords
             while let range = defaultPart.range(of: "[A-Za-z_]+$", options: .regularExpression) {
-                let keyword = defaultPart[range].lowercased()
-                if keyword == "output" || keyword == "out" || keyword == "readonly" {
+                let kw = defaultPart[range].lowercased()
+                if kw == "output" || kw == "out" || kw == "readonly" {
                     defaultPart = defaultPart[..<range.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
-                } else {
-                    break
-                }
+                } else { break }
             }
-
             let cleaned = defaultPart.isEmpty ? nil : String(defaultPart)
-            defaults[key] = (hasDefault: cleaned != nil, defaultValue: cleaned)
+            defaults[String(key)] = (hasDefault: cleaned != nil, defaultValue: cleaned)
         }
 
         return defaults

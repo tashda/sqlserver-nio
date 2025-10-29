@@ -90,7 +90,33 @@ public struct TDSRow: CustomStringConvertible, @unchecked Sendable {
         computed.reserveCapacity(lookupTable.colMetadata.colData.count)
         for (index, metadata) in lookupTable.colMetadata.colData.enumerated() {
             if let cell = dataRow.colData[index].data {
-                computed.append(TDSData(metadata: metadata, value: cell))
+                let base = TDSData(metadata: metadata, value: cell)
+                if metadata.dataType == .sqlVariant {
+                    if let resolved = base.sqlVariantResolved() {
+                        computed.append(resolved)
+                    } else {
+                        // Fallback: minimally decode sql_variant textual NVARCHAR payload
+                        var payload = cell
+                        if let _ = payload.readInteger(as: UInt8.self),
+                           let propLen = payload.readInteger(as: UInt8.self) {
+                            if propLen > 0, payload.readableBytes >= Int(propLen) {
+                                _ = payload.readSlice(length: Int(propLen))
+                            }
+                            if payload.readableBytes >= 2, let len = payload.readInteger(endianness: .little, as: UInt16.self) {
+                                let remaining = payload.readableBytes
+                                let bytesToRead = (Int(len) * 2 <= remaining) ? Int(len) * 2 : Int(len)
+                                if bytesToRead > 0, let slice = payload.readSlice(length: bytesToRead) {
+                                    let nvMeta = TypeMetadata(userType: 0, flags: 0, dataType: .nvarchar, collation: [], precision: nil, scale: nil)
+                                    computed.append(TDSData(metadata: nvMeta, value: slice))
+                                    continue
+                                }
+                            }
+                        }
+                        computed.append(base)
+                    }
+                } else {
+                    computed.append(base)
+                }
             } else {
                 computed.append(nil)
             }

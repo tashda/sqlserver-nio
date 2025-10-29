@@ -85,6 +85,10 @@ public enum TDSDataType: UInt8, Sendable {
     case xml = 0xF1
     /// UDTTYPE / CLR UDT
     case clrUdt = 0xF0
+    /// JSONTYPE / JSON (newer SQL Server)
+    case json = 0xF4
+    /// VECTORTYPE / VECTOR (newer SQL Server)
+    case vector = 0xF5
     /// TEXTTYPE / Text
     case text = 0x23
     /// IMAGETYPE / Image
@@ -121,4 +125,3 @@ public enum TDSDataType: UInt8, Sendable {
         }
     }
 }
-

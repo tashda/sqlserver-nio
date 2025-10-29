@@ -116,40 +116,39 @@ extension TDSData {
         case .guid:
             return payload.readSlice(length: 16)
 
-        case .intn, .floatn, .moneyn, .datetimen,
-             .decimal, .decimalLegacy, .numeric, .numericLegacy,
-             .bitn, .datetime2, .datetimeOffset, .time:
-            guard let length = payload.readInteger(as: UInt8.self) else {
-                return nil
+        case .decimal, .decimalLegacy, .numeric, .numericLegacy,
+             .datetime2, .datetimeOffset, .time:
+            // Inside sql_variant these are stored without an inner length prefix; the
+            // value is the entire remaining payload bytes.
+            let bytes = payload.readableBytes
+            if bytes == 0 { return nil }
+            return payload.readSlice(length: bytes)
+        case .intn, .floatn, .moneyn, .datetimen, .bitn:
+            // Be defensive: some variant encodings include a 1-byte length; if not present,
+            // consume the remaining bytes.
+            if let length = payload.readInteger(as: UInt8.self) {
+                if length == 0 { return nil }
+                return payload.readSlice(length: Int(length))
+            } else {
+                let bytes = payload.readableBytes
+                if bytes == 0 { return nil }
+                return payload.readSlice(length: bytes)
             }
-            if length == 0 {
-                return nil
-            }
-            return payload.readSlice(length: Int(length))
 
         case .char, .varchar, .charLegacy, .varcharLegacy,
              .binary, .varbinary, .binaryLegacy, .varbinaryLegacy:
-            guard let length = payload.readInteger(endianness: .little, as: UInt16.self) else {
-                return nil
-            }
-
-            if length == UInt16.max {
-                return nil
-            }
-            
-            return payload.readSlice(length: Int(length))
-            
+            // Inside sql_variant, there is no inner length prefix for these types.
+            let bytes = payload.readableBytes
+            if bytes == 0 { return nil }
+            return payload.readSlice(length: bytes)
+        
         case .nchar, .nvarchar:
-            // For nvarchar in sql_variant, the remaining payload IS the string data
-            // No additional length prefix - the properties already told us the max length
-            // and the actual length is determined by the remaining payload size
-            if payload.readableBytes == 0 {
-                return nil // Empty string or NULL
-            }
-            
-            return payload.readSlice(length: payload.readableBytes)
+            // Inside sql_variant, NVARCHAR/NCHAR carry no inner length prefix; value is all remaining bytes.
+            let bytes = payload.readableBytes
+            if bytes == 0 { return nil }
+            return payload.readSlice(length: bytes)
 
-        case .xml, .image, .nText, .text, .sqlVariant, .clrUdt, .null:
+        case .xml, .image, .nText, .text, .sqlVariant, .clrUdt, .null, .json, .vector:
             return nil
 
         @unknown default:

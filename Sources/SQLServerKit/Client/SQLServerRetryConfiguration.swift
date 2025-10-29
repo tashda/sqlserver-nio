@@ -13,6 +13,10 @@ public struct SQLServerRetryConfiguration {
         case .connectionClosed:
             return true
         case .timeout:
+            // Do not retry operations that already timed out; let callers decide.
+            return false
+        case .deadlockDetected:
+            // Retry deadlock victims (error 1205)
             return true
         case .transient:
             return true
