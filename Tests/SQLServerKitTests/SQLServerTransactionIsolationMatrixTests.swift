@@ -17,8 +17,14 @@ final class SQLServerTransactionIsolationMatrixTests: XCTestCase {
     }
 
     override func tearDown() async throws {
-        try await client?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
+        _ = try await client?.shutdownGracefully().get()
+        if let group = group {
+            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+                group.shutdownGracefully { error in
+                    if let error { cont.resume(throwing: error) } else { cont.resume(returning: ()) }
+                }
+            }
+        }
         client = nil
         group = nil
     }

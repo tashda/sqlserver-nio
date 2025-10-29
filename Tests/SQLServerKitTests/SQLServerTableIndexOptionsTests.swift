@@ -35,9 +35,7 @@ final class SQLServerTableIndexOptionsTests: XCTestCase {
                 CREATE UNIQUE NONCLUSTERED INDEX [\(idx)] ON [dbo].[\(table)] ([Code] ASC)
                 WITH (PAD_INDEX = ON, FILLFACTOR = 80, ALLOW_PAGE_LOCKS = OFF, ALLOW_ROW_LOCKS = ON, IGNORE_DUP_KEY = ON);
             """)
-
-            let dbClient = try await makeClient(forDatabase: db, using: self.group)
-            defer { Task { _ = try? await dbClient.shutdownGracefully().get() } }
+            try await withDbClient(for: db, using: self.group) { dbClient in
             guard let def = try await withRetry(attempts: 5, {
                 try await withTimeout(60, {
                     try await withReliableConnection(client: dbClient) { conn in
@@ -59,7 +57,15 @@ final class SQLServerTableIndexOptionsTests: XCTestCase {
 
         // Cleanup
             // No explicit cleanup; database is dropped
+            }
         }
+        // Ensure scoped dbClient is properly shutdown before test ends
+        // (withTemporaryDatabase drops the DB; we close the client explicitly)
+        // Note: this path only executes if the do/catch didn't early throw
+        // and the database block returned normally.
+        // In error paths above, the defer inside withTemporaryDatabase handles cleanup.
+        // Here we simply ensure no background tasks linger.
+        // Since dbClient is scoped, instantiate a fresh one is unnecessary here.
         } catch {
             if let te = error as? AsyncTimeoutError {
                 throw XCTSkip("Skipping due to timeout during index option scripting: \(te)")

@@ -128,8 +128,11 @@ func makeSQLServerConnectionConfiguration() -> SQLServerConnection.Configuration
             shouldRetry: { error in
                 if let se = error as? SQLServerError {
                     switch se {
-                    case .connectionClosed, .transient, .timeout:
+                    case .connectionClosed, .transient:
                         return true
+                    case .timeout:
+                        // Do not retry operations that already timed out; tests should fail fast
+                        return false
                     default:
                         return false
                     }
@@ -137,10 +140,12 @@ func makeSQLServerConnectionConfiguration() -> SQLServerConnection.Configuration
                 // Fall back to common underlying error types
                 if let tds = error as? TDSError {
                     if case .connectionClosed = tds { return true }
+                    // Treat explicit protocol timeouts as non-retryable
+                    if case .protocolError(let message) = tds, message.localizedCaseInsensitiveContains("timeout") { return false }
                 }
                 if let ch = error as? ChannelError {
                     switch ch {
-                    case .ioOnClosedChannel, .outputClosed, .eof:
+                    case .ioOnClosedChannel, .outputClosed, .eof, .alreadyClosed:
                         return true
                     default:
                         break
@@ -159,8 +164,8 @@ func makeSQLServerConnectionConfiguration() -> SQLServerConnection.Configuration
 func makeSQLServerClientConfiguration() -> SQLServerClient.Configuration {
     let pool = SQLServerConnectionPool.Configuration(
         maximumConcurrentConnections: 4,
-        minimumIdleConnections: 1,
-        connectionIdleTimeout: .seconds(60),
+        minimumIdleConnections: 0,
+        connectionIdleTimeout: nil,
         validationQuery: "SELECT 1;"
     )
 
@@ -254,12 +259,53 @@ extension XCTestCase {
     }
 }
 
+// Await an async operation with XCTest expectation, mirroring waitForResult for futures.
+extension XCTestCase {
+    func waitForAsync<T>(
+        timeout: TimeInterval,
+        description: String,
+        operation: @escaping () async throws -> T,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws -> T {
+        let exp = expectation(description: description)
+        var result: Result<T, Error>?
+        Task {
+            do {
+                let value = try await operation()
+                result = .success(value)
+            } catch {
+                result = .failure(error)
+            }
+            exp.fulfill()
+        }
+        let waiter = XCTWaiter.wait(for: [exp], timeout: timeout)
+        guard waiter == .completed else {
+            XCTFail("Operation '\(description)' did not complete within \(timeout) seconds", file: file, line: line)
+            throw TestTimeoutError.timedOut(timeout: timeout, description: description)
+        }
+        guard let resolved = result else {
+            XCTFail("Operation '\(description)' completed without result", file: file, line: line)
+            throw TestTimeoutError.timedOut(timeout: timeout, description: description)
+        }
+        switch resolved {
+        case .success(let value): return value
+        case .failure(let error): throw error
+        }
+    }
+}
+
 // MARK: - Agent Preflight Helper
 
 /// Asserts that the SQL Server Agent environment is ready for tests and provides actionable
 /// guidance if not. Uses the SQLServerAgentClient preflight to check Agent status and, optionally,
 /// proxy prerequisites.
-func assertAgentPreflight(_ connection: SQLServerConnection, requireProxyPrereqs: Bool = false, timeout: TimeInterval) throws {
+func assertAgentPreflight(
+    _ connection: SQLServerConnection,
+    requireProxyPrereqs: Bool = false,
+    timeout: TimeInterval,
+    softFail: Bool = false
+) throws {
     let agent = SQLServerAgentClient(connection: connection)
     // Avoid relying on XCTestCase extension helpers here to prevent symbol ordering
     // issues during filtered builds. Use a simple semaphore-based wait.
@@ -274,8 +320,14 @@ func assertAgentPreflight(_ connection: SQLServerConnection, requireProxyPrereqs
     let waitResult = sema.wait(timeout: .now() + timeout)
     guard waitResult == .success else { throw TestTimeoutError.timedOut(timeout: timeout, description: "agent preflight") }
     if let error = firstError {
-        XCTFail(String(describing: error))
-        throw error
+        if softFail {
+            // Advisory-only path: surface message but do not fail/throw
+            print("Agent preflight advisory: \(error)")
+            return
+        } else {
+            XCTFail(String(describing: error))
+            throw error
+        }
     }
 }
 
@@ -309,7 +361,8 @@ actor DDLGuard {
 func runWithRetry(_ client: SQLServerClient, _ sql: String, attempts: Int = 3, delayNs: UInt64 = 200_000_000) async -> Bool {
     for i in 1...attempts {
         do {
-            _ = try await client.execute(sql).get()
+            // Use a fresh connection to avoid pooled connections pinned to a target DB
+            _ = try await client.executeOnFreshConnection(sql).get()
             return true
         } catch {
             if i == attempts { return false }
@@ -392,21 +445,20 @@ func withTemporaryDatabase(
             }
         }
     } catch {
-        // best-effort; if readiness fails, attempt cleanup and rethrow
-        await runWithRetry(client, "ALTER DATABASE [\(db)] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [\(db)]")
+        // best-effort; if readiness fails, attempt cleanup and rethrow (ensure context is master)
+        _ = await runWithRetry(client, "USE master; ALTER DATABASE [\(db)] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [\(db)]")
         throw error
     }
     do {
         try await body(db)
     } catch {
-        // attempt cleanup then rethrow
-        await runWithRetry(client, "ALTER DATABASE [\(db)] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [\(db)]")
+        // attempt cleanup then rethrow (ensure context is master)
+        _ = await runWithRetry(client, "USE master; ALTER DATABASE [\(db)] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [\(db)]")
         throw error
     }
     await DDLGuard.shared.withLock {
-        _ = try? await withTimeout(15) {
-            try await client.execute("ALTER DATABASE [\(db)] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [\(db)]").get()
-        }
+        // Retry the drop sequence to avoid races where a pooled connection briefly re-enters the DB.
+        _ = await runWithRetry(client, "USE master; ALTER DATABASE [\(db)] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [\(db)]", attempts: 5, delayNs: 300_000_000)
     }
 }
 
@@ -433,6 +485,17 @@ func withRetry<T>(
                 default:
                     throw error
                 }
+            } else if let ch = error as? ChannelError {
+                switch ch {
+                case .ioOnClosedChannel, .outputClosed, .eof, .alreadyClosed:
+                    try? await Task.sleep(nanoseconds: delayNs)
+                    continue
+                default:
+                    throw error
+                }
+            } else if error is NIOConnectionError {
+                try? await Task.sleep(nanoseconds: delayNs)
+                continue
             } else {
                 throw error
             }
@@ -449,7 +512,10 @@ func withDbConnection<T>(
 ) async throws -> T {
     try await client.withConnection { connection in
         _ = try await connection.changeDatabase(database).get()
-        return try await operation(connection)
+        // Ensure any nested client operations (e.g., admin helpers) reuse this connection
+        return try await ClientScopedConnection.$current.withValue(connection) {
+            try await operation(connection)
+        }
     }
 }
 
@@ -472,14 +538,29 @@ func makeClient(forDatabase database: String, using group: EventLoopGroup) async
     return try await SQLServerClient.connect(configuration: cfg, eventLoopGroupProvider: .shared(group)).get()
 }
 
+// Runs the body with a DB‑scoped client and always shuts it down, even on error.
+@available(macOS 12.0, *)
+func withDbClient<T>(for database: String, using group: EventLoopGroup, _ body: @escaping (SQLServerClient) async throws -> T) async throws -> T {
+    let dbClient = try await makeClient(forDatabase: database, using: group)
+    do {
+        let value = try await body(dbClient)
+        _ = try? await dbClient.shutdownGracefully().get()
+        return value
+    } catch {
+        _ = try? await dbClient.shutdownGracefully().get()
+        throw error
+    }
+}
+
 @discardableResult
 func executeInDb(
     client: SQLServerClient,
     database: String,
     _ sql: String
 ) async throws -> SQLServerExecutionResult {
-    try await withDbConnection(client: client, database: database) { conn in
-        try await conn.execute(sql).get()
+    try await withReliableConnection(client: client) { conn in
+        _ = try await conn.changeDatabase(database).get()
+        return try await conn.execute(sql).get()
     }
 }
 
@@ -488,8 +569,9 @@ func queryInDb(
     database: String,
     _ sql: String
 ) async throws -> [TDSRow] {
-    try await withDbConnection(client: client, database: database) { conn in
-        try await conn.query(sql).get()
+    try await withReliableConnection(client: client) { conn in
+        _ = try await conn.changeDatabase(database).get()
+        return try await conn.query(sql).get()
     }
 }
 // MARK: - Async timeout helper

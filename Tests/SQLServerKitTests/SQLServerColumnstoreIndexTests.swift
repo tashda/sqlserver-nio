@@ -29,6 +29,7 @@ final class SQLServerColumnstoreIndexTests: XCTestCase {
             let table = "cs_tbl_\(UUID().uuidString.prefix(6))"
             _ = try await executeInDb(client: self.client, database: db, "CREATE TABLE [dbo].[\(table)] (Id INT NOT NULL, C1 INT, C2 INT);")
             let ccs = "CCS_\(UUID().uuidString.prefix(6))"
+            _ = ccs
             let nccs = "NCCS_\(UUID().uuidString.prefix(6))"
             // Prefer a single nonclustered columnstore index; if unsupported, skip gracefully.
             do {
@@ -46,16 +47,24 @@ final class SQLServerColumnstoreIndexTests: XCTestCase {
             while def == nil && remaining > 0 {
                 remaining -= 1
                 do {
-                    def = try await withReliableConnection(client: self.client, attempts: 5) { conn in
+                    // Keep attempts modest; combine with RawSql stall-strike cap to fail fast.
+                    def = try await withReliableConnection(client: self.client, attempts: 3) { conn in
                         _ = try await conn.changeDatabase(db).get()
-                        return try await conn.fetchObjectDefinition(schema: "dbo", name: table, kind: .table).get()
+                        // Bound each metadata fetch to avoid long hangs if the server stops responding.
+                        return try await conn
+                            .fetchObjectDefinition(schema: "dbo", name: table, kind: .table)
+                            .withTimeout(on: conn.eventLoop, seconds: 8, reason: "fetchObjectDefinition(columnstore)")
+                            .get()
                     }
                 } catch {
                     // spin a fresh client bound to DB and retry once
                     if let se = error as? SQLServerError, case .connectionClosed = se, remaining > 0 {
                         let dbClient = try await makeClient(forDatabase: db, using: self.group)
-                        def = try? await withReliableConnection(client: dbClient, attempts: 5) { conn in
-                            return try await conn.fetchObjectDefinition(schema: "dbo", name: table, kind: .table).get()
+                        def = try? await withReliableConnection(client: dbClient, attempts: 3) { conn in
+                            try await conn
+                                .fetchObjectDefinition(schema: "dbo", name: table, kind: .table)
+                                .withTimeout(on: conn.eventLoop, seconds: 8, reason: "fetchObjectDefinition(columnstore,alt)")
+                                .get()
                         }
                         _ = try? await dbClient.shutdownGracefully().get()
                     } else {
