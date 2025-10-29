@@ -64,7 +64,15 @@ final class SQLServerTableScriptingMatrixTests: XCTestCase {
             for combo in cases {
                 let table = combo.name + "_" + UUID().uuidString.prefix(6)
                 var create = "CREATE TABLE [dbo].[\(table)] (\n"
-                create += combo.cols.map { "    [\($0.name)] \($0.def)" }.joined(separator: ",\n")
+                var columnLines = combo.cols.map { "    [\($0.name)] \($0.def)" }
+                // If this is a temporal combo, inject the PERIOD clause to form valid DDL
+                let hasTemporal = combo.options?.localizedCaseInsensitiveContains("SYSTEM_VERSIONING = ON") == true
+                if hasTemporal,
+                   combo.cols.contains(where: { $0.name == "ValidFrom" }),
+                   combo.cols.contains(where: { $0.name == "ValidTo" }) {
+                    columnLines.append("    PERIOD FOR SYSTEM_TIME ([ValidFrom], [ValidTo])")
+                }
+                create += columnLines.joined(separator: ",\n")
                 create += ",\n    \(combo.pk)\n)"
                 if let options = combo.options { create += " \(options)" }
                 create += ";"
@@ -79,7 +87,25 @@ final class SQLServerTableScriptingMatrixTests: XCTestCase {
                 }
                 guard let def, let ddl = def.definition else { XCTFail("No DDL returned for \(table)"); continue }
 
-                // Golden re-exec: drop and recreate from DDL
+                // Golden re-exec: disable temporal if needed, drop, then recreate from DDL
+                if ddl.localizedCaseInsensitiveContains("SYSTEM_VERSIONING = ON") {
+                    // Turn off system versioning to allow DROP
+                    _ = try? await executeInDb(client: self.client, database: db, "ALTER TABLE [dbo].[\(table)] SET (SYSTEM_VERSIONING = OFF);")
+                    // If an explicit history table is referenced, drop it for a clean recreate
+                    if let range = ddl.range(of: #"HISTORY_TABLE\s*=\s*\[[^\]]+\]\.\[[^\]]+\]"#, options: [.regularExpression, .caseInsensitive]) {
+                        let clause = String(ddl[range])
+                        // Extract schema and name
+                        if let m = clause.range(of: #"\[([^\]]+)\]\.\[([^\]]+)\]"#, options: .regularExpression) {
+                            let pair = String(clause[m])
+                            let parts = pair.replacingOccurrences(of: "[", with: "").replacingOccurrences(of: "]", with: "").split(separator: ".", maxSplits: 1).map(String.init)
+                            if parts.count == 2 {
+                                let hs = parts[0]
+                                let ht = parts[1]
+                                _ = try? await executeInDb(client: self.client, database: db, "IF OBJECT_ID(N'\(hs).\(ht)', 'U') IS NOT NULL DROP TABLE [\(hs)].[\(ht)];")
+                            }
+                        }
+                    }
+                }
                 _ = try await executeInDb(client: self.client, database: db, "DROP TABLE [dbo].[\(table)]")
                 do { _ = try await self.client.executeScript(ddl) } catch {
                     XCTFail("Failed to recreate \(table) from scripted DDL: \(error)\nDDL=\n\(ddl)")
