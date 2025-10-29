@@ -1,13 +1,18 @@
 extension TDSTokenParser {
     public static func parseColMetadataToken(from buffer: inout ByteBuffer) throws -> TDSTokens.ColMetadataToken {
-        guard
-            let count = buffer.readUShort()
-            else {
-                throw TDSError.protocolError("Invalid COLMETADATA token: Error while reading COUNT of columns")
+        guard let countRaw = buffer.readUShort() else {
+            throw TDSError.protocolError("Invalid COLMETADATA token: Error while reading COUNT of columns")
         }
 
+        // TDS: COUNT == 0xFFFF means no columns follow for this result set.
+        if countRaw == 0xFFFF {
+            return TDSTokens.ColMetadataToken(count: 0, colData: [])
+        }
+
+        let count = countRaw
+
         var colData: [TDSTokens.ColMetadataToken.ColumnData] = []
-        for _ in 0...count - 1 {
+        for _ in 0..<(count) {
             guard
                 let userType = buffer.readULong(),
                 let flags = buffer.readUShort(),
@@ -19,10 +24,39 @@ extension TDSTokenParser {
             var length: Int
             switch dataType {
             case .sqlVariant, .nText, .text, .image:
+                // LOB/text-like types carry a 4-byte LONGLEN for TYPE_INFO length
                 guard let len = buffer.readLongLen() else {
                     throw TDSError.protocolError("Error while reading length")
                 }
                 length = Int(len)
+            case .vector:
+                // VECTOR: USHORTLEN (max length in bytes) then 1 byte dimension type (scale)
+                guard let len = buffer.readUShortLen() else {
+                    throw TDSError.protocolError("Error while reading VECTOR length")
+                }
+                length = Int(len)
+                _ = buffer.readByte() // dimension type
+            case .json:
+                // JSON: PARTLENTYPE, no additional TYPE_INFO payload here
+                length = 0xFFFF
+            case .xml:
+                // XMLTYPE header: schemaPresent (BYTE), then optional DB/Schema (B_USVAR) and collection (US_VARCHAR)
+                if let present = buffer.readByte(), present != 0 {
+                    if let dbChars = buffer.readByte() { _ = buffer.readBytes(length: Int(dbChars) * 2) }
+                    if let schemaChars = buffer.readByte() { _ = buffer.readBytes(length: Int(schemaChars) * 2) }
+                    if let collChars = buffer.readUShort() { _ = buffer.readBytes(length: Int(collChars) * 2) }
+                }
+                length = 0xFFFF
+            case .clrUdt:
+                // UDT header: USHORT maxLen, then DB/Schema/Type (B_USVAR), then assembly name (US_VARCHAR)
+                guard let maxLen = buffer.readUShort() else {
+                    throw TDSError.protocolError("Error while reading UDT maxLen")
+                }
+                length = Int(maxLen)
+                if let dbChars = buffer.readByte() { _ = buffer.readBytes(length: Int(dbChars) * 2) }
+                if let schemaChars = buffer.readByte() { _ = buffer.readBytes(length: Int(schemaChars) * 2) }
+                if let typeChars = buffer.readByte() { _ = buffer.readBytes(length: Int(typeChars) * 2) }
+                if let asmChars = buffer.readUShort() { _ = buffer.readBytes(length: Int(asmChars) * 2) }
             case .char, .varchar, .nchar, .nvarchar, .binary, .varbinary:
                 guard let len = buffer.readUShortLen() else {
                     throw TDSError.protocolError("Error while reading length")
@@ -90,7 +124,7 @@ extension TDSTokenParser {
                     throw TDSError.protocolError("Error while reading NUMPARTS.")
                 }
 
-                for _ in 0...numParts - 1 {
+                for _ in 0..<(numParts) {
                     guard let partName = buffer.readUSVarchar() else {
                         throw TDSError.protocolError("Error while reading NUMPARTS.")
                     }
