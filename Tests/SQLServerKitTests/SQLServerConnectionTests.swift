@@ -304,4 +304,19 @@ final class SQLServerConnectionTests: XCTestCase {
         // The exact numbers might vary, but we shouldn't have leaked connections
         XCTAssertLessThanOrEqual(finalStatus.active, initialStatus.active + 1, "Should not leak active connections")
     }
+
+    func testStreamQueryWithOptionsCompiles() async throws {
+        guard #available(macOS 12.0, *) else { return }
+        // Ensure environment is loaded for connection details
+        loadEnvFileIfPresent()
+
+        try await client.withConnection { connection in
+            let options = SqlServerExecutionOptions(mode: .auto, rowsetFetchSize: nil, progressThrottleMs: 100)
+            var count = 0
+            for try await event in connection.streamQuery("SELECT TOP 1 1", options: options) {
+                if case .row = event { count += 1 }
+            }
+            XCTAssertGreaterThanOrEqual(count, 0)
+        }
+    }
 }

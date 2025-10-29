@@ -30,7 +30,8 @@ final class SQLServerIndexMatrixTests: XCTestCase {
         if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         try await withTemporaryDatabase(client: self.client, prefix: "imx") { db in
             let table = "ix_tbl_\(UUID().uuidString.prefix(6))"
-            _ = try await executeInDb(client: self.client, database: db, "CREATE TABLE [dbo].[\(table)] (Id INT PRIMARY KEY, Name NVARCHAR(50), Age INT, Email NVARCHAR(255));")
+            // Use NONCLUSTERED primary key so we can create an explicit CLUSTERED index later
+            _ = try await executeInDb(client: self.client, database: db, "CREATE TABLE [dbo].[\(table)] (Id INT PRIMARY KEY NONCLUSTERED, Name NVARCHAR(50), Age INT, Email NVARCHAR(255));")
 
             struct IX { let name: String; let cols: [String]; let include: [String]; let filter: String?; let options: [String] }
             var cases: [IX] = [
