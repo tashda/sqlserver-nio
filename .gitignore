@@ -11,3 +11,17 @@ Tests/LinuxMain.swift
 /AGENTS.md
 /Docs
 Private.xctestplan
+
+# Build artifacts and temporary files
+.build-agent/
+.build-release.log
+.build-sec/
+.build-tdsdecoder/
+.build-tests-warning-release.log
+.build-tests-warning.log
+.build-tests.log
+.build-tmp/
+.build-warning-release.log
+.build-warning.log
+.claude/
+rpc.cap
