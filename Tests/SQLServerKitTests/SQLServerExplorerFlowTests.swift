@@ -28,12 +28,18 @@ final class SQLServerExplorerFlowTests: XCTestCase {
         loadEnvFileIfPresent()
         try requireEnvFlag("TDS_ENABLE_EXPLORER_FLOW", description: "Explorer startup flow")
         group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        connection = try await connectSQLServer(on: group.next()).get()
+        // Bound the initial connect with the same global TIMEOUT used by the rest of the test.
+        connection = try waitForResult(connectSQLServer(on: group.next()), timeout: TIMEOUT, description: "connect")
     }
 
     override func tearDown() async throws {
-        try await connection?.close().get()
-        try await group?.shutdownGracefully()
+        // Ensure connection is fully closed before shutting down the EventLoopGroup.
+        if let conn = connection {
+            _ = try? await conn.close().get()
+        }
+        if let g = group {
+            _ = try? await SQLServerClient.shutdownEventLoopGroup(g).get()
+        }
         connection = nil
         group = nil
     }

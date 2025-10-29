@@ -47,7 +47,6 @@ final class SQLServerTableDefinitionTests: XCTestCase {
 
         // Fetch scripted definition (use dedicated DB-scoped client + reliable connection)
             let dbClient = try await makeClient(forDatabase: db, using: self.group)
-            defer { Task { _ = try? await dbClient.shutdownGracefully().get() } }
             let def = try await withRetry(attempts: 5) {
                 try await withTimeout(60) {
                     try await withReliableConnection(client: dbClient) { conn in
@@ -69,6 +68,7 @@ final class SQLServerTableDefinitionTests: XCTestCase {
         XCTAssertTrue(defText.contains("CREATE")) // index script appended
 
             // No explicit cleanup; database dropped by helper
+            _ = try? await dbClient.shutdownGracefully().get()
         }
         } catch {
             if let te = error as? AsyncTimeoutError {
