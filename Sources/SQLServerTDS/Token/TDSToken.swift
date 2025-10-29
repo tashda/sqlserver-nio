@@ -21,7 +21,7 @@ public struct TypeMetadata: Metadata {
     public var precision: Int?
     public var scale: Int?
     
-    init(userType: ULong = 0, flags: UShort = 0, dataType: TDSDataType, collation: [Byte] = [], precision: Int? = nil, scale: Int? = nil) {
+    public init(userType: ULong = 0, flags: UShort = 0, dataType: TDSDataType, collation: [Byte] = [], precision: Int? = nil, scale: Int? = nil) {
         self.userType = userType
         self.flags = flags
         self.dataType = dataType
@@ -130,6 +130,12 @@ public enum TDSTokens {
         public var colData: [RowToken.ColumnData]
     }
 
+    public struct TVPRowToken: TDSToken {
+        public var type: TokenType = .tvpRow
+        public var nullBitmap: [Byte]
+        public var colData: [RowToken.ColumnData]
+    }
+
     public struct OrderToken: TDSToken {
         public var type: TokenType = .order
         var columnOrdinals: [UInt16]
@@ -148,6 +154,41 @@ public enum TDSTokens {
     public struct ColInfoToken: TDSToken {
         public var type: TokenType = .colInfo
         public var data: [Byte]
+    }
+
+    public struct OffsetToken: TDSToken {
+        public var type: TokenType = .offset
+        public var data: [Byte]
+    }
+
+    public struct FeatureExtAckToken: TDSToken {
+        public var type: TokenType = .featureExtAck
+        public var payload: ByteBuffer
+    }
+
+    public struct FedAuthInfoToken: TDSToken {
+        public var type: TokenType = .fedAuthInfo
+        public var payload: ByteBuffer
+    }
+
+    public struct SessionStateToken: TDSToken {
+        public var type: TokenType = .sessionState
+        public var payload: ByteBuffer
+    }
+
+    public struct DataClassificationToken: TDSToken {
+        public var type: TokenType = .dataClassification
+        public var payload: ByteBuffer
+    }
+
+    public struct ReturnValueToken: TDSToken {
+        public var type: TokenType = .returnValue
+        public var name: String
+        public var status: Byte
+        public var userType: ULong
+        public var flags: UShort
+        public var metadata: TypeMetadata
+        public var value: ByteBuffer?
     }
 
     public struct SSPIToken: TDSToken {
