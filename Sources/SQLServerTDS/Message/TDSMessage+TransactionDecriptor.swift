@@ -3,18 +3,19 @@ import NIO
 extension TDSMessage {
 
     static public func serializeAllHeaders(_ buffer: inout ByteBuffer, transactionDescriptor: [UInt8] = [0, 0, 0, 0, 0, 0, 0, 0], outstandingRequestCount: UInt32 = 1) {
-        let startWriterIndex = buffer.writerIndex
-        // skip TotalLength for now
-        buffer.moveWriterIndex(forwardBy: 4)
-
-        // MARS/Transaction Header (exactly like Microsoft JDBC driver)
-        buffer.writeInteger(18 as DWord, endianness: .little) // MARS header length (HeaderLength + HeaderType + TransactionDescriptor + OutstandingRequestCount)
-        buffer.writeInteger(0x02 as UShort, endianness: .little) // HeaderType (MARS header)
-        buffer.writeBytes(transactionDescriptor) // TransactionDescriptor (8 bytes, raw bytes like Microsoft)
-        buffer.writeInteger(outstandingRequestCount as DWord, endianness: .little) // OutstandingRequestCount
-
-        // Set the total length of all headers
-        buffer.setInteger(DWord(buffer.writerIndex - startWriterIndex), at: startWriterIndex, endianness: .little)
+        // Match Microsoft JDBC framing observed on wire:
+        // TotalLength (DWORD) = 4 (MarsHeaderLen field) + 18 (MARS header bytes)
+        // MarsHeaderLen (DWORD) = 18
+        // HeaderType (USHORT) = 0x0002
+        // TransactionDescriptor (8 bytes)
+        // OutstandingRequestCount (DWORD)
+        let marsHeaderLen: DWord = 18
+        let totalLen: DWord = 4 + marsHeaderLen
+        buffer.writeInteger(totalLen, endianness: .little)
+        buffer.writeInteger(marsHeaderLen, endianness: .little)
+        buffer.writeInteger(0x0002 as UShort, endianness: .little)
+        buffer.writeBytes(transactionDescriptor)
+        buffer.writeInteger(outstandingRequestCount as DWord, endianness: .little)
         return
     }
 }

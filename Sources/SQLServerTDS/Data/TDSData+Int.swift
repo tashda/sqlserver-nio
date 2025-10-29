@@ -94,9 +94,9 @@ private extension TDSData {
         case 16:
             capacity = 2
         case 32:
-            capacity = 3
-        case 64:
             capacity = 4
+        case 64:
+            capacity = 8
         default:
             fatalError("Cannot encode \(I.self) to TDSData")
         }
@@ -116,6 +116,19 @@ private extension TDSData {
         }
 
         switch self.metadata.dataType {
+        case .bit:
+            guard value.readableBytes == 1, let byte = value.getInteger(at: value.readerIndex, as: UInt8.self) else { return nil }
+            return I(byte)
+        case .bitn:
+            switch value.readableBytes {
+            case 0:
+                return nil
+            case 1:
+                guard let byte = value.getInteger(at: value.readerIndex, as: UInt8.self) else { return nil }
+                return I(byte)
+            default:
+                return nil
+            }
         case .tinyInt:
             guard value.readableBytes == 1 else {
                 return nil

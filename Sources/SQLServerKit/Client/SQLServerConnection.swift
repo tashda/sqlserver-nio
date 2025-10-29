@@ -12,6 +12,7 @@ import Glibc
 #endif
 
 public final class SQLServerConnection {
+
     public struct Configuration: Sendable {
         public struct Login: Sendable {
             public var database: String
@@ -70,29 +71,20 @@ public final class SQLServerConnection {
             ownsGroup = true
         }
 
-        let promise = group.next().makePromise(of: SQLServerConnection.self)
-
-        connect(
-            configuration: configuration,
-            on: group.next(),
-            logger: logger
-        ).whenComplete { result in
-            switch result {
-            case .success(let connection):
+        let loop = group.next()
+        let fut = connect(configuration: configuration, on: loop, logger: logger)
+            .map { connection in
                 connection.ownsEventLoopGroup = ownsGroup ? group : nil
-                promise.succeed(connection)
-            case .failure(let error):
-                if ownsGroup {
-                    SQLServerClient.shutdownEventLoopGroup(group).whenComplete { _ in
-                        promise.fail(error)
-                    }
-                } else {
-                    promise.fail(error)
-                }
+                return connection
             }
-        }
+            .flatMapError { error in
+                if ownsGroup {
+                    _ = SQLServerClient.shutdownEventLoopGroup(group)
+                }
+                return loop.makeFailedFuture(error)
+            }
 
-        return promise.futureResult
+        return fut
     }
 
     public static func connect(
@@ -100,46 +92,66 @@ public final class SQLServerConnection {
         on eventLoop: EventLoop,
         logger: Logger = Logger(label: "tds.sqlserver.connection")
     ) -> EventLoopFuture<SQLServerConnection> {
-        let loginConfiguration = TDSLoginConfiguration(
-            serverName: configuration.hostname,
-            port: configuration.port,
-            database: configuration.login.database,
-            authentication: configuration.login.authentication
-        )
+        func attempt(_ cfg: Configuration) -> EventLoopFuture<SQLServerConnection> {
+            let loginConfiguration = TDSLoginConfiguration(
+                serverName: cfg.hostname,
+                port: cfg.port,
+                database: cfg.login.database,
+                authentication: cfg.login.authentication
+            )
 
-        return resolveSocketAddresses(
-            hostname: configuration.hostname,
-            port: configuration.port,
-            transparentResolution: configuration.transparentNetworkIPResolution,
-            on: eventLoop
-        ).flatMap { addresses in
-            Self.establishTDSConnection(
-                addresses: addresses,
-                tlsConfiguration: configuration.tlsConfiguration,
-                serverHostname: configuration.hostname,
-                on: eventLoop,
-                logger: logger
-            )
-        }.flatMap { connection in
-            connection.login(configuration: loginConfiguration).map { connection }.flatMapError { error in
-                connection.close().flatMapThrowing { throw error }
-            }
-        }.flatMap { connection in
-            let sqlConnection = SQLServerConnection(
-                base: connection,
-                configuration: configuration,
-                metadataCache: nil,
-                logger: logger,
-                reuseOnClose: false,
-                releaseClosure: { close in
-                    if close || connection.isClosed {
-                        return connection.close()
-                    } else {
-                        return connection.eventLoop.makeSucceededFuture(())
-                    }
+            return resolveSocketAddresses(
+                hostname: cfg.hostname,
+                port: cfg.port,
+                transparentResolution: cfg.transparentNetworkIPResolution,
+                on: eventLoop
+            ).flatMap { addresses in
+                Self.establishTDSConnection(
+                    addresses: addresses,
+                    tlsConfiguration: cfg.tlsConfiguration,
+                    serverHostname: cfg.hostname,
+                    on: eventLoop,
+                    logger: logger
+                )
+            }.flatMap { connection in
+                connection.login(configuration: loginConfiguration).map { connection }.flatMapError { error in
+                    connection.close().flatMapThrowing { throw error }
                 }
-            )
-            return sqlConnection.bootstrapSession().map { sqlConnection }
+            }.flatMap { connection in
+                let sqlConnection = SQLServerConnection(
+                    base: connection,
+                    configuration: cfg,
+                    metadataCache: nil,
+                    logger: logger,
+                    reuseOnClose: false,
+                    releaseClosure: { close in
+                        if close || connection.isClosed {
+                            return connection.close()
+                        } else {
+                            return connection.eventLoop.makeSucceededFuture(())
+                        }
+                    }
+                )
+                return sqlConnection.bootstrapSession().map { sqlConnection }
+            }
+        }
+
+        // Primary attempt with provided configuration
+        return attempt(configuration).flatMapError { error in
+            // Fallback: if non-default port is set and connect failed due to connection issues, try default 1433
+            let normalized = SQLServerError.normalize(error)
+            switch normalized {
+            case .connectionClosed, .transient, .timeout:
+                if configuration.port != 1433 {
+                    var fallback = configuration
+                    fallback.port = 1433
+                    logger.warning("Primary port \(configuration.port) connect failed; attempting fallback to 1433")
+                    return attempt(fallback)
+                }
+                return eventLoop.makeFailedFuture(normalized)
+            default:
+                return eventLoop.makeFailedFuture(normalized)
+            }
         }
     }
 
@@ -151,6 +163,10 @@ public final class SQLServerConnection {
         base.logger
     }
 
+    // Latest raw session state/data classification payloads received on this connection
+    public var lastSessionStatePayload: [UInt8] { base.snapshotSessionStatePayload() }
+    public var lastDataClassificationPayload: [UInt8] { base.snapshotDataClassificationPayload() }
+
     public var currentDatabase: String {
         stateLock.withLock { _currentDatabase }
     }
@@ -160,12 +176,13 @@ public final class SQLServerConnection {
         if Self.equalsIgnoreCase(current, database) {
             return eventLoop.makeSucceededFuture(())
         }
-        return executeWithRetry(operationName: "changeDatabase") {
+        let fut = executeWithRetry(operationName: "changeDatabase") {
             let sql = "USE \(Self.escapeIdentifier(database));"
             return self.base.rawSql(sql).map { _ in
                 self.setCurrentDatabase(database)
             }
         }
+        return fut.withTestTimeoutIfEnabled(on: self.eventLoop)
     }
 
     @available(macOS 12.0, *)
@@ -175,14 +192,11 @@ public final class SQLServerConnection {
 
     public func close() -> EventLoopFuture<Void> {
         if reuseOnClose {
-            return resetSessionState().flatMapError { error in
-                self.logger.warning("SQLServerConnection failed to reset session before reuse: \(error)")
-                return self.release(close: true).flatMap { _ in
-                    self.shutdownGroupIfNeeded().flatMapThrowing { throw error }
-                }
-            }.flatMap { _ in
-                self.release(close: false)
-            }.flatMap { _ in
+            // For pooled connections, avoid issuing session-reset queries during close.
+            // This prevents scheduling work on event loops that may be shutting down
+            // during test teardown and matches common pool behavior where reset happens
+            // on next checkout if needed.
+            return self.release(close: false).flatMap { _ in
                 self.shutdownGroupIfNeeded()
             }
         } else {
@@ -193,25 +207,119 @@ public final class SQLServerConnection {
     }
 
     public func execute(_ sql: String) -> EventLoopFuture<SQLServerExecutionResult> {
-        executeWithRetry(operationName: "execute") {
+        let future = executeWithRetry(operationName: "execute") {
             self.runBatch(sql)
+        }
+        let guarded = future.flatMapError { error in
+            let normalized = SQLServerError.normalize(error)
+            switch normalized {
+            case .timeout:
+                var meta: Logger.Metadata = [
+                    "db": .string(self.currentDatabase),
+                    "snippet": .string(String(sql.prefix(120)))
+                ]
+                let trace = self.base.tokenTraceSnapshot().suffix(10).joined(separator: " | ")
+                if !trace.isEmpty { meta["tdsTrace"] = .string(trace) }
+                self.logger.error("SQL execute timed out", metadata: meta)
+            case .connectionClosed:
+                var meta: Logger.Metadata = ["db": .string(self.currentDatabase)]
+                let trace = self.base.tokenTraceSnapshot().suffix(10).joined(separator: " | ")
+                if !trace.isEmpty { meta["tdsTrace"] = .string(trace) }
+                self.logger.error("SQL execute connection closed", metadata: meta)
+            default:
+                break
+            }
+            return self.eventLoop.makeFailedFuture(normalized)
+        }
+        return guarded.withTestTimeoutIfEnabled(on: self.eventLoop)
+    }
+
+    /// Checks if the connection is closed and throws an appropriate error
+    private func checkClosed() throws {
+        if base.isClosed {
+            throw SQLServerError.connectionClosed
         }
     }
 
     @available(macOS 12.0, *)
     public func execute(_ sql: String) async throws -> SQLServerExecutionResult {
-        let future: EventLoopFuture<SQLServerExecutionResult> = execute(sql)
-        return try await future.get()
+        try checkClosed()
+        let future: EventLoopFuture<SQLServerExecutionResult> = self.execute(sql)
+        return try await withTaskCancellationHandler(operation: {
+            try await future.get()
+        }, onCancel: { [base] in
+            base.sendAttention()
+        })
     }
 
     public func query(_ sql: String) -> EventLoopFuture<[TDSRow]> {
         execute(sql).map(\.rows)
     }
 
+    // MARK: - Explicit transaction helpers (SSMS parity)
+    public func beginTransaction() -> EventLoopFuture<Void> {
+        execute("BEGIN TRANSACTION").map { _ in () }
+    }
+
+    public func commit() -> EventLoopFuture<Void> {
+        execute("COMMIT").map { _ in () }
+    }
+
+    public func rollback() -> EventLoopFuture<Void> {
+        execute("ROLLBACK").map { _ in () }
+    }
+
+    @available(macOS 12.0, *)
+    public func beginTransaction() async throws {
+        try checkClosed()
+        _ = try await beginTransaction().get()
+    }
+
+    @available(macOS 12.0, *)
+    public func commit() async throws {
+        try checkClosed()
+        _ = try await commit().get()
+    }
+
+    @available(macOS 12.0, *)
+    public func rollback() async throws {
+        try checkClosed()
+        _ = try await rollback().get()
+    }
+
+    @available(macOS 12.0, *)
+    public func withTransaction<T>(body: @escaping (SQLServerConnection) async throws -> T) async throws -> T {
+        do {
+            try await beginTransaction()
+            let result = try await body(self)
+            try await commit()
+            return result
+        } catch {
+            // Best-effort rollback
+            _ = try? await rollback()
+            throw error
+        }
+    }
+
+    // MARK: - Per-call timeout variants
+    public func execute(_ sql: String, timeout seconds: TimeInterval) -> EventLoopFuture<SQLServerExecutionResult> {
+        let fut: EventLoopFuture<SQLServerExecutionResult> = execute(sql)
+        return fut.withTimeout(on: self.eventLoop, seconds: seconds)
+    }
+
+    public func query(_ sql: String, timeout seconds: TimeInterval) -> EventLoopFuture<[TDSRow]> {
+        execute(sql, timeout: seconds).map(\.rows)
+    }
+
     @available(macOS 12.0, *)
     public func query(_ sql: String) async throws -> [TDSRow] {
-        let result = try await execute(sql).get()
-        return result.rows
+        try checkClosed()
+        return try await withTaskCancellationHandler(operation: { [self] in
+            let result = try await self.execute(sql).get()
+            return result.rows
+        }, onCancel: { [base] in
+            base.sendAttention()
+        })
     }
 
     public func queryScalar<T: TDSDataConvertible>(_ sql: String, as type: T.Type = T.self) -> EventLoopFuture<T?> {
@@ -225,6 +333,87 @@ public final class SQLServerConnection {
                 return nil
             }
             return value
+        }
+    }
+
+    // MARK: - RPC stored procedure calls
+    public struct ProcedureParameter: Sendable {
+        public enum Direction: Sendable { case `in`, out, `inout` }
+        public var name: String
+        public var value: TDSData?
+        public var direction: Direction
+        public init(name: String, value: TDSData?, direction: Direction = .in) {
+            self.name = name; self.value = value; self.direction = direction
+        }
+    }
+
+    public func call(procedure name: String, parameters: [ProcedureParameter] = []) -> EventLoopFuture<SQLServerExecutionResult> {
+        var rows: [TDSRow] = []
+        var dones: [SQLServerStreamDone] = []
+        var messages: [SQLServerStreamMessage] = []
+        var returnValues: [SQLServerReturnValue] = []
+
+        let tdsParams = parameters.map { p in
+            TDSMessages.RpcParameter(name: p.name, data: p.value, direction: {
+                switch p.direction { case .in: return .in; case .out: return .out; case .inout: return .inout }
+            }())
+        }
+
+        // Build a single RPC request and send it; do not send twice
+        let request = RpcRequest(
+            message: TDSMessages.RpcRequestMessage(
+                procedureName: name,
+                parameters: tdsParams,
+                transactionDescriptor: base.transactionDescriptor,
+                outstandingRequestCount: base.requestCount
+            ),
+            logger: self.logger,
+            onRow: { row in rows.append(row) },
+            onMetadata: nil,
+            onDone: { token in
+                let doneEvent = SQLServerStreamDone(status: token.status, rowCount: token.doneRowCount)
+                dones.append(doneEvent)
+            },
+            onMessage: { token, isError in
+                let message = SQLServerStreamMessage(
+                    kind: isError ? .error : .info,
+                    number: Int32(token.number),
+                    message: token.messageText,
+                    state: token.state,
+                    severity: token.classValue
+                )
+                messages.append(message)
+            },
+            onReturnValue: { token in
+                let meta = TypeMetadata(
+                    userType: token.userType,
+                    flags: token.flags,
+                    dataType: token.metadata.dataType,
+                    collation: token.metadata.collation,
+                    precision: token.metadata.precision,
+                    scale: token.metadata.scale
+                )
+                let data = TDSData(metadata: meta, value: token.value)
+                let rv = SQLServerReturnValue(name: token.name, status: token.status, value: token.value == nil ? nil : data)
+                returnValues.append(rv)
+            },
+            connection: self.base
+        )
+
+        return self.base.send(request, logger: self.logger).flatMapError { error in
+            self.eventLoop.makeFailedFuture(SQLServerError.normalize(error))
+        }.flatMapThrowing {
+            let result = SQLServerExecutionResult(rows: rows, done: dones, messages: messages, returnValues: returnValues)
+
+            if let err = messages.first(where: { $0.kind == .error }) {
+                if err.number == 1205 {
+                    throw SQLServerError.deadlockDetected(message: err.message)
+                } else {
+                    throw SQLServerError.sqlExecutionError(message: err.message)
+                }
+            }
+
+            return result
         }
     }
 
@@ -283,9 +472,29 @@ public final class SQLServerConnection {
             }
 
             continuation.onTermination = { _ in
-                // TODO: send ATTENTION token for graceful cancellation.
+                // Send ATTENTION to abort the running batch if the consumer cancels.
+                self.base.sendAttention()
             }
         }
+    }
+
+    // MARK: - Execution options (experimental)
+    // These overloads accept advisory execution options but currently forward to the existing behavior unchanged.
+    // They provide a stable surface for future mode routing, rowset sizing, and progress throttling.
+    @available(macOS 12.0, *)
+    public func streamQuery(_ sql: String, options: SqlServerExecutionOptions?) -> AsyncThrowingStream<SQLServerStreamEvent, Error> {
+        _ = options // reserved for future implementation
+        return self.streamQuery(sql)
+    }
+
+    @available(macOS 12.0, *)
+    public func query(
+        _ sql: String,
+        options: SqlServerExecutionOptions?,
+        logger: Logger? = nil
+    ) -> AsyncThrowingStream<SQLServerStreamEvent, Error> {
+        _ = logger // mirrors style; reserved for future use
+        return self.streamQuery(sql, options: options)
     }
 
     public func listDatabases() -> EventLoopFuture<[DatabaseMetadata]> {
@@ -310,26 +519,52 @@ public final class SQLServerConnection {
         try await listSchemas(in: database).get()
     }
 
-    public func listTables(database: String? = nil, schema: String? = nil) -> EventLoopFuture<[TableMetadata]> {
-        executeWithRetry(operationName: "listTables") {
-            self.metadataClient.listTables(database: database, schema: schema)
+    public func listTables(database: String? = nil, schema: String? = nil, includeComments: Bool = false) -> EventLoopFuture<[TableMetadata]> {
+        // Always prefer the current database when caller doesn't override
+        let db = database ?? self.currentDatabase
+        return executeWithRetry(operationName: "listTables") {
+            self.metadataClient.listTables(database: db, schema: schema, includeComments: includeComments)
         }
     }
 
     @available(macOS 12.0, *)
-    public func listTables(database: String? = nil, schema: String? = nil) async throws -> [TableMetadata] {
-        try await listTables(database: database, schema: schema).get()
+    public func listTables(database: String? = nil, schema: String? = nil, includeComments: Bool = false) async throws -> [TableMetadata] {
+        try await listTables(database: database, schema: schema, includeComments: includeComments).get()
     }
 
-    public func listColumns(database: String? = nil, schema: String, table: String) -> EventLoopFuture<[ColumnMetadata]> {
+    public func listColumns(
+        database: String? = nil,
+        schema: String,
+        table: String,
+        objectTypeHint: String? = nil,
+        includeComments: Bool = false
+    ) -> EventLoopFuture<[ColumnMetadata]> {
         executeWithRetry(operationName: "listColumns") {
-            self.metadataClient.listColumns(database: database, schema: schema, table: table)
+            self.metadataClient.listColumns(
+                database: database,
+                schema: schema,
+                table: table,
+                objectTypeHint: objectTypeHint,
+                includeComments: includeComments
+            )
         }
     }
 
     @available(macOS 12.0, *)
-    public func listColumns(database: String? = nil, schema: String, table: String) async throws -> [ColumnMetadata] {
-        try await listColumns(database: database, schema: schema, table: table).get()
+    public func listColumns(
+        database: String? = nil,
+        schema: String,
+        table: String,
+        objectTypeHint: String? = nil,
+        includeComments: Bool = false
+    ) async throws -> [ColumnMetadata] {
+        try await listColumns(
+            database: database,
+            schema: schema,
+            table: table,
+            objectTypeHint: objectTypeHint,
+            includeComments: includeComments
+        ).get()
     }
 
     public func listParameters(
@@ -449,10 +684,11 @@ public final class SQLServerConnection {
     public func listTriggers(
         database: String? = nil,
         schema: String? = nil,
-        table: String? = nil
+        table: String? = nil,
+        includeComments: Bool = false
     ) -> EventLoopFuture<[TriggerMetadata]> {
         executeWithRetry(operationName: "listTriggers") {
-            self.metadataClient.listTriggers(database: database, schema: schema, table: table)
+            self.metadataClient.listTriggers(database: database, schema: schema, table: table, includeComments: includeComments)
         }
     }
 
@@ -460,43 +696,48 @@ public final class SQLServerConnection {
     public func listTriggers(
         database: String? = nil,
         schema: String? = nil,
-        table: String? = nil
+        table: String? = nil,
+        includeComments: Bool = false
     ) async throws -> [TriggerMetadata] {
-        try await listTriggers(database: database, schema: schema, table: table).get()
+        try await listTriggers(database: database, schema: schema, table: table, includeComments: includeComments).get()
     }
 
     public func listProcedures(
         database: String? = nil,
-        schema: String? = nil
+        schema: String? = nil,
+        includeComments: Bool = false
     ) -> EventLoopFuture<[RoutineMetadata]> {
         executeWithRetry(operationName: "listProcedures") {
-            self.metadataClient.listProcedures(database: database, schema: schema)
+            self.metadataClient.listProcedures(database: database, schema: schema, includeComments: includeComments)
         }
     }
 
     @available(macOS 12.0, *)
     public func listProcedures(
         database: String? = nil,
-        schema: String? = nil
+        schema: String? = nil,
+        includeComments: Bool = false
     ) async throws -> [RoutineMetadata] {
-        try await listProcedures(database: database, schema: schema).get()
+        try await listProcedures(database: database, schema: schema, includeComments: includeComments).get()
     }
 
     public func listFunctions(
         database: String? = nil,
-        schema: String? = nil
+        schema: String? = nil,
+        includeComments: Bool = false
     ) -> EventLoopFuture<[RoutineMetadata]> {
         executeWithRetry(operationName: "listFunctions") {
-            self.metadataClient.listFunctions(database: database, schema: schema)
+            self.metadataClient.listFunctions(database: database, schema: schema, includeComments: includeComments)
         }
     }
 
     @available(macOS 12.0, *)
     public func listFunctions(
         database: String? = nil,
-        schema: String? = nil
+        schema: String? = nil,
+        includeComments: Bool = false
     ) async throws -> [RoutineMetadata] {
-        try await listFunctions(database: database, schema: schema).get()
+        try await listFunctions(database: database, schema: schema, includeComments: includeComments).get()
     }
 
     public func fetchObjectDefinitions(
@@ -530,6 +771,20 @@ public final class SQLServerConnection {
         kind: SQLServerMetadataObjectIdentifier.Kind
     ) async throws -> ObjectDefinition? {
         try await fetchObjectDefinition(database: database, schema: schema, name: name, kind: kind).get()
+    }
+
+    // MARK: - SQL Agent Status
+
+    /// Returns SQL Server Agent status (enabled + running) via metadata.
+    public func fetchAgentStatus() -> EventLoopFuture<SQLServerMetadataClient.SQLServerAgentStatus> {
+        executeWithRetry(operationName: "fetchAgentStatus") {
+            self.metadataClient.fetchAgentStatus()
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func fetchAgentStatus() async throws -> SQLServerMetadataClient.SQLServerAgentStatus {
+        try await fetchAgentStatus().get()
     }
 
     public func searchMetadata(
@@ -566,12 +821,23 @@ public final class SQLServerConnection {
         try await serverVersion().get()
     }
 
+    /// Sends an ATTENTION signal to cancel the current request on this connection.
+    /// Useful when higher-level code needs to abort a long-running query.
+    public func cancelActiveRequest() {
+        self.base.sendAttention()
+    }
+
     deinit {
+        // Never create new promises in deinit; close best‑effort without futures
         if let ownsGroup = ownsEventLoopGroup {
-            _ = release(close: true)
-            _ = SQLServerClient.shutdownEventLoopGroup(ownsGroup)
+            base.closeSilently()
+            ownsEventLoopGroup = nil
+            // Shut down group asynchronously without creating an EventLoopFuture
+            ownsGroup.shutdownGracefully { _ in }
         } else {
-            _ = release(close: !reuseOnClose || base.isClosed)
+            if !reuseOnClose || base.isClosed {
+                base.closeSilently()
+            }
         }
     }
 
@@ -658,6 +924,7 @@ public final class SQLServerConnection {
         var rows: [TDSRow] = []
         var dones: [SQLServerStreamDone] = []
         var messages: [SQLServerStreamMessage] = []
+        var returnValues: [SQLServerReturnValue] = []
         let request = RawSqlBatchRequest(
             sqlBatch: TDSMessages.RawSqlBatchMessage(
                 sqlText: sql,
@@ -681,19 +948,35 @@ public final class SQLServerConnection {
                 )
                 messages.append(message)
             },
+            onReturnValue: { token in
+                let meta = TypeMetadata(
+                    userType: token.userType,
+                    flags: token.flags,
+                    dataType: token.metadata.dataType,
+                    collation: token.metadata.collation,
+                    precision: token.metadata.precision,
+                    scale: token.metadata.scale
+                )
+                let data = TDSData(metadata: meta, value: token.value)
+                let rv = SQLServerReturnValue(name: token.name, status: token.status, value: token.value == nil ? nil : data)
+                returnValues.append(rv)
+            },
             connection: base
         )
+        logger.debug("SQLServerConnection runBatch sending request on loop=\(base.eventLoop) channelActive=\(!base.isClosed)")
         return base.send(request, logger: logger).flatMapThrowing {
             self.logger.trace("SQLServerConnection completed batch")
-            let result = SQLServerExecutionResult(rows: rows, done: dones, messages: messages)
-            
-            // Check for errors and throw them as Swift exceptions
-            let errorMessages = messages.filter { $0.kind == .error }
-            if !errorMessages.isEmpty {
-                let firstError = errorMessages[0]
-                throw SQLServerError.sqlExecutionError(message: firstError.message)
+            let result = SQLServerExecutionResult(rows: rows, done: dones, messages: messages, returnValues: returnValues)
+
+            // Check for errors and throw them as Swift exceptions. Distinguish deadlocks (1205).
+            if let firstError = messages.first(where: { $0.kind == .error }) {
+                if firstError.number == 1205 {
+                    throw SQLServerError.deadlockDetected(message: firstError.message)
+                } else {
+                    throw SQLServerError.sqlExecutionError(message: firstError.message)
+                }
             }
-            
+
             return result
         }
     }
@@ -730,10 +1013,11 @@ public final class SQLServerConnection {
             return eventLoop.makeSucceededFuture(())
         }
         let batch = statements.joined(separator: " ")
-        return executeWithRetry(operationName: "applySessionOptions") {
-            self.base.rawSql(batch).map { _ in
-                self.stateLock.withLock { self.didApplySessionOptions = true }
-            }
+        // Do not use executeWithRetry during bootstrap; if the channel closes we want an immediate
+        // failure without scheduling backoff on an event loop that may be shutting down.
+        self.logger.debug("SQLServerConnection applySessionOptions executing on loop=\(self.eventLoop) channelActive=\(!self.base.isClosed) batch=\(batch)")
+        return self.base.rawSql(batch).map { _ in
+            self.stateLock.withLock { self.didApplySessionOptions = true }
         }
     }
 
@@ -765,12 +1049,10 @@ public final class SQLServerConnection {
                     return self.eventLoop.makeFailedFuture(normalized)
                 }
                 self.logger.debug("SQLServerConnection \(operationName) attempt \(currentAttempt) failed with \(String(describing: error)); retrying.")
-                let backoff = self.retryConfiguration.backoffStrategy(currentAttempt)
-                return self.eventLoop.scheduleTask(in: backoff) { () }
-                    .futureResult
-                    .flatMap {
-                        attempt(currentAttempt + 1)
-                    }
+                // Avoid scheduling timers on EventLoops that may be shutting down (which can crash or log loudly).
+                // Retry immediately on the same event loop. Tests and callers can implement external backoff if needed.
+                self.logger.debug("\(operationName) retrying immediately without backoff (attempt=\(currentAttempt))")
+                return attempt(currentAttempt + 1)
             }
         }
 
@@ -779,6 +1061,11 @@ public final class SQLServerConnection {
 
     private func shouldRetry(error: Swift.Error, attempt: Int) -> Bool {
         if attempt >= retryConfiguration.maximumAttempts {
+            return false
+        }
+        // Do not attempt retries if the underlying channel is already closed.
+        // Scheduling backoff on a closed EventLoop will crash in newer NIO versions.
+        if base.isClosed {
             return false
         }
         return retryConfiguration.shouldRetry(error)
