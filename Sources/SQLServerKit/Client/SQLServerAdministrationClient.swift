@@ -321,12 +321,16 @@ public final class SQLServerAdministrationClient {
     private func sqlString(for column: SQLServerColumnDefinition) throws -> String {
         let name = Self.escapeIdentifier(column.name)
         switch column.definition {
-        case .computed(let expression):
-            return "\(name) AS (\(expression))"
+        case .computed(let expression, let persisted):
+            return "\(name) AS (\(expression))\(persisted ? " PERSISTED" : "")"
         case .standard(let std):
             var parts = [String]()
             parts.append(name)
             parts.append(std.dataType.toSqlString())
+
+            if let collate = std.collation, !collate.isEmpty {
+                parts.append("COLLATE \(collate)")
+            }
 
             if let identity = std.identity {
                 parts.append("IDENTITY(\(identity.seed), \(identity.increment))")
@@ -337,6 +341,10 @@ public final class SQLServerAdministrationClient {
             }
 
             parts.append(std.isNullable ? "NULL" : "NOT NULL")
+
+            if std.isRowGuidCol {
+                parts.append("ROWGUIDCOL")
+            }
 
             if let defaultValue = std.defaultValue {
                 parts.append("DEFAULT \(defaultValue)")

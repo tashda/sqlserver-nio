@@ -12,8 +12,9 @@ public struct SQLServerColumnDefinition: Sendable {
     public enum ColumnType: Sendable {
         /// A standard data column.
         case standard(StandardColumn)
-        /// A column whose value is computed from an expression.
-        case computed(expression: String)
+        /// A column whose value is computed from an expression. When `persisted` is true,
+        /// the computed value is stored on disk (PERSISTED).
+        case computed(expression: String, persisted: Bool = false)
     }
 
     public struct StandardColumn: Sendable {
@@ -25,6 +26,10 @@ public struct SQLServerColumnDefinition: Sendable {
         public let isUnique: Bool
         public let isSparse: Bool
         public let comment: String?
+        /// Optional collation for character columns.
+        public let collation: String?
+        /// Marks the column as ROWGUIDCOL (for UNIQUEIDENTIFIER columns).
+        public let isRowGuidCol: Bool
 
         public init(
             dataType: SQLDataType,
@@ -34,7 +39,9 @@ public struct SQLServerColumnDefinition: Sendable {
             defaultValue: String? = nil,
             isUnique: Bool = false,
             isSparse: Bool = false,
-            comment: String? = nil
+            comment: String? = nil,
+            collation: String? = nil,
+            isRowGuidCol: Bool = false
         ) {
             self.dataType = dataType
             self.isNullable = isNullable
@@ -44,6 +51,8 @@ public struct SQLServerColumnDefinition: Sendable {
             self.isUnique = isUnique
             self.isSparse = isSparse
             self.comment = comment
+            self.collation = collation
+            self.isRowGuidCol = isRowGuidCol
         }
     }
 }
