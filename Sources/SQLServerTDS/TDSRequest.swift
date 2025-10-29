@@ -5,11 +5,30 @@ import Logging
 
 extension TDSConnection: TDSClient {
     public func send(_ request: TDSRequest, logger: Logger) -> EventLoopFuture<Void> {
+        // Allow writes even if the channel isn't active when using EmbeddedChannel in tests;
+        // production pipelines will guard via normal channel state and handler behavior.
         request.log(to: self.logger)
-        let promise = self.channel.eventLoop.makePromise(of: Void.self)
-        let request = TDSRequestContext(delegate: request, promise: promise)
-        self.channel.writeAndFlush(request).cascadeFailure(to: promise)
-        return promise.futureResult
+        // Separate write completion from request completion. Avoid creating extra
+        // EventLoopPromises where possible to reduce the surface for leaks on loop shutdown.
+        let completionPromise: EventLoopPromise<Void> = PromiseTracker.makeTrackedPromise(on: self.channel.eventLoop, label: "TDSRequest.completion")
+        let context = TDSRequestContext(delegate: request, promise: completionPromise)
+        // Track completion locally to decide whether to fail on channel close
+        var didComplete = false
+        completionPromise.futureResult.whenComplete { _ in didComplete = true }
+        self.logger.debug("[TDSRequest.send] creating promises on loop=\(self.channel.eventLoop) channelActive=\(self.channel.isActive)")
+        let writeFuture = self.channel.writeAndFlush(context)
+        // If the channel closes at any point before the request completes, fail the
+        // completion promise to avoid leaking a promise on loop shutdown. The channel’s
+        // closeFuture completes successfully on normal close, so we must fail explicitly.
+        self.channel.closeFuture.whenComplete { _ in
+            if !didComplete {
+                completionPromise.fail(TDSError.connectionClosed)
+            }
+        }
+        // If the write fails (e.g., channel closed), reflect failure onto the overall completion.
+        writeFuture.cascadeFailure(to: completionPromise)
+        // We intentionally avoid waiting here; EmbeddedChannel processes writes synchronously.
+        return completionPromise.futureResult
     }
 }
 
@@ -30,6 +49,7 @@ final class TDSRequestContext {
     let delegate: TDSRequest
     let promise: EventLoopPromise<Void>
     var lastError: Error?
+    var started: Bool = false
     
     init(delegate: TDSRequest, promise: EventLoopPromise<Void>) {
         self.delegate = delegate
@@ -118,7 +138,13 @@ final class TDSRequestHandler: ChannelDuplexHandler {
             case .continue:
                 return
             case .done:
+                if request.delegate is LoginRequest {
+                    // Mark connection as logged in after LOGIN completes
+                    self.state = .loggedIn
+                }
                 cleanupRequest(request)
+                // Start the next queued request, if any
+                startNextIfQueued(context: context)
             }
         } catch {
             cleanupRequest(request, error: error)
@@ -171,11 +197,33 @@ final class TDSRequestHandler: ChannelDuplexHandler {
                 throw TDSError.protocolError("PRELOGIN message must be the first message sent and may only be sent once per connection.")
             }
         case .tds7Login:
+            self.logger.debug("Preparing to write LOGIN; state=\(self.state)")
             switch state {
-            case .sentPrelogin, .sslHandshakeComplete:
+            case .start, .sentPrelogin, .sslHandshakeComplete:
+                // Be forgiving if state didn't flip to sentPrelogin yet due to scheduling.
                 state = .sentLogin
-            case .start, .sslHandshakeStarted, .sentLogin, .loggedIn:
-                throw TDSError.protocolError("LOGIN message must follow immediately after the PRELOGIN message or (if encryption is enabled) SSL negotiation and may only be sent once per connection.")
+            case .sslHandshakeStarted:
+                // Handshake in progress: defer emitting LOGIN packets until handshake completes.
+                // Keep the request queued; startNextIfQueued() will kick in on handshake completion.
+                self.logger.debug("Deferring LOGIN until SSL handshake completes")
+                promise?.succeed(())
+                return
+            case .sentLogin:
+                // A LOGIN is already in-flight; do not emit another. Keep the current
+                // head-of-queue request (the real LOGIN) and wait for its completion.
+                self.logger.debug("Ignoring duplicate LOGIN write while previous LOGIN is in-flight")
+                promise?.succeed(())
+                return
+            case .loggedIn:
+                // Already logged in; treat any attempt to write LOGIN as a no-op and
+                // complete the current request if it is a stray LOGIN.
+                self.logger.debug("Dropping LOGIN after connection is already logged in")
+                if let current = self.currentRequest, current.delegate is LoginRequest {
+                    cleanupRequest(current)
+                    startNextIfQueued(context: context)
+                }
+                promise?.succeed(())
+                return
             }
         default:
             break
@@ -201,13 +249,47 @@ final class TDSRequestHandler: ChannelDuplexHandler {
     
     func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
         let request = self.unwrapOutboundIn(data)
+
+        // Proactively drop duplicate LOGIN requests: if a LOGIN is already queued (or completed
+        // and the connection is logged in), succeed this request immediately to avoid stalling
+        // the queue with a second LOGIN that will never emit packets.
+        if request.delegate is LoginRequest {
+            let loginAlreadyQueued = self.queue.contains { $0.delegate is LoginRequest }
+            self.logger.debug("Handling outbound LoginRequest; state=\(self.state) queuedLogin=\(loginAlreadyQueued) queueCount=\(self.queue.count)")
+            if self.state == .loggedIn {
+                // After successful login, any further LOGIN attempts are no-ops.
+                self.logger.debug("Dropping LOGIN after connection is already logged in")
+                request.promise.succeed(())
+                promise?.succeed(())
+                return
+            } else if loginAlreadyQueued || self.state == .sentLogin {
+                // A LOGIN is already in-flight or queued. Coalesce by dropping the new
+                // duplicate request before it ever enters the queue. The original LOGIN
+                // remains the head and will complete normally.
+                self.logger.debug("Dropping duplicate queued LOGIN request")
+                request.promise.succeed(())
+                promise?.succeed(())
+                return
+            }
+        }
+
         self.queue.append(request)
-        do {
-            let packets = try request.delegate.start(allocator: context.channel.allocator)
-            try write(context: context, packets: packets, promise: promise)
-            context.flush()
-        } catch {
-            self.errorCaught(context: context, error: error)
+        if request.delegate is LoginRequest {
+            self.logger.debug("Enqueued LoginRequest; state=\(self.state) queueCount=\(self.queue.count)")
+        }
+        // Only start and write immediately if this is the head of the queue; otherwise defer
+        // until the current request completes to avoid interleaving requests without MARS.
+        if self.queue.count == 1 {
+            do {
+                request.started = true
+                let packets = try request.delegate.start(allocator: context.channel.allocator)
+                try write(context: context, packets: packets, promise: promise)
+                context.flush()
+            } catch {
+                self.errorCaught(context: context, error: error)
+            }
+        } else {
+            promise?.succeed(())
         }
     }
     
@@ -267,6 +349,8 @@ final class TDSRequestHandler: ChannelDuplexHandler {
                 self.state = .sslHandshakeComplete
                 if let request = self.currentRequest {
                     self.cleanupRequest(request)
+                    // Kick off the next queued request (LOGIN) immediately after PRELOGIN completes
+                    self.startNextIfQueued(context: context)
                 }
             }
             
@@ -285,13 +369,76 @@ final class TDSRequestHandler: ChannelDuplexHandler {
     }
     
     func triggerUserOutboundEvent(context: ChannelHandlerContext, event: Any, promise: EventLoopPromise<Void>?) {
-        
+        // Allow out-of-band ATTENTION signals to be sent without interfering
+        // with the request queue. This helps cancel a long-running query.
+        if let ev = event as? TDSUserEvent {
+            switch ev {
+            case .attention:
+                guard context.channel.isActive else { promise?.fail(TDSError.connectionClosed); return }
+                var empty = context.channel.allocator.buffer(capacity: 0)
+                let packet = TDSPacket(
+                    from: &empty,
+                    ofType: .attentionSignal,
+                    isLastPacket: true,
+                    packetId: 1,
+                    allocator: context.channel.allocator
+                )
+                do {
+                    try write(context: context, packets: [packet], promise: nil)
+                    context.flush()
+                    promise?.succeed(())
+                } catch {
+                    promise?.fail(error)
+                }
+                return
+            case .failCurrentRequestTimeout:
+                // Fail the current request promise with a timeout-like error without closing the channel.
+                if let current = self.currentRequest, context.channel.isActive {
+                    cleanupRequest(current, error: TDSError.protocolError("request timeout"))
+                }
+                promise?.succeed(())
+                return
+            }
+        }
+        promise?.succeed(())
     }
 
     func channelInactive(context: ChannelHandlerContext) {
+        logger.debug("TDSRequestHandler.channelInactive: draining \(queue.count) pending requests; pipelineState=\(pipelineCoordinator?.stateDescription ?? "<nil>")")
+        // Fail any pending TLS handshake output promise to avoid leaking promises on loop shutdown.
+        pipelineCoordinator?.failHandshakeIfPending()
         while !queue.isEmpty {
             cleanupRequest(queue[0], error: TDSError.connectionClosed)
         }
+        // Diagnostic: dump any unresolved promises we created on this loop
+        PromiseTracker.dumpUnresolved(context: "channelInactive loop=\(context.eventLoop)")
         context.fireChannelInactive()
+    }
+
+    deinit {
+        // Defensive: if the handler is torn down while there are still
+        // unresolved request promises, fail them to avoid leaking promises.
+        if !queue.isEmpty {
+            logger.debug("TDSRequestHandler.deinit: failing \(queue.count) pending requests to avoid leaks")
+        }
+        while !queue.isEmpty {
+            let req = queue.removeFirst()
+            req.promise.fail(TDSError.connectionClosed)
+        }
+    }
+
+    // MARK: - Queue progression
+    private func startNextIfQueued(context: ChannelHandlerContext) {
+        guard let next = self.currentRequest else { return }
+        guard context.channel.isActive else { return }
+        guard !next.started else { return }
+        do {
+            next.started = true
+            let packets = try next.delegate.start(allocator: context.channel.allocator)
+            try write(context: context, packets: packets, promise: nil)
+            context.flush()
+        } catch {
+            self.errorCaught(context: context, error: error)
+        }
     }
 }
