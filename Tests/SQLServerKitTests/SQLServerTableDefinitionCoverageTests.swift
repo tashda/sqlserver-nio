@@ -30,7 +30,6 @@ final class SQLServerTableDefinitionCoverageTests: XCTestCase {
 
             // Create parent using the administration client
             let dbClient = try await makeClient(forDatabase: db, using: self.group)
-            defer { Task { _ = try? await dbClient.shutdownGracefully().get() } }
             let admin = SQLServerAdministrationClient(client: dbClient)
             let constraints = SQLServerConstraintClient(client: dbClient)
             let indexes = SQLServerIndexClient(client: dbClient)
@@ -135,6 +134,7 @@ final class SQLServerTableDefinitionCoverageTests: XCTestCase {
         await DDLGuard.shared.withLock {
             // No explicit cleanup needed; database gets dropped by withTemporaryDatabase
         }
+        _ = try? await dbClient.shutdownGracefully().get()
         }
         } catch {
             if let te = error as? AsyncTimeoutError {

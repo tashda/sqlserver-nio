@@ -24,7 +24,9 @@ final class SQLServerDeadlockRetryTests: XCTestCase {
             _ = try await executeInDb(client: self.client, database: db, "CREATE TABLE [dbo].[\(table)] (id INT PRIMARY KEY, v INT);")
             _ = try await executeInDb(client: self.client, database: db, "INSERT INTO [dbo].[\(table)] (id, v) VALUES (1, 0), (2, 0);")
 
-            async let a: Void = withDbConnection(client: self.client, database: db) { conn in
+            // Use reliable connections that retry transient closures under stress
+            async let a: Void = withReliableConnection(client: self.client) { conn in
+                _ = try await conn.changeDatabase(db).get()
                 _ = try await conn.execute("BEGIN TRANSACTION").get()
                 _ = try await conn.execute("UPDATE [dbo].[\(table)] SET v = v + 1 WHERE id = 1").get()
                 try await Task.sleep(nanoseconds: 200_000_000)
@@ -32,11 +34,18 @@ final class SQLServerDeadlockRetryTests: XCTestCase {
                     _ = try await conn.execute("UPDATE [dbo].[\(table)] SET v = v + 1 WHERE id = 2").get()
                     _ = try await conn.execute("COMMIT").get()
                 } catch {
-                    _ = try? await conn.execute("ROLLBACK").get()
+                    // After a deadlock, SQL Server may have closed the connection
+                    // ROLLBACK on a closed connection is expected and should be ignored
+                    do {
+                        _ = try await conn.execute("ROLLBACK").get()
+                    } catch {
+                        // Ignore ROLLBACK errors after deadlock - connection may be closed
+                    }
                 }
             }
 
-            async let b: Void = withDbConnection(client: self.client, database: db) { conn in
+            async let b: Void = withReliableConnection(client: self.client) { conn in
+                _ = try await conn.changeDatabase(db).get()
                 _ = try await conn.execute("BEGIN TRANSACTION").get()
                 _ = try await conn.execute("UPDATE [dbo].[\(table)] SET v = v + 1 WHERE id = 2").get()
                 try await Task.sleep(nanoseconds: 200_000_000)
@@ -44,7 +53,13 @@ final class SQLServerDeadlockRetryTests: XCTestCase {
                     _ = try await conn.execute("UPDATE [dbo].[\(table)] SET v = v + 1 WHERE id = 1").get()
                     _ = try await conn.execute("COMMIT").get()
                 } catch {
-                    _ = try? await conn.execute("ROLLBACK").get()
+                    // After a deadlock, SQL Server may have closed the connection
+                    // ROLLBACK on a closed connection is expected and should be ignored
+                    do {
+                        _ = try await conn.execute("ROLLBACK").get()
+                    } catch {
+                        // Ignore ROLLBACK errors after deadlock - connection may be closed
+                    }
                 }
             }
 

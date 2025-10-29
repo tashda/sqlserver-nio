@@ -22,8 +22,7 @@ final class SQLServerRPCTests: XCTestCase {
         guard env("TDS_ENABLE_RPC_TESTS") == "1" else { throw XCTSkip("Enable TDS_ENABLE_RPC_TESTS=1 to run RPC tests") }
         try await withTemporaryDatabase(client: self.client, prefix: "rpc") { db in
             let procName = "usp_rpc_test_\(UUID().uuidString.prefix(6))"
-            let dbClient = try await makeClient(forDatabase: db, using: self.group)
-            defer { Task { _ = try? await dbClient.shutdownGracefully().get() } }
+            try await withDbClient(for: db, using: self.group) { dbClient in
 
             // Create a simple proc with OUT param and return code
             let create = """
@@ -48,6 +47,7 @@ final class SQLServerRPCTests: XCTestCase {
 
             // Expect at least one return value (the OUT param), and potentially a return status
             XCTAssertTrue(result.returnValues.contains(where: { $0.name.caseInsensitiveCompare("@OutVal") == .orderedSame && $0.int == 17 }))
+            }
         }
     }
 
@@ -55,8 +55,7 @@ final class SQLServerRPCTests: XCTestCase {
         guard env("TDS_ENABLE_RPC_TESTS") == "1" else { throw XCTSkip("Enable TDS_ENABLE_RPC_TESTS=1 to run RPC tests") }
         try await withTemporaryDatabase(client: self.client, prefix: "rpcd") { db in
             let procName = "usp_rpc_dec_\(UUID().uuidString.prefix(6))"
-            let dbClient = try await makeClient(forDatabase: db, using: self.group)
-            defer { Task { _ = try? await dbClient.shutdownGracefully().get() } }
+            try await withDbClient(for: db, using: self.group) { dbClient in
 
             let create = """
             CREATE PROCEDURE [dbo].[\(procName)]
@@ -90,6 +89,7 @@ final class SQLServerRPCTests: XCTestCase {
                 XCTFail("@Y OUT param did not decode as Double"); return
             }
             XCTAssertEqual(actual, 246.90, accuracy: 0.001)
+            }
         }
     }
 }
