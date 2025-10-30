@@ -96,7 +96,11 @@ let package = Package(
                             "SQLServerDeadlockRetryTests.swift",
                             "SQLServerClassificationDecodeTests.swift",
                             "SQLServerExplorerFlowTests.swift",
-                            "SQLServerEnvDiagnosticsTests.swift"
+                            "SQLServerEnvDiagnosticsTests.swift",
+                            "SQLServerServerSecurityVariantsTests.swift",
+                            "SQLServerAgentBuilderTests.swift",
+                            "SQLServerSecurityParityTests.swift",
+                            "SQLServerActivityMonitorTests.swift"
                         ]),
         .testTarget(
             name: "SQLServerTDSTests",
