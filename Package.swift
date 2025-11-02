@@ -39,76 +39,185 @@ let package = Package(
                 .product(name: "Logging", package: "swift-log"),
             ],
             path: "Sources/SQLServerTDS"),
+
+        // Connection Tests
         .testTarget(
-            name: "SQLServerKitTests",
+            name: "SQLServerConnectionTests",
             dependencies: [
                 "SQLServerKit",
                 .product(name: "NIOTestUtils", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
             ],
-            path: "Tests/SQLServerKitTests",
-            sources: [
-                            "SQLServerKitIntegrationTests.swift",
-                            "SQLServerIntegrationTests.swift",
-                            "SQLServerPrimaryKeySchemaEnumerationTests.swift",
-                            "SQLServerAgentTests.swift",
-                            "SQLServerAgentPermissionTests.swift",
-                            "SQLServerServerSecurityTests.swift",
-                            "SQLServerTableAdministrationTests.swift",
-                            "SQLServerTransactionTests.swift",
-                            "SQLServerBatchTests.swift",
-                            "SQLServerBulkCopyTests.swift",
-                            "SQLServerConnectionTests.swift",
-                            "SQLServerQuerySplitterTests.swift",
-                            "SQLServerRoutineTests.swift",
-                            "SQLServerViewTests.swift",
-                            "SQLServerIndexTests.swift",
-                            "SQLServerConstraintTests.swift",
-                            "SQLServerTableValuedParameterTests.swift",
-                            "SQLServerTriggerTests.swift",
-                            "SQLServerSecurityTests.swift",
-                            "SQLServerVersionTests.swift",
-                            "SQLServerTableDefinitionTests.swift",
-                            "SQLServerTableDefinitionCoverageTests.swift",
-                            "SQLServerTableIndexOptionsTests.swift",
-                            "SQLServerTemporalPartitionedTests.swift",
-                            "SQLServerLegacyLobRoundTripTests.swift",
-                            "SQLServerRoutineParameterMatrixTests.swift",
-                            "SQLServerTableScriptingMatrixTests.swift",
-                            "SQLServerIndexMatrixTests.swift",
-                            "SQLServerMetadataParameterLoadTests.swift",
-                            "SQLServerMetadataConcurrencyTests.swift",
-                            "SQLServerViewIndexMatrixTests.swift",
-                            "SQLServerColumnstoreIndexTests.swift",
-                            "SQLServerNbcRowBitmapTests.swift",
-                            "SQLServerMetadataViewColumnsTests.swift",
-                            "SQLServerMetadataCommentsTests.swift",
-                            "SQLServerAdventureWorksRoutineTests.swift",
-                            "SQLServerForeignKeyCascadeMatrixTests.swift",
-                            "SQLServerPlpChunkingTests.swift",
-                            "SQLServerTemporalMatrixTests.swift",
-                            "SQLServerPartitionSchemeMatrixTests.swift",
-                            "SQLServerTransactionIsolationMatrixTests.swift",
-                            "SQLServerDataTypeRoundTripTests.swift",
-                            "Test+Helpers.swift",
-                            "SQLServerReturnValueDecodeTests.swift",
-                            "SQLServerRPCTests.swift",
-                            "SQLServerDeadlockRetryTests.swift",
-                            "SQLServerClassificationDecodeTests.swift",
-                            "SQLServerExplorerFlowTests.swift",
-                            "SQLServerEnvDiagnosticsTests.swift",
-                            "SQLServerServerSecurityVariantsTests.swift",
-                            "SQLServerAgentBuilderTests.swift",
-                            "SQLServerSecurityParityTests.swift",
-                            "SQLServerActivityMonitorTests.swift"
-                        ]),
+            path: "Tests/ConnectionTests"),
+
+        // Table Tests
+        .testTarget(
+            name: "SQLServerTableTests",
+            dependencies: [
+                "SQLServerKit",
+                .product(name: "NIOTestUtils", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+            ],
+            path: "Tests/TableTests"),
+
+        // Index Tests
+        .testTarget(
+            name: "SQLServerIndexTests",
+            dependencies: [
+                "SQLServerKit",
+                .product(name: "NIOTestUtils", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+            ],
+            path: "Tests/IndexTests"),
+
+        // Constraint Tests
+        .testTarget(
+            name: "SQLServerConstraintTests",
+            dependencies: [
+                "SQLServerKit",
+                .product(name: "NIOTestUtils", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+            ],
+            path: "Tests/ConstraintTests"),
+
+        // View Tests
+        .testTarget(
+            name: "SQLServerViewTests",
+            dependencies: [
+                "SQLServerKit",
+                .product(name: "NIOTestUtils", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+            ],
+            path: "Tests/ViewTests"),
+
+        // Trigger Tests
+        .testTarget(
+            name: "SQLServerTriggerTests",
+            dependencies: [
+                "SQLServerKit",
+                .product(name: "NIOTestUtils", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+            ],
+            path: "Tests/TriggerTests"),
+
+        // Routine Tests
+        .testTarget(
+            name: "SQLServerRoutineTests",
+            dependencies: [
+                "SQLServerKit",
+                .product(name: "NIOTestUtils", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+            ],
+            path: "Tests/RoutineTests"),
+
+        // Security Tests
+        .testTarget(
+            name: "SQLServerSecurityTests",
+            dependencies: [
+                "SQLServerKit",
+                .product(name: "NIOTestUtils", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+            ],
+            path: "Tests/SecurityTests"),
+
+        // Agent Tests
+        .testTarget(
+            name: "SQLServerAgentTests",
+            dependencies: [
+                "SQLServerKit",
+                .product(name: "NIOTestUtils", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+            ],
+            path: "Tests/AgentTests"),
+
+        // Bulk Tests
+        .testTarget(
+            name: "SQLServerBulkTests",
+            dependencies: [
+                "SQLServerKit",
+                .product(name: "NIOTestUtils", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+            ],
+            path: "Tests/BulkTests"),
+
+        // Transaction Tests
+        .testTarget(
+            name: "SQLServerTransactionTests",
+            dependencies: [
+                "SQLServerKit",
+                .product(name: "NIOTestUtils", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+            ],
+            path: "Tests/TransactionTests"),
+
+        // Type Tests
+        .testTarget(
+            name: "SQLServerTypeTests",
+            dependencies: [
+                "SQLServerKit",
+                .product(name: "NIOTestUtils", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+            ],
+            path: "Tests/TypeTests"),
+
+        // DataType Tests
+        .testTarget(
+            name: "SQLServerDataTypeTests",
+            dependencies: [
+                "SQLServerKit",
+                .product(name: "NIOTestUtils", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+            ],
+            path: "Tests/DataTypeTests"),
+
+        // Metadata Tests
+        .testTarget(
+            name: "SQLServerMetadataTests",
+            dependencies: [
+                "SQLServerKit",
+                .product(name: "NIOTestUtils", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+            ],
+            path: "Tests/MetadataTests"),
+
+        // Advanced Tests
+        .testTarget(
+            name: "SQLServerAdvancedTests",
+            dependencies: [
+                "SQLServerKit",
+                .product(name: "NIOTestUtils", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+            ],
+            path: "Tests/AdvancedTests"),
+
+        // Performance Tests
+        .testTarget(
+            name: "SQLServerPerformanceTests",
+            dependencies: [
+                "SQLServerKit",
+                .product(name: "NIOTestUtils", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+            ],
+            path: "Tests/PerformanceTests"),
+
+        // Integration Tests
+        .testTarget(
+            name: "SQLServerIntegrationTests",
+            dependencies: [
+                "SQLServerKit",
+                .product(name: "NIOTestUtils", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+            ],
+            path: "Tests/IntegrationTests"),
         .testTarget(
             name: "SQLServerTDSTests",
             dependencies: [
                 "SQLServerTDS",
+                "SQLServerKit",
                 .product(name: "NIOEmbedded", package: "swift-nio"),
                 .product(name: "NIOTestUtils", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
-            ]),
+            ],
+        ),
     ]
 )

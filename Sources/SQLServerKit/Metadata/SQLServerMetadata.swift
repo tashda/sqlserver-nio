@@ -41,6 +41,12 @@ public struct ColumnMetadata: Sendable {
     public let defaultDefinition: String?
     public let computedDefinition: String?
     public let ordinalPosition: Int
+    /// Identity seed value (if identity column)
+    public let identitySeed: Int?
+    /// Identity increment value (if identity column)
+    public let identityIncrement: Int?
+    /// Check constraint definition (if check constraint exists)
+    public let checkDefinition: String?
     /// Optional MS_Description extended property for this column
     public let comment: String?
 }
@@ -762,6 +768,7 @@ public final class SQLServerMetadataClient {
         var isComputedPersisted: Bool
         var defaultName: String?
         var defaultDefinition: String?
+        var checkDefinition: String?
         var collationName: String?
     }
 
@@ -1141,7 +1148,7 @@ public final class SQLServerMetadataClient {
 
         let whereClause = predicates.isEmpty ? "" : "WHERE " + predicates.joined(separator: " AND ")
 
-        let commentSelect = includeComments ? ", CAST(ep.value AS NVARCHAR(4000)) AS comment" : ""
+        let commentSelect = includeComments ? ", ISNULL(CAST(ep.value AS NVARCHAR(4000)), '') AS comment" : ""
         let commentJoin = includeComments ? "LEFT JOIN \(qualifiedExtended) AS ep ON ep.major_id = o.object_id AND ep.minor_id = 0 AND ep.class = 1 AND ep.name = N'MS_Description'" : ""
 
         let sql = """
@@ -1269,6 +1276,9 @@ public final class SQLServerMetadataClient {
                                 defaultDefinition: c.defaultDefinition,
                                 computedDefinition: c.computedDefinition,
                                 ordinalPosition: c.ordinalPosition,
+                                identitySeed: c.identitySeed,
+                                identityIncrement: c.identityIncrement,
+                                checkDefinition: c.checkDefinition,
                                 comment: commentMap[c.name]
                             )
                         }
@@ -1309,6 +1319,9 @@ public final class SQLServerMetadataClient {
                                 defaultDefinition: c.defaultDefinition,
                                 computedDefinition: c.computedDefinition,
                                 ordinalPosition: c.ordinalPosition,
+                                identitySeed: c.identitySeed,
+                                identityIncrement: c.identityIncrement,
+                                checkDefinition: c.checkDefinition,
                                 comment: comments[c.name]
                             )
                         }
@@ -1331,7 +1344,7 @@ public final class SQLServerMetadataClient {
         let escapedSchema = SQLServerMetadataClient.escapeLiteral(schema)
         let escapedTable = SQLServerMetadataClient.escapeLiteral(table)
         let sql = """
-        SELECT c.name AS column_name, comment = CAST(ep.value AS NVARCHAR(4000))
+        SELECT c.name AS column_name, comment = ISNULL(CAST(ep.value AS NVARCHAR(4000)), '')
         FROM \(dbPrefix)sys.columns AS c
         JOIN \(dbPrefix)sys.objects AS o ON c.object_id = o.object_id
         JOIN \(dbPrefix)sys.schemas AS s ON o.schema_id = s.schema_id
@@ -1429,6 +1442,9 @@ public final class SQLServerMetadataClient {
                     defaultDefinition: defaultDefinition,
                     computedDefinition: nil,
                     ordinalPosition: ordinal,
+                    identitySeed: nil,
+                    identityIncrement: nil,
+                    checkDefinition: nil,
                     comment: nil
                 )
             }
@@ -1446,10 +1462,16 @@ public final class SQLServerMetadataClient {
         let escapedTable = SQLServerMetadataClient.escapeLiteral(table)
         let defaultSelect = includeDefaultMetadata
             ? "dc.definition AS default_definition"
-            : "CAST(NULL AS NVARCHAR(4000)) AS default_definition"
+            : "ISNULL(dc.definition, '') AS default_definition"
         let computedSelect = includeDefaultMetadata
             ? "cc.definition AS computed_definition"
-            : "CAST(NULL AS NVARCHAR(4000)) AS computed_definition"
+            : "ISNULL(cc.definition, '') AS computed_definition"
+        let identitySelect = includeDefaultMetadata
+            ? "ic.seed_value AS identity_seed, ic.increment_value AS identity_increment"
+            : "ISNULL(ic.seed_value, 0) AS identity_seed, ISNULL(ic.increment_value, 0) AS identity_increment"
+        let checkSelect = includeDefaultMetadata
+            ? "ck.definition AS check_definition"
+            : "ISNULL(ck.definition, '') AS check_definition"
 
         var fromClause = """
         FROM \(qualified(database, object: "sys.columns")) AS c
@@ -1463,6 +1485,8 @@ public final class SQLServerMetadataClient {
             fromClause += """
         LEFT JOIN \(qualified(database, object: "sys.default_constraints")) AS dc ON c.default_object_id = dc.object_id
         LEFT JOIN \(qualified(database, object: "sys.computed_columns")) AS cc ON c.object_id = cc.object_id AND c.column_id = cc.column_id
+        LEFT JOIN \(qualified(database, object: "sys.identity_columns")) AS ic ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+        LEFT JOIN \(qualified(database, object: "sys.check_constraints")) AS ck ON c.default_object_id = ck.object_id AND ck.parent_column_id = c.column_id
         """
         }
 
@@ -1473,7 +1497,7 @@ public final class SQLServerMetadataClient {
         """
         }
 
-        let commentSelect = includeComments ? ", CAST(epc.value AS NVARCHAR(4000)) AS column_comment" : ""
+        let commentSelect = includeComments ? ", ISNULL(CAST(epc.value AS NVARCHAR(4000)), '') AS column_comment" : ""
         let sql = """
         SELECT
             schema_name = s.name,
@@ -1490,6 +1514,8 @@ public final class SQLServerMetadataClient {
             is_computed = c.is_computed,
             \(defaultSelect),
             \(computedSelect),
+            \(identitySelect),
+            \(checkSelect),
             ordinal_position = c.column_id\(commentSelect)
         \(fromClause)
         WHERE s.name = N'\(escapedSchema)'
@@ -1527,6 +1553,9 @@ public final class SQLServerMetadataClient {
                 let isIdentity = (row.column("is_identity")?.int ?? 0) != 0
                 let isComputed = (row.column("is_computed")?.int ?? 0) != 0
                 let hasDefaultValue = (defaultDefinition?.isEmpty == false)
+                let identitySeed = row.column("identity_seed")?.int
+                let identityIncrement = row.column("identity_increment")?.int
+                let checkDefinition = row.column("check_definition")?.string
 
                 return ColumnMetadata(
                     schema: schemaName,
@@ -1545,6 +1574,9 @@ public final class SQLServerMetadataClient {
                     defaultDefinition: defaultDefinition,
                     computedDefinition: computedDefinition,
                     ordinalPosition: ordinal,
+                    identitySeed: identitySeed,
+                    identityIncrement: identityIncrement,
+                    checkDefinition: checkDefinition,
                     comment: row.column("column_comment")?.string
                 )
             }
@@ -2225,7 +2257,7 @@ private func listPrimaryKeysForSingleTable(
     ) -> EventLoopFuture<[TriggerMetadata]> {
         logger.trace("[Metadata] listTriggers start database=\(database ?? "<default>") schema=\(schema ?? "<all>") table=\(table ?? "<all>") includeComments=\(includeComments)")
         let includeDefs = self.configuration.includeTriggerDefinitions
-        let definitionSelect = includeDefs ? "m.definition" : "CAST(NULL AS NVARCHAR(4000))"
+        let definitionSelect = includeDefs ? "m.definition" : "ISNULL(m.definition, '')"
         var sql = """
         SELECT
             schema_name = s.name,
@@ -2233,7 +2265,7 @@ private func listPrimaryKeysForSingleTable(
             trigger_name = tr.name,
             tr.is_instead_of_trigger,
             tr.is_disabled,
-            definition = \(definitionSelect)\(includeComments ? ", CAST(ep.value AS NVARCHAR(4000)) AS comment" : "")
+            definition = \(definitionSelect)\(includeComments ? ", ISNULL(CAST(ep.value AS NVARCHAR(4000)), '') AS comment" : "")
         FROM \(qualified(database, object: "sys.triggers")) AS tr
         JOIN \(qualified(database, object: "sys.tables")) AS t ON tr.parent_id = t.object_id
         JOIN \(qualified(database, object: "sys.schemas")) AS s ON t.schema_id = s.schema_id
@@ -2416,7 +2448,7 @@ private func listPrimaryKeysForSingleTable(
         let whereClause = predicates.joined(separator: " AND ")
 
         let definitionSelect = self.configuration.includeRoutineDefinitions ? ", m.definition" : ""
-        let commentSelect = includeComments ? ", CAST(ep.value AS NVARCHAR(4000)) AS comment" : ""
+        let commentSelect = includeComments ? ", ISNULL(CAST(ep.value AS NVARCHAR(4000)), '') AS comment" : ""
         // Only join module definitions for recently modified procedures to avoid heavy I/O on large schemas.
         let joinModules = self.configuration.includeRoutineDefinitions ? "LEFT JOIN \(dbPrefix)sys.sql_modules AS m ON m.object_id = p.object_id AND p.modify_date >= DATEADD(MINUTE, -5, SYSDATETIME())" : ""
         let joinComments = includeComments ? "LEFT JOIN \(dbPrefix)sys.extended_properties AS ep ON ep.class = 1 AND ep.major_id = p.object_id AND ep.minor_id = 0 AND ep.name = N'MS_Description'" : ""
@@ -2460,7 +2492,7 @@ private func listPrimaryKeysForSingleTable(
         let whereClause = predicates.joined(separator: " AND ")
 
         let definitionSelect = self.configuration.includeRoutineDefinitions ? ", m.definition" : ""
-        let commentSelect = includeComments ? ", CAST(ep.value AS NVARCHAR(4000)) AS comment" : ""
+        let commentSelect = includeComments ? ", ISNULL(CAST(ep.value AS NVARCHAR(4000)), '') AS comment" : ""
         // Only join module definitions for recently modified functions to avoid heavy I/O on large schemas.
         let joinModules = self.configuration.includeRoutineDefinitions ? "LEFT JOIN \(dbPrefix)sys.sql_modules AS m ON m.object_id = o.object_id AND o.modify_date >= DATEADD(MINUTE, -5, SYSDATETIME())" : ""
         let joinComments = includeComments ? "LEFT JOIN \(dbPrefix)sys.extended_properties AS ep ON ep.class = 1 AND ep.major_id = o.object_id AND ep.minor_id = 0 AND ep.name = N'MS_Description'" : ""
@@ -2863,7 +2895,7 @@ private func listPrimaryKeysForSingleTable(
                 else if ch == ")" { depth -= 1 }
                 j = lower.index(after: j)
             } while j <= lower.endIndex && depth > 0
-            paramBlock = text[i..<lower.index(before: j)] // exclude closing ')'
+            paramBlock = text[lower.index(after: i)..<lower.index(before: j)] // exclude both '(' and ')'
         } else if let pRange = lower.range(of: "create procedure") ?? lower.range(of: "create proc") {
             // Parameters run from after the name up to the AS keyword (not within quotes)
             var i = pRange.upperBound

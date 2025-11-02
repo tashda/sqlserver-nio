@@ -42,6 +42,10 @@ public enum TDSTokens {
         case colInfo = 0xA5
         /// COLMETADATA
         case colMetadata = 0x81
+        /// COLUMNSTATUS - Provides column status information
+        case columnStatus = 0x65
+        /// UNKNOWN_0x74 - Undocumented Microsoft TDS token, appears during metadata operations
+        case unknown0x74 = 0x74
         /// DATACLASSIFICATION
         case dataClassification = 0xA3
         /// DONE
@@ -181,6 +185,11 @@ public enum TDSTokens {
         public var payload: ByteBuffer
     }
 
+    public struct Unknown0x74Token: TDSToken {
+        public var type: TokenType = .unknown0x74
+        public var payload: ByteBuffer
+    }
+
     public struct ReturnValueToken: TDSToken {
         public var type: TokenType = .returnValue
         public var name: String
@@ -194,6 +203,12 @@ public enum TDSTokens {
     public struct SSPIToken: TDSToken {
         public var type: TokenType = .sspi
         var payload: ByteBuffer
+    }
+
+    public struct ColumnStatusToken: TDSToken {
+        public var type: TokenType = .columnStatus
+        public var status: UShort
+        public var data: [Byte]
     }
 
     public struct DoneToken: TDSToken {

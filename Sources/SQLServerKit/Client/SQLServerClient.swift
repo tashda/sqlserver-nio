@@ -291,10 +291,8 @@ public final class SQLServerClient {
                     // Check if we're the first to complete (simple flag since only this Task modifies it)
                     if !completed {
                         completed = true
-                        // Complete the promise on the event loop thread to ensure thread safety
-                        connection.eventLoop.execute {
-                            promise.succeed(result)
-                        }
+                        // Complete the promise - promises can be completed from any thread
+                        promise.succeed(result)
                     }
                 } catch {
                     // Check if we're the first to complete (simple flag since only this Task modifies it)
@@ -311,10 +309,8 @@ public final class SQLServerClient {
                             errorToFail = error
                         }
 
-                        // Complete the promise on the event loop thread to ensure thread safety
-                        connection.eventLoop.execute {
-                            promise.fail(errorToFail)
-                        }
+                        // Complete the promise - promises can be completed from any thread
+                        promise.fail(errorToFail)
                     }
                 }
             }
@@ -323,9 +319,8 @@ public final class SQLServerClient {
             connection.underlying.closeFuture.whenComplete { _ in
                 if !completed {
                     completed = true
-                    connection.eventLoop.execute {
-                        promise.fail(SQLServerError.connectionClosed)
-                    }
+                    // Complete the promise - promises can be completed from any thread
+                    promise.fail(SQLServerError.connectionClosed)
                 }
             }
 
@@ -1133,12 +1128,13 @@ public final class SQLServerClient {
     }
 
     internal static func shutdownEventLoopGroup(_ group: EventLoopGroup) -> EventLoopFuture<Void> {
-        // Avoid scheduling onto a closing EventLoop by hosting the promise on an EmbeddedEventLoop.
-        // This ensures we do not hit "Cannot schedule tasks on an EventLoop that has already shut down".
-        let embedded = NIOEmbedded.EmbeddedEventLoop()
-        let p = embedded.makePromise(of: Void.self)
+        // Use a temporary event loop for the shutdown promise that we control
+        let tempLoop = MultiThreadedEventLoopGroup(numberOfThreads: 1).next()
+        let p = tempLoop.makePromise(of: Void.self)
         group.shutdownGracefully { error in
             if let error { p.fail(error) } else { p.succeed(()) }
+            // Clean up the temporary loop after shutdown completes
+            tempLoop.shutdownGracefully { _ in }
         }
         return p.futureResult
     }

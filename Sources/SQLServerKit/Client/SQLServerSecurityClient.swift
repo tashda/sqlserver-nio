@@ -677,11 +677,11 @@ public final class SQLServerSecurityClient {
             p.permission_name,
             p.state_desc,
             p.class_desc,
-            sch.name AS schema_name,
-            obj.name AS object_name,
-            col.name AS column_name,
+            ISNULL(sch.name, '') AS schema_name,
+            ISNULL(obj.name, '') AS object_name,
+            ISNULL(col.name, '') AS column_name,
             grantee.name AS principal_name,
-            grantor.name AS grantor_name
+            ISNULL(grantor.name, '') AS grantor_name
         FROM sys.database_permissions AS p
         INNER JOIN sys.database_principals AS grantee ON grantee.principal_id = p.grantee_principal_id
         LEFT JOIN sys.database_principals AS grantor ON grantor.principal_id = p.grantor_principal_id

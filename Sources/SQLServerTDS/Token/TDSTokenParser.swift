@@ -60,6 +60,10 @@ public class TDSTokenParser {
                     let colMetadataToken = try TDSTokenParser.parseColMetadataToken(from: &buffer)
                     colMetadata = colMetadataToken
                     token = colMetadataToken
+                case .columnStatus:
+                    token = try TDSTokenParser.parseColumnStatusToken(from: &buffer)
+                case .unknown0x74:
+                    token = try TDSTokenParser.parseUnknown0x74Token(from: &buffer)
                 case .colInfo:
                     token = try TDSTokenParser.parseColInfoToken(from: &buffer)
                 case .tabName:
@@ -220,6 +224,64 @@ extension TDSTokenParser {
         buffer.moveReaderIndex(forwardBy: lengthFieldSize)
         guard let data = buffer.readBytes(length: Int(length)) else { throw TDSError.protocolError("OFFSET token truncated.") }
         return TDSTokens.OffsetToken(data: data)
+    }
+
+    static func parseColumnStatusToken(from buffer: inout ByteBuffer) throws -> TDSTokens.ColumnStatusToken {
+        // ColumnStatus token structure: 2-byte length + 2-byte status + variable length data
+        let lengthFieldSize = MemoryLayout<UInt16>.size
+        guard buffer.readableBytes >= lengthFieldSize else {
+            throw TDSError.needMoreData
+        }
+
+        guard let length = buffer.readInteger(endianness: .little, as: UInt16.self) else {
+            throw TDSError.protocolError("COLUMNSTATUS token missing length field.")
+        }
+
+        let statusSize = MemoryLayout<UInt16>.size
+        let totalRequired = Int(length) + lengthFieldSize
+        guard buffer.readableBytes >= totalRequired else {
+            throw TDSError.needMoreData
+        }
+
+        guard let status = buffer.readInteger(endianness: .little, as: UInt16.self) else {
+            throw TDSError.protocolError("COLUMNSTATUS token missing status field.")
+        }
+
+        let dataLength = Int(length) - statusSize
+        guard dataLength >= 0 else {
+            throw TDSError.protocolError("COLUMNSTATUS token invalid length.")
+        }
+
+        var data: [Byte] = []
+        if dataLength > 0 {
+            guard let dataBytes = buffer.readBytes(length: dataLength) else {
+                throw TDSError.protocolError("COLUMNSTATUS token truncated data.")
+            }
+            data = dataBytes
+        }
+
+        return TDSTokens.ColumnStatusToken(status: status, data: data)
+    }
+
+    static func parseUnknown0x74Token(from buffer: inout ByteBuffer) throws -> TDSTokens.Unknown0x74Token {
+        // This token appears to be an undocumented Microsoft TDS token
+        // Handle it as a length-prefixed payload
+        guard let length = buffer.readInteger(endianness: .little, as: UInt16.self) else {
+            throw TDSError.protocolError("UNKNOWN_0x74 token missing length field")
+        }
+
+        guard buffer.readableBytes >= Int(length) else {
+            throw TDSError.needMoreData
+        }
+
+        guard let payload = buffer.readSlice(length: Int(length)) else {
+            throw TDSError.protocolError("UNKNOWN_0x74 token truncated")
+        }
+
+        // Simple diagnostic - just log when we encounter this token
+        print("🎯 Encountered TDS Token 0x74: length=\(length), payload=\(payload.readableBytes) bytes")
+
+        return TDSTokens.Unknown0x74Token(payload: payload)
     }
 }
 

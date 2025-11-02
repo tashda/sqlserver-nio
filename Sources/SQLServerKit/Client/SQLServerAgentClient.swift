@@ -8,6 +8,167 @@ public struct SQLServerAgentJobInfo: Sendable {
     public let lastRunOutcome: String?
 }
 
+/// Comprehensive job information including all details needed for job management
+public struct SQLServerAgentJobDetail: Sendable {
+    public let jobId: String
+    public let name: String
+    public let description: String?
+    public let enabled: Bool
+    public let ownerLoginName: String?
+    public let categoryName: String?
+    public let startStepId: Int?
+    public let lastRunOutcome: String?
+    public let lastRunDate: Date?
+    public let nextRunDate: Date?
+    public let hasSchedule: Bool
+
+    public init(
+        jobId: String,
+        name: String,
+        description: String? = nil,
+        enabled: Bool,
+        ownerLoginName: String? = nil,
+        categoryName: String? = nil,
+        startStepId: Int? = nil,
+        lastRunOutcome: String? = nil,
+        lastRunDate: Date? = nil,
+        nextRunDate: Date? = nil,
+        hasSchedule: Bool = false
+    ) {
+        self.jobId = jobId
+        self.name = name
+        self.description = description
+        self.enabled = enabled
+        self.ownerLoginName = ownerLoginName
+        self.categoryName = categoryName
+        self.startStepId = startStepId
+        self.lastRunOutcome = lastRunOutcome
+        self.lastRunDate = lastRunDate
+        self.nextRunDate = nextRunDate
+        self.hasSchedule = hasSchedule
+    }
+}
+
+/// Enhanced job step information with all details
+public struct SQLServerAgentJobStepDetail: Sendable {
+    public let stepId: Int
+    public let name: String
+    public let subsystem: String
+    public let command: String?
+    public let databaseName: String?
+    public let onSuccessAction: Int?
+    public let onSuccessStepId: Int?
+    public let onFailureAction: Int?
+    public let onFailureStepId: Int?
+    public let retryAttempts: Int?
+    public let retryIntervalMinutes: Int?
+
+    public init(
+        stepId: Int,
+        name: String,
+        subsystem: String,
+        command: String? = nil,
+        databaseName: String? = nil,
+        onSuccessAction: Int? = nil,
+        onSuccessStepId: Int? = nil,
+        onFailureAction: Int? = nil,
+        onFailureStepId: Int? = nil,
+        retryAttempts: Int? = nil,
+        retryIntervalMinutes: Int? = nil
+    ) {
+        self.stepId = stepId
+        self.name = name
+        self.subsystem = subsystem
+        self.command = command
+        self.databaseName = databaseName
+        self.onSuccessAction = onSuccessAction
+        self.onSuccessStepId = onSuccessStepId
+        self.onFailureAction = onFailureAction
+        self.onFailureStepId = onFailureStepId
+        self.retryAttempts = retryAttempts
+        self.retryIntervalMinutes = retryIntervalMinutes
+    }
+}
+
+/// Enhanced job schedule information
+public struct SQLServerAgentJobScheduleDetail: Sendable {
+    public let scheduleId: String
+    public let name: String
+    public let enabled: Bool
+    public let freqType: Int
+    public let freqInterval: Int?
+    public let freqSubdayType: Int?
+    public let freqSubdayInterval: Int?
+    public let activeStartDate: Int?
+    public let activeStartTime: Int?
+    public let activeEndDate: Int?
+    public let activeEndTime: Int?
+    public let nextRunDate: Date?
+
+    public init(
+        scheduleId: String,
+        name: String,
+        enabled: Bool,
+        freqType: Int,
+        freqInterval: Int? = nil,
+        freqSubdayType: Int? = nil,
+        freqSubdayInterval: Int? = nil,
+        activeStartDate: Int? = nil,
+        activeStartTime: Int? = nil,
+        activeEndDate: Int? = nil,
+        activeEndTime: Int? = nil,
+        nextRunDate: Date? = nil
+    ) {
+        self.scheduleId = scheduleId
+        self.name = name
+        self.enabled = enabled
+        self.freqType = freqType
+        self.freqInterval = freqInterval
+        self.freqSubdayType = freqSubdayType
+        self.freqSubdayInterval = freqSubdayInterval
+        self.activeStartDate = activeStartDate
+        self.activeStartTime = activeStartTime
+        self.activeEndDate = activeEndDate
+        self.activeEndTime = activeEndTime
+        self.nextRunDate = nextRunDate
+    }
+}
+
+/// Enhanced job history information with proper date formatting
+public struct SQLServerAgentJobHistoryDetail: Sendable {
+    public let instanceId: Int
+    public let jobName: String
+    public let stepId: Int
+    public let stepName: String?
+    public let runStatus: Int
+    public let runStatusDescription: String
+    public let message: String
+    public let runDateTime: Date?
+    public let runDurationSeconds: Int?
+
+    public init(
+        instanceId: Int,
+        jobName: String,
+        stepId: Int,
+        stepName: String? = nil,
+        runStatus: Int,
+        runStatusDescription: String,
+        message: String,
+        runDateTime: Date? = nil,
+        runDurationSeconds: Int? = nil
+    ) {
+        self.instanceId = instanceId
+        self.jobName = jobName
+        self.stepId = stepId
+        self.stepName = stepName
+        self.runStatus = runStatus
+        self.runStatusDescription = runStatusDescription
+        self.message = message
+        self.runDateTime = runDateTime
+        self.runDurationSeconds = runDurationSeconds
+    }
+}
+
 public struct SQLServerAgentJobHistoryEntry: Sendable {
     public let runStatus: Int
     public let stepId: Int
@@ -63,7 +224,7 @@ public struct SQLServerAgentPermissionReport: Sendable {
     public let msdbRoles: [String]
 }
 
-public final class SQLServerAgentClient {
+public final class SQLServerAgentClient: @unchecked Sendable {
     private enum Backing {
         case connection(SQLServerConnection)
         case client(SQLServerClient)
@@ -179,6 +340,209 @@ public final class SQLServerAgentClient {
                 let enabled = (row.column("enabled")?.int ?? 0) != 0
                 let outcome = row.column("last_run_outcome")?.string
                 return SQLServerAgentJobInfo(name: name, enabled: enabled, lastRunOutcome: outcome)
+            }
+        }
+    }
+
+    /// Comprehensive job listing that returns all detailed information needed for job management
+    /// Uses Microsoft stored procedures and provides complete job details including category, owner, schedules
+    public func listJobsDetailed() -> EventLoopFuture<[SQLServerAgentJobDetail]> {
+        let sql = """
+        EXEC msdb.dbo.sp_help_job;
+        """
+        return run(sql).map { rows in
+            rows.compactMap { row in
+                guard let name = row.column("name")?.string,
+                      let jobId = row.column("job_id")?.string else { return nil }
+
+                let enabled = (row.column("enabled")?.int ?? 0) != 0
+                let description = row.column("description")?.string
+                let ownerLoginName = row.column("owner_login_name")?.string
+                let categoryName = row.column("category_name")?.string
+                let startStepId = row.column("start_step_id")?.int
+                let lastRunOutcome = row.column("last_run_outcome")?.string
+                let lastRunDateInt = row.column("last_run_date")?.int
+                let lastRunTimeInt = row.column("last_run_time")?.int
+                let nextRunDateInt = row.column("next_run_date")?.int
+                let nextRunTimeInt = row.column("next_run_time")?.int
+                let hasSchedule = (row.column("has_schedule")?.int ?? 0) != 0
+
+                // Convert date/time integers to Date objects
+                let lastRunDate = self.convertSqlDateTime(date: lastRunDateInt, time: lastRunTimeInt)
+                let nextRunDate = self.convertSqlDateTime(date: nextRunDateInt, time: nextRunTimeInt)
+
+                return SQLServerAgentJobDetail(
+                    jobId: jobId,
+                    name: name,
+                    description: description,
+                    enabled: enabled,
+                    ownerLoginName: ownerLoginName,
+                    categoryName: categoryName,
+                    startStepId: startStepId,
+                    lastRunOutcome: lastRunOutcome,
+                    lastRunDate: lastRunDate,
+                    nextRunDate: nextRunDate,
+                    hasSchedule: hasSchedule
+                )
+            }
+        }
+    }
+
+    /// Get detailed job information for a specific job
+    public func getJobDetail(jobName: String) -> EventLoopFuture<SQLServerAgentJobDetail?> {
+        let sql = """
+        EXEC msdb.dbo.sp_help_job @job_name = N'\(escapeLiteral(jobName))';
+        """
+        return run(sql).map { rows in
+            guard let row = rows.first else { return nil }
+
+            guard let jobId = row.column("job_id")?.string,
+                  let name = row.column("name")?.string else { return nil }
+
+            let enabled = (row.column("enabled")?.int ?? 0) != 0
+            let description = row.column("description")?.string
+            let ownerLoginName = row.column("owner_login_name")?.string
+            let categoryName = row.column("category_name")?.string
+            let startStepId = row.column("start_step_id")?.int
+            let lastRunOutcome = row.column("last_run_outcome")?.string
+            let lastRunDateInt = row.column("last_run_date")?.int
+            let lastRunTimeInt = row.column("last_run_time")?.int
+            let nextRunDateInt = row.column("next_run_date")?.int
+            let nextRunTimeInt = row.column("next_run_time")?.int
+            let hasSchedule = (row.column("has_schedule")?.int ?? 0) != 0
+
+            let lastRunDate = self.convertSqlDateTime(date: lastRunDateInt, time: lastRunTimeInt)
+            let nextRunDate = self.convertSqlDateTime(date: nextRunDateInt, time: nextRunTimeInt)
+
+            return SQLServerAgentJobDetail(
+                jobId: jobId,
+                name: name,
+                description: description,
+                enabled: enabled,
+                ownerLoginName: ownerLoginName,
+                categoryName: categoryName,
+                startStepId: startStepId,
+                lastRunOutcome: lastRunOutcome,
+                lastRunDate: lastRunDate,
+                nextRunDate: nextRunDate,
+                hasSchedule: hasSchedule
+            )
+        }
+    }
+
+    /// Get detailed job steps for a specific job
+    public func getJobSteps(jobName: String) -> EventLoopFuture<[SQLServerAgentJobStepDetail]> {
+        let sql = """
+        EXEC msdb.dbo.sp_help_jobstep @job_name = N'\(escapeLiteral(jobName))';
+        """
+        return run(sql).map { rows in
+            rows.compactMap { row in
+                guard let stepId = row.column("step_id")?.int,
+                      let name = row.column("step_name")?.string,
+                      let subsystem = row.column("subsystem")?.string else { return nil }
+
+                let command = row.column("command")?.string
+                let databaseName = row.column("database_name")?.string
+                let onSuccessAction = row.column("on_success_action")?.int
+                let onSuccessStepId = row.column("on_success_step_id")?.int
+                let onFailureAction = row.column("on_fail_action")?.int
+                let onFailureStepId = row.column("on_fail_step_id")?.int
+                let retryAttempts = row.column("retry_attempts")?.int
+                let retryInterval = row.column("retry_interval")?.int
+
+                return SQLServerAgentJobStepDetail(
+                    stepId: stepId,
+                    name: name,
+                    subsystem: subsystem,
+                    command: command,
+                    databaseName: databaseName,
+                    onSuccessAction: onSuccessAction,
+                    onSuccessStepId: onSuccessStepId,
+                    onFailureAction: onFailureAction,
+                    onFailureStepId: onFailureStepId,
+                    retryAttempts: retryAttempts,
+                    retryIntervalMinutes: retryInterval
+                )
+            }
+        }
+    }
+
+    /// Get detailed job schedules for a specific job
+    public func getJobSchedules(jobName: String) -> EventLoopFuture<[SQLServerAgentJobScheduleDetail]> {
+        let sql = """
+        EXEC msdb.dbo.sp_help_jobschedule @job_name = N'\(escapeLiteral(jobName))';
+        """
+        return run(sql).map { rows in
+            rows.compactMap { row in
+                guard let scheduleId = row.column("schedule_id")?.int,
+                      let name = row.column("name")?.string,
+                      let enabled = row.column("enabled")?.int,
+                      let freqType = row.column("freq_type")?.int else { return nil }
+
+                let freqInterval = row.column("freq_interval")?.int
+                let freqSubdayType = row.column("freq_subday_type")?.int
+                let freqSubdayInterval = row.column("freq_subday_interval")?.int
+                let activeStartDate = row.column("active_start_date")?.int
+                let activeStartTime = row.column("active_start_time")?.int
+                let activeEndDate = row.column("active_end_date")?.int
+                let activeEndTime = row.column("active_end_time")?.int
+                let nextRunDateInt = row.column("next_run_date")?.int
+                let nextRunTimeInt = row.column("next_run_time")?.int
+
+                let nextRunDate = self.convertSqlDateTime(date: nextRunDateInt, time: nextRunTimeInt)
+
+                return SQLServerAgentJobScheduleDetail(
+                    scheduleId: String(scheduleId),
+                    name: name,
+                    enabled: enabled != 0,
+                    freqType: freqType,
+                    freqInterval: freqInterval,
+                    freqSubdayType: freqSubdayType,
+                    freqSubdayInterval: freqSubdayInterval,
+                    activeStartDate: activeStartDate,
+                    activeStartTime: activeStartTime,
+                    activeEndDate: activeEndDate,
+                    activeEndTime: activeEndTime,
+                    nextRunDate: nextRunDate
+                )
+            }
+        }
+    }
+
+    /// Get detailed job history with proper date formatting
+    public func getJobHistory(jobName: String? = nil, top: Int = 100) -> EventLoopFuture<[SQLServerAgentJobHistoryDetail]> {
+        let jobFilter = jobName != nil ? "@job_name = N'\(escapeLiteral(jobName!))'" : ""
+        let sql = """
+        EXEC msdb.dbo.sp_help_jobhistory \(jobFilter), @mode = 'FULL', @order_by = 'DATE DESC', @top_rows = \(top);
+        """
+        return run(sql).map { rows in
+            rows.compactMap { row in
+                guard let instanceId = row.column("instance_id")?.int,
+                      let jobName = row.column("job_name")?.string,
+                      let stepId = row.column("step_id")?.int,
+                      let runStatus = row.column("run_status")?.int else { return nil }
+
+                let stepName = row.column("step_name")?.string
+                let message = row.column("message")?.string
+                let runDateInt = row.column("run_date")?.int
+                let runTimeInt = row.column("run_time")?.int
+                let runDurationInt = row.column("run_duration")?.int
+
+                let runDateTime = self.convertSqlDateTime(date: runDateInt, time: runTimeInt)
+                let runDurationSeconds = self.convertSqlDurationToSeconds(duration: runDurationInt)
+                let runStatusDescription = self.getRunStatusDescription(runStatus)
+
+                return SQLServerAgentJobHistoryDetail(
+                    instanceId: instanceId,
+                    jobName: jobName,
+                    stepId: stepId,
+                    stepName: stepName,
+                    runStatus: runStatus,
+                    runStatusDescription: runStatusDescription,
+                    message: message ?? "",
+                    runDateTime: runDateTime,
+                    runDurationSeconds: runDurationSeconds
+                )
             }
         }
     }
@@ -1089,6 +1453,33 @@ public final class SQLServerAgentClient {
         try await listJobHistory(jobName: jobName, top: top).get()
     }
 
+    // MARK: - Enhanced API async/await versions
+
+    @available(macOS 12.0, *)
+    public func listJobsDetailed() async throws -> [SQLServerAgentJobDetail] {
+        try await listJobsDetailed().get()
+    }
+
+    @available(macOS 12.0, *)
+    public func getJobDetail(jobName: String) async throws -> SQLServerAgentJobDetail? {
+        try await getJobDetail(jobName: jobName).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func getJobSteps(jobName: String) async throws -> [SQLServerAgentJobStepDetail] {
+        try await getJobSteps(jobName: jobName).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func getJobSchedules(jobName: String) async throws -> [SQLServerAgentJobScheduleDetail] {
+        try await getJobSchedules(jobName: jobName).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func getJobHistory(jobName: String? = nil, top: Int = 100) async throws -> [SQLServerAgentJobHistoryDetail] {
+        try await getJobHistory(jobName: jobName, top: top).get()
+    }
+
     @available(macOS 12.0, *)
     public func addStep(jobName: String, stepName: String, subsystem: String, command: String, database: String? = nil, proxyName: String? = nil, outputFile: String? = nil) async throws {
         _ = try await addStep(jobName: jobName, stepName: stepName, subsystem: subsystem, command: command, database: database, proxyName: proxyName, outputFile: outputFile).get()
@@ -1242,6 +1633,36 @@ private extension SQLServerAgentClient {
                 throw NSError(domain: "SQLServerAgentClient", code: 1, userInfo: [NSLocalizedDescriptionKey: "Agent step not found for job \(jobName) and step \(stepName)"])
             }
             return id
+        }
+    }
+
+    // MARK: - Helper Methods for Enhanced APIs
+
+    /// Convert SQL Server date/time integers to Date object
+    private func convertSqlDateTime(date: Int?, time: Int?) -> Date? {
+        guard let date = date, let time = time, date > 0 || time > 0 else { return nil }
+        return parseAgentDate(dateInt: date, timeInt: time)
+    }
+
+    /// Convert SQL Server duration integer to seconds
+    private func convertSqlDurationToSeconds(duration: Int?) -> Int? {
+        guard let duration = duration, duration > 0 else { return nil }
+        let hours = duration / 10000
+        let minutes = (duration / 100) % 100
+        let seconds = duration % 100
+        return hours * 3600 + minutes * 60 + seconds
+    }
+
+    /// Get human-readable description for run status
+    private func getRunStatusDescription(_ runStatus: Int) -> String {
+        switch runStatus {
+        case 0: return "Failed"
+        case 1: return "Succeeded"
+        case 2: return "Retry"
+        case 3: return "Canceled"
+        case 4: return "In Progress"
+        case 5: return "Unknown"
+        default: return "Unknown (\(runStatus))"
         }
     }
 }

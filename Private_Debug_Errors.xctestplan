@@ -1,0 +1,518 @@
+{
+  "configurations" : [
+    {
+      "id" : "C5B2711F-7F67-4B74-B7E4-5B6AE54A02AA",
+      "name" : "Core (SQL Login)",
+      "options" : {
+        "environmentVariableEntries" : [
+          {
+            "key" : "TDS_ENABLE_RPC_TESTS",
+            "value" : "1"
+          },
+          {
+            "enabled" : false,
+            "key" : "TDS_RPC_PARAMNAME_ASCII",
+            "value" : "0"
+          },
+          {
+            "enabled" : false,
+            "key" : "TDS_RPC_DEC_TYPEINFO_SCALE",
+            "value" : "1"
+          },
+          {
+            "enabled" : false,
+            "key" : "TDS_RPC_OUT_INT_LEN0",
+            "value" : "0"
+          },
+          {
+            "key" : "TDS_TOKEN_RING_SIZE",
+            "value" : "4096"
+          },
+          {
+            "key" : "TDS_LOG_RPC_HEX",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_ENABLE_EXPLORER_FLOW",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_LOG_RPC_HEX_FULL",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_ENABLE_DEEP_SCENARIO_TESTS",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_ENABLE_DEADLOCK_TESTS",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_ENABLE_SCHEMA_TESTS",
+            "value" : "1"
+          },
+          {
+            "enabled" : false,
+            "key" : "TDS_RPC_PROCNAME_MODE",
+            "value" : "3"
+          }
+        ]
+      }
+    },
+    {
+      "id" : "3A3FD24B-7E41-4B47-A7F7-EB69A62AEF25",
+      "name" : "Administration",
+      "options" : {
+        "environmentVariableEntries" : [
+          {
+            "key" : "TDS_ENABLE_SERVER_SECURITY_TESTS",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_ENABLE_SCHEMA_TESTS",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_ENABLE_ADMIN_TESTS",
+            "value" : "1"
+          }
+        ]
+      }
+    },
+    {
+      "id" : "B6C2719A-2158-4DFE-98A8-863F3516E4B4",
+      "name" : "SQL Agent",
+      "options" : {
+        "environmentVariableEntries" : [
+          {
+            "key" : "TDS_ENABLE_AGENT_SECURITY_TESTS",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_ENABLE_AGENT_DEEP_TESTS",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_ENABLE_SCHEMA_TESTS",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_ENABLE_AGENT_PROXY_TESTS",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_ENABLE_AGENT_SCHEDULE_TESTS",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_ENABLE_AGENT_CATEGORY_TESTS",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_ENABLE_AGENT_ALERT_TESTS",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_ENABLE_AGENT_TESTS",
+            "value" : "1"
+          }
+        ]
+      }
+    },
+    {
+      "id" : "C536BF52-2B8D-4795-A964-93185F00A3B6",
+      "name" : "AdventureWorks",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "environmentVariableEntries" : [
+      {
+        "key" : "TDS_ENABLE_ADVENTUREWORKS",
+        "value" : "1"
+      },
+      {
+        "key" : "TDS_ENABLE_RPC_TESTS",
+        "value" : "1"
+      },
+      {
+        "key" : "TDS_ENABLE_EXPLORER_FLOW",
+        "value" : "1"
+      },
+      {
+        "key" : "TDS_ENABLE_DEADLOCK_TESTS",
+        "value" : "1"
+      },
+      {
+        "key" : "TDS_ENABLE_AGENT_TESTS",
+        "value" : "1"
+      },
+      {
+        "key" : "TDS_HOSTNAME",
+        "value" : "192.168.1.200"
+      },
+      {
+        "key" : "TDS_PORT",
+        "value" : "1435"
+      },
+      {
+        "key" : "TDS_DATABASE",
+        "value" : "master"
+      },
+      {
+        "key" : "TDS_USERNAME",
+        "value" : "sa"
+      },
+      {
+        "key" : "TDS_PASSWORD",
+        "value" : "K3nn3th5"
+      },
+      {
+        "key" : "TDS_ENABLE_SCHEMA_TEST",
+        "value" : "1"
+      }
+    ],
+    "maximumTestRepetitions" : 1,
+    "runDestination" : {
+      "displayName" : "My Mac",
+      "targetArchitecture" : "arm64",
+      "targetDevice" : {
+        "model" : "My Mac"
+      }
+    }
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : true,
+      "skippedTests" : [
+        "SQLServerAdventureWorksRoutineTests",
+        "SQLServerAdventureWorksRoutineTests\/testAdventureWorksUfnGetAccountingEndDateParameters()",
+        "SQLServerAgentPermissionTests",
+        "SQLServerAgentPermissionTests\/testAgentProxyPermissionReport()",
+        "SQLServerAgentTests",
+        "SQLServerAgentTests\/testAgentClientFullJobControlAndHistory()",
+        "SQLServerAgentTests\/testAgentClientJobLifecycle()",
+        "SQLServerAgentTests\/testAgentJobCategoryRenameOwnerNotificationAndNextRun()",
+        "SQLServerAgentTests\/testAgentListRunningJobs()",
+        "SQLServerAgentTests\/testAgentOperatorsAndAlerts()",
+        "SQLServerAgentTests\/testAgentPermissionsRoles()",
+        "SQLServerAgentTests\/testAgentPropertiesFailSafeOperator()",
+        "SQLServerAgentTests\/testAgentProxiesAndCredentialsMetadata()",
+        "SQLServerAgentTests\/testAgentSchedulesAttachDetach()",
+        "SQLServerAgentTests\/testAgentStartFromSpecificStepAndFlowControl()",
+        "SQLServerAgentTests\/testAgentStatusViaMetadata()",
+        "SQLServerBatchTests",
+        "SQLServerBatchTests\/testBatchErrorHandling()",
+        "SQLServerBatchTests\/testBatchWithComments()",
+        "SQLServerBatchTests\/testBatchWithConstraints()",
+        "SQLServerBatchTests\/testBatchWithIndex()",
+        "SQLServerBatchTests\/testBatchWithStoredProcedure()",
+        "SQLServerBatchTests\/testBatchWithTrigger()",
+        "SQLServerBatchTests\/testBatchWithVariables()",
+        "SQLServerBatchTests\/testBatchWithView()",
+        "SQLServerBatchTests\/testComplexBatchWithTransaction()",
+        "SQLServerBatchTests\/testEmptyBatchHandling()",
+        "SQLServerBatchTests\/testExecuteScriptWithGOSeparators()",
+        "SQLServerBatchTests\/testExecuteSeparateBatches()",
+        "SQLServerBulkCopyTests",
+        "SQLServerBulkCopyTests\/testBulkCopyColumnCountMismatchThrows()",
+        "SQLServerBulkCopyTests\/testBulkCopyConstraintViolationSurfacesAndKeepsCommittedBatches()",
+        "SQLServerBulkCopyTests\/testBulkCopyDetectsConnectionDropsMidStream()",
+        "SQLServerBulkCopyTests\/testBulkCopyHandlesMixedTypesAndLargePayloads()",
+        "SQLServerBulkCopyTests\/testBulkCopyInsertsRows()",
+        "SQLServerBulkCopyTests\/testBulkCopyOutperformsRowByRowInserts()",
+        "SQLServerBulkCopyTests\/testBulkCopySupportsIdentityInsert()",
+        "SQLServerClassificationDecodeTests",
+        "SQLServerClassificationDecodeTests\/testDecodeSensitivityClassification()",
+        "SQLServerColumnstoreIndexTests",
+        "SQLServerColumnstoreIndexTests\/testColumnstoreIndexScripting()",
+        "SQLServerConnectionTests",
+        "SQLServerConnectionTests\/testConnectionCleanup()",
+        "SQLServerConnectionTests\/testConnectionErrorHandling()",
+        "SQLServerConnectionTests\/testConnectionMetadata()",
+        "SQLServerConnectionTests\/testConnectionPoolExhaustion()",
+        "SQLServerConnectionTests\/testConnectionPoolWarmup()",
+        "SQLServerConnectionTests\/testConnectionRecoveryAfterError()",
+        "SQLServerConnectionTests\/testConnectionReuse()",
+        "SQLServerConnectionTests\/testConnectionStateConsistency()",
+        "SQLServerConnectionTests\/testConnectionTimeout()",
+        "SQLServerConnectionTests\/testHealthCheck()",
+        "SQLServerConnectionTests\/testMultipleWithConnectionCalls()",
+        "SQLServerConnectionTests\/testPoolStatus()",
+        "SQLServerConnectionTests\/testStreamQueryWithOptionsCompiles()",
+        "SQLServerConnectionTests\/testValidateConnections()",
+        "SQLServerConnectionTests\/testWithConnectionIsolation()",
+        "SQLServerConstraintTests",
+        "SQLServerConstraintTests\/testAddCheckConstraint()",
+        "SQLServerConstraintTests\/testAddCompositePrimaryKeyConstraint()",
+        "SQLServerConstraintTests\/testAddDefaultConstraint()",
+        "SQLServerConstraintTests\/testAddDuplicateConstraint()",
+        "SQLServerConstraintTests\/testAddForeignKeyConstraint()",
+        "SQLServerConstraintTests\/testAddForeignKeyConstraintWithCascadeOptions()",
+        "SQLServerConstraintTests\/testAddForeignKeyWithMismatchedColumns()",
+        "SQLServerConstraintTests\/testAddMultiColumnUniqueConstraint()",
+        "SQLServerConstraintTests\/testAddPrimaryKeyConstraint()",
+        "SQLServerConstraintTests\/testAddUniqueConstraint()",
+        "SQLServerConstraintTests\/testDropCheckConstraint()",
+        "SQLServerConstraintTests\/testDropDefaultConstraint()",
+        "SQLServerConstraintTests\/testDropForeignKeyConstraint()",
+        "SQLServerConstraintTests\/testDropNonExistentConstraint()",
+        "SQLServerConstraintTests\/testDropUniqueConstraint()",
+        "SQLServerConstraintTests\/testEnableDisableConstraint()",
+        "SQLServerConstraintTests\/testListTableConstraints()",
+        "SQLServerDataTypeRoundTripTests",
+        "SQLServerDataTypeRoundTripTests\/testCharacterBinaryAndVariantRoundTrips()",
+        "SQLServerDataTypeRoundTripTests\/testMaxPayloadRoundTrips()",
+        "SQLServerDataTypeRoundTripTests\/testNumericRoundTrips()",
+        "SQLServerDataTypeRoundTripTests\/testTemporalRoundTrips()",
+        "SQLServerDeadlockRetryTests",
+        "SQLServerDeadlockRetryTests\/testDeadlockRetry()",
+        "SQLServerEnvDiagnosticsTests",
+        "SQLServerEnvDiagnosticsTests\/testPrintTdsEnvironment()",
+        "SQLServerExplorerFlowTests",
+        "SQLServerExplorerFlowTests\/testExplorerStartupFlow()",
+        "SQLServerExplorerFlowTests\/testExplorerStartupFlowViaClient()",
+        "SQLServerIndexMatrixTests",
+        "SQLServerIndexMatrixTests\/testIndexOptionMatrixScripting()",
+        "SQLServerIndexTests",
+        "SQLServerIndexTests\/testCreateClusteredIndex()",
+        "SQLServerIndexTests\/testCreateClusteredIndexWithIncludedColumns()",
+        "SQLServerIndexTests\/testCreateDuplicateIndex()",
+        "SQLServerIndexTests\/testCreateIndexOnNonExistentColumn()",
+        "SQLServerIndexTests\/testCreateIndexOnNonExistentTable()",
+        "SQLServerIndexTests\/testCreateIndexWithIncludedColumns()",
+        "SQLServerIndexTests\/testCreateIndexWithMultipleColumns()",
+        "SQLServerIndexTests\/testCreateIndexWithNoKeyColumns()",
+        "SQLServerIndexTests\/testCreateIndexWithOptions()",
+        "SQLServerIndexTests\/testCreateSimpleIndex()",
+        "SQLServerIndexTests\/testCreateUniqueIndex()",
+        "SQLServerIndexTests\/testDropIndex()",
+        "SQLServerIndexTests\/testDropNonExistentIndex()",
+        "SQLServerIndexTests\/testGetIndexInfo()",
+        "SQLServerIndexTests\/testListTableIndexes()",
+        "SQLServerIndexTests\/testRebuildIndex()",
+        "SQLServerIndexTests\/testReorganizeIndex()",
+        "SQLServerIntegrationTests",
+        "SQLServerIntegrationTests\/testChangeDatabaseAndScalarHelpers()",
+        "SQLServerIntegrationTests\/testColumnPropertyIsComputedSingle()",
+        "SQLServerIntegrationTests\/testConnectionPoolReusesConnections()",
+        "SQLServerIntegrationTests\/testDmlTriggerLifecycle()",
+        "SQLServerIntegrationTests\/testFetchObjectDefinitions()",
+        "SQLServerIntegrationTests\/testFunctionMetadataIncludesReturnAndParameters()",
+        "SQLServerIntegrationTests\/testInformationSchemaBasicColumnsFetch()",
+        "SQLServerIntegrationTests\/testInformationSchemaColumnCount()",
+        "SQLServerIntegrationTests\/testInformationSchemaColumnsFetchesRows()",
+        "SQLServerIntegrationTests\/testListParametersInlineTVFAndSchemaSweep()",
+        "SQLServerIntegrationTests\/testMetadataClientColumnListing()",
+        "SQLServerIntegrationTests\/testMetadataClientForeignKeys()",
+        "SQLServerIntegrationTests\/testMetadataClientIndexesAndConstraints()",
+        "SQLServerIntegrationTests\/testMetadataClientRoutineDefinitionsToggle()",
+        "SQLServerIntegrationTests\/testMetadataClientSchemaFiltering()",
+        "SQLServerIntegrationTests\/testMetadataCoversKeysIndexesForeignKeysAndTriggers()",
+        "SQLServerIntegrationTests\/testMetadataSearchReturnsMatches()",
+        "SQLServerIntegrationTests\/testPermissionGrantAndRevokeLifecycle()",
+        "SQLServerIntegrationTests\/testSQLServerClientMetadataFacade()",
+        "SQLServerIntegrationTests\/testScalarAndTableValuedFunctions()",
+        "SQLServerIntegrationTests\/testSchemaVersioningDetectsDefinitionChange()",
+        "SQLServerIntegrationTests\/testSqlAgentJobLifecycle()",
+        "SQLServerIntegrationTests\/testStoredProcedureWithOutputAndResults()",
+        "SQLServerIntegrationTests\/testStreamQueryEmitsMetadataAndRows()",
+        "SQLServerIntegrationTests\/testStreamQuerySupportsEarlyStop()",
+        "SQLServerIntegrationTests\/testSynonymResolvesToSource()",
+        "SQLServerIntegrationTests\/testSysCatalogColumnFlags()",
+        "SQLServerIntegrationTests\/testTempTableCrudLifecycle()",
+        "SQLServerIntegrationTests\/testViewDefinitionRoundTrip()",
+        "SQLServerKitIntegrationTests",
+        "SQLServerKitIntegrationTests\/testConnectAndClose()",
+        "SQLServerKitIntegrationTests\/testMultiStatementReturnsRows()",
+        "SQLServerKitIntegrationTests\/testRawSqlGetDate()",
+        "SQLServerKitIntegrationTests\/testRawSqlVersion()",
+        "SQLServerKitIntegrationTests\/testRemoteTLSServer()",
+        "SQLServerKitIntegrationTests\/testStoredProcedureDatabases()",
+        "SQLServerKitIntegrationTests\/testSystemDatabasesExposeTables()",
+        "SQLServerLegacyLobRoundTripTests",
+        "SQLServerLegacyLobRoundTripTests\/testNTextAndImageRoundTrip()",
+        "SQLServerLegacyLobRoundTripTests\/testXmlAndMaxChunkingRoundTrip()",
+        "SQLServerMetadataCommentsTests\/testRoutineAndTriggerCommentsLoaded()",
+        "SQLServerMetadataCommentsTests\/testTableAndColumnCommentsLoaded()",
+        "SQLServerMetadataCommentsTests\/testViewColumnCommentsLoaded()",
+        "SQLServerMetadataConcurrencyTests",
+        "SQLServerMetadataConcurrencyTests\/testConcurrentMetadataCallsShareConnectionSafely()",
+        "SQLServerMetadataViewColumnsTests",
+        "SQLServerMetadataViewColumnsTests\/testListColumnsAdventureWorksProductionCatalogView()",
+        "SQLServerMetadataViewColumnsTests\/testListColumnsAdventureWorksVEEmployeeLikeViews()",
+        "SQLServerMetadataViewColumnsTests\/testListColumnsAdventureWorksVJobCandidateDoesNotExecuteViewBody()",
+        "SQLServerMetadataViewColumnsTests\/testListColumnsReturnsMetadataForViews()",
+        "SQLServerNbcRowBitmapTests",
+        "SQLServerNbcRowBitmapTests\/testNbcRowNullBitmapOverMultipleBytes()",
+        "SQLServerPartitionSchemeMatrixTests",
+        "SQLServerPartitionSchemeMatrixTests\/testPartitionSchemeOnTableAndIndex()",
+        "SQLServerPlpChunkingTests",
+        "SQLServerPlpChunkingTests\/testPlpMultiChunkBoundaries()",
+        "SQLServerPrimaryKeySchemaEnumerationTests",
+        "SQLServerPrimaryKeySchemaEnumerationTests\/testListPrimaryKeysBySchemaDoesNotRequireTableName()",
+        "SQLServerPrimaryKeySchemaEnumerationTests\/testSchemaEnumerationSkipsViewsAndHandlesMultipleTables()",
+        "SQLServerQuerySplitterTests",
+        "SQLServerQuerySplitterTests\/testAdaptiveGOSplit()",
+        "SQLServerQuerySplitterTests\/testBasicGOSplitting()",
+        "SQLServerQuerySplitterTests\/testCTEWithGO()",
+        "SQLServerQuerySplitterTests\/testCommentsWithGO()",
+        "SQLServerQuerySplitterTests\/testComplexSQLWithGO()",
+        "SQLServerQuerySplitterTests\/testDynamicSQLWithGO()",
+        "SQLServerQuerySplitterTests\/testEditorOptions()",
+        "SQLServerQuerySplitterTests\/testEmptyBatchesFiltered()",
+        "SQLServerQuerySplitterTests\/testEmptyInput()",
+        "SQLServerQuerySplitterTests\/testErrorHandlingInSplitter()",
+        "SQLServerQuerySplitterTests\/testGOAtEndOfFile()",
+        "SQLServerQuerySplitterTests\/testGOCaseInsensitive()",
+        "SQLServerQuerySplitterTests\/testGOWithWhitespace()",
+        "SQLServerQuerySplitterTests\/testGOWithoutNewline()",
+        "SQLServerQuerySplitterTests\/testLargeSQL()",
+        "SQLServerQuerySplitterTests\/testMultilineStatements()",
+        "SQLServerQuerySplitterTests\/testMultipleConsecutiveGOs()",
+        "SQLServerQuerySplitterTests\/testPositionTracking()",
+        "SQLServerQuerySplitterTests\/testSingleGO()",
+        "SQLServerQuerySplitterTests\/testSpecialCharactersInSQL()",
+        "SQLServerQuerySplitterTests\/testStoredProcedureWithGO()",
+        "SQLServerQuerySplitterTests\/testStringLiteralsWithGO()",
+        "SQLServerQuerySplitterTests\/testWhitespaceOnlyInput()",
+        "SQLServerQuerySplitterTests\/testWindowsFunctionWithGO()",
+        "SQLServerRPCTests",
+        "SQLServerReturnValueDecodeTests",
+        "SQLServerReturnValueDecodeTests\/testTypedDecodersFromTDSData()",
+        "SQLServerRoutineParameterMatrixTests",
+        "SQLServerRoutineParameterMatrixTests\/testFunctionParameterMatrix()",
+        "SQLServerRoutineParameterMatrixTests\/testProcedureParameterMatrix()",
+        "SQLServerRoutineTests",
+        "SQLServerRoutineTests\/testAlterStoredProcedure()",
+        "SQLServerRoutineTests\/testCreateComplexStoredProcedureWithMultipleParameterTypes()",
+        "SQLServerRoutineTests\/testCreateDuplicateStoredProcedure()",
+        "SQLServerRoutineTests\/testCreateFunctionWithStringReturnType()",
+        "SQLServerRoutineTests\/testCreateScalarFunctionWithDefaultParameter()",
+        "SQLServerRoutineTests\/testCreateScalarFunctionWithParameters()",
+        "SQLServerRoutineTests\/testCreateSimpleScalarFunction()",
+        "SQLServerRoutineTests\/testCreateSimpleStoredProcedure()",
+        "SQLServerRoutineTests\/testCreateStoredProcedureWithExecuteAsOption()",
+        "SQLServerRoutineTests\/testCreateStoredProcedureWithInvalidSyntax()",
+        "SQLServerRoutineTests\/testCreateStoredProcedureWithOptions()",
+        "SQLServerRoutineTests\/testCreateStoredProcedureWithParameters()",
+        "SQLServerRoutineTests\/testCreateTableValuedFunction()",
+        "SQLServerRoutineTests\/testDropFunction()",
+        "SQLServerRoutineTests\/testDropNonExistentStoredProcedure()",
+        "SQLServerRoutineTests\/testDropStoredProcedure()",
+        "SQLServerSecurityTests",
+        "SQLServerSecurityTests\/testAddNonExistentUserToRole()",
+        "SQLServerSecurityTests\/testAddUserToDatabaseRole()",
+        "SQLServerSecurityTests\/testAddUserToRole()",
+        "SQLServerSecurityTests\/testAlterRole()",
+        "SQLServerSecurityTests\/testAlterUser()",
+        "SQLServerSecurityTests\/testComplexRoleHierarchy()",
+        "SQLServerSecurityTests\/testCreateDuplicateRole()",
+        "SQLServerSecurityTests\/testCreateDuplicateUser()",
+        "SQLServerSecurityTests\/testCreateRole()",
+        "SQLServerSecurityTests\/testCreateUserWithOptions()",
+        "SQLServerSecurityTests\/testCreateUserWithoutLogin()",
+        "SQLServerSecurityTests\/testDenyPermission()",
+        "SQLServerSecurityTests\/testDropNonExistentRole()",
+        "SQLServerSecurityTests\/testDropNonExistentUser()",
+        "SQLServerSecurityTests\/testDropRole()",
+        "SQLServerSecurityTests\/testDropUser()",
+        "SQLServerSecurityTests\/testGrantPermissionOnNonExistentObject()",
+        "SQLServerSecurityTests\/testGrantPermissionWithGrantOption()",
+        "SQLServerSecurityTests\/testGrantRevokePermission()",
+        "SQLServerSecurityTests\/testListPermissions()",
+        "SQLServerSecurityTests\/testListRoles()",
+        "SQLServerSecurityTests\/testListUsers()",
+        "SQLServerSecurityTests\/testRemoveUserFromRole()",
+        "SQLServerServerSecurityTests",
+        "SQLServerServerSecurityTests\/testCredentialCrud()",
+        "SQLServerServerSecurityTests\/testListLogins()",
+        "SQLServerServerSecurityTests\/testServerLoginCrudEnableDisablePasswordAndDrop()",
+        "SQLServerServerSecurityTests\/testServerPermissionGrantDenyRevoke()",
+        "SQLServerServerSecurityTests\/testServerRoleCrudAndMembership()",
+        "SQLServerTableAdministrationTests",
+        "SQLServerTableAdministrationTests\/testAddColumnCommentAfterTableCreation()",
+        "SQLServerTableAdministrationTests\/testAddTableComment()",
+        "SQLServerTableAdministrationTests\/testCommentWithEmptyString()",
+        "SQLServerTableAdministrationTests\/testCommentWithLongText()",
+        "SQLServerTableAdministrationTests\/testCommentWithSpecialCharacters()",
+        "SQLServerTableAdministrationTests\/testCreateTableSimple()",
+        "SQLServerTableAdministrationTests\/testCreateTableWithAllDataTypes()",
+        "SQLServerTableAdministrationTests\/testCreateTableWithCommentsAndComputedColumn()",
+        "SQLServerTableAdministrationTests\/testCreateTableWithCompositePrimaryKey()",
+        "SQLServerTableAdministrationTests\/testCreateTableWithIdentityAndDefaults()",
+        "SQLServerTableAdministrationTests\/testCreateTableWithVariousConstraints()",
+        "SQLServerTableAdministrationTests\/testDropTable()",
+        "SQLServerTableAdministrationTests\/testMultipleColumnComments()",
+        "SQLServerTableAdministrationTests\/testRemoveColumnComment()",
+        "SQLServerTableAdministrationTests\/testRemoveTableComment()",
+        "SQLServerTableAdministrationTests\/testTableAndColumnCommentsSimultaneously()",
+        "SQLServerTableAdministrationTests\/testUpdateColumnComment()",
+        "SQLServerTableAdministrationTests\/testUpdateTableComment()",
+        "SQLServerTableDefinitionCoverageTests",
+        "SQLServerTableDefinitionCoverageTests\/testComprehensiveTableScripting()",
+        "SQLServerTableDefinitionTests",
+        "SQLServerTableDefinitionTests\/testFetchTableDefinition()",
+        "SQLServerTableScriptingMatrixTests",
+        "SQLServerTableScriptingMatrixTests\/testTableScriptGoldenRecreate()",
+        "SQLServerTableValuedParameterTests",
+        "SQLServerTableValuedParameterTests\/testExecuteWithMultipleTableValuedParametersAndScalars()",
+        "SQLServerTableValuedParameterTests\/testExecuteWithTableValuedParameter()",
+        "SQLServerTableValuedParameterTests\/testTableValuedParameterBinaryAndJsonPayloads()",
+        "SQLServerTableValuedParameterTests\/testTableValuedParameterHighRowCount()",
+        "SQLServerTableValuedParameterTests\/testTableValuedParameterMismatchedColumnsThrows()",
+        "SQLServerTemporalMatrixTests",
+        "SQLServerTemporalMatrixTests\/testTemporalDefaultHistoryScripting()",
+        "SQLServerTemporalMatrixTests\/testTemporalExplicitHistoryScripting()",
+        "SQLServerTemporalPartitionedTests",
+        "SQLServerTemporalPartitionedTests\/testPartitionedTableScripting()",
+        "SQLServerTemporalPartitionedTests\/testTemporalTableScripting()",
+        "SQLServerTransactionIsolationMatrixTests",
+        "SQLServerTransactionIsolationMatrixTests\/testReadCommittedSelectBlocksOnWriter()",
+        "SQLServerTransactionIsolationMatrixTests\/testSerializableRangeLockBlocksInsert()",
+        "SQLServerTransactionTests",
+        "SQLServerTransactionTests\/testBasicTransaction()",
+        "SQLServerTransactionTests\/testConcurrentTransactions()",
+        "SQLServerTransactionTests\/testConcurrentUpdateBlocksUntilCommit()",
+        "SQLServerTransactionTests\/testReadCommittedPreventsDirtyReads()",
+        "SQLServerTransactionTests\/testReadUncommittedAllowsDirtyReads()",
+        "SQLServerTransactionTests\/testRepeatableReadPreventsNonRepeatableReads()",
+        "SQLServerTransactionTests\/testSavepointRollbackWithinTransaction()",
+        "SQLServerTransactionTests\/testSerializablePreventsPhantomInserts()",
+        "SQLServerTransactionTests\/testSnapshotIsolationProvidesStableView()",
+        "SQLServerTransactionTests\/testTransactionIsolation()",
+        "SQLServerTransactionTests\/testTransactionRollback()",
+        "SQLServerTransactionTests\/testTransactionTimeout()",
+        "SQLServerTransactionTests\/testTransactionWithBulkOperations()",
+        "SQLServerTransactionTests\/testTransactionWithDeadlock()",
+        "SQLServerTransactionTests\/testTransactionWithError()",
+        "SQLServerTransactionTests\/testTransactionWithExtendedProperties()",
+        "SQLServerTransactionTests\/testTransactionWithSavepoints()",
+        "SQLServerTriggerTests",
+        "SQLServerVersionTests",
+        "SQLServerVersionTests\/testServerVersionViaClientAPI()",
+        "SQLServerViewIndexMatrixTests",
+        "SQLServerViewIndexMatrixTests\/testIndexedViewScripting()",
+        "SQLServerViewTests"
+      ],
+      "target" : {
+        "containerPath" : "container:",
+        "identifier" : "SQLServerKitTests",
+        "name" : "SQLServerKitTests"
+      }
+    },
+    {
+      "enabled" : false,
+      "target" : {
+        "containerPath" : "container:",
+        "identifier" : "SQLServerTDSTests",
+        "name" : "SQLServerTDSTests"
+      }
+    }
+  ],
+  "type" : "com.apple.dt.xctestplan",
+  "version" : 2
+}
