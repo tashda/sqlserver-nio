@@ -173,6 +173,7 @@ public final class SQLServerConnectionPool {
         }
 
         waiting.forEach { request in
+            // Complete the promise - promises can be completed from any thread
             request.promise.fail(Error.shutdown)
         }
 
@@ -192,13 +193,9 @@ public final class SQLServerConnectionPool {
     }
 
     private func makeImmediateSucceededFuture(on group: EventLoopGroup) -> EventLoopFuture<Void> {
-        // Try to pick an active loop without causing new registrations; fall back to an embedded loop
-        // only for immediate success futures to avoid scheduling onto a closing loop.
-        if let loop = (self.idle.first?.connection.eventLoop) ?? (self.waiters.first?.eventLoop) ?? Optional(group.next()) {
-            return loop.makeSucceededFuture(())
-        }
-        let embedded = EmbeddedEventLoop()
-        return embedded.makeSucceededFuture(())
+        // Always use a real event loop from the group to avoid EmbeddedEventLoop thread safety issues
+        let loop = group.next()
+        return loop.makeSucceededFuture(())
     }
 
     private func process(request: PoolRequest) {

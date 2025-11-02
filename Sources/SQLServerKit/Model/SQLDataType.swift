@@ -111,6 +111,11 @@ public enum SQLDataType: Sendable {
         case max
     }
 
+    /// Returns the SQL literal representation of this data type
+    public var sqlLiteral: String {
+        return self.toSqlString()
+    }
+
     internal func toSqlString() -> String {
         switch self {
         case .bit: return "BIT"
