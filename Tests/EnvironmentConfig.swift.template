@@ -1,0 +1,132 @@
+import Foundation
+
+/// Template for environment configuration - customize and copy to test directories as needed
+/// This file should be customized with your actual server connection information
+///
+/// USAGE:
+/// 1. Copy this file to Tests/EnvironmentConfig.swift and Tests/*/EnvironmentConfig.swift
+/// 2. Update the connection details below with your actual server information
+/// 3. The files will be ignored by .gitignore to keep sensitive data out of the repository
+///
+/// In Xcode test plans, set TEST_ENV=production (or staging, development, local)
+/// in Shared Settings to switch between server configurations
+
+/// Centralized environment configuration for SQL Server tests
+/// This allows maintaining multiple server configurations in one place
+/// and switching between them easily for different test scenarios.
+public enum TestEnvironment: String, CaseIterable {
+    case production = "production"
+    case staging = "staging"
+    case development = "development"
+    case local = "local"
+
+    /// Get the display name for this environment
+    public var displayName: String {
+        switch self {
+        case .production: return "Production Server"
+        case .staging: return "Staging Server"
+        case .development: return "Development Server"
+        case .local: return "Local Server"
+        }
+    }
+
+    /// Get configuration for this environment
+    public var configuration: SQLServerEnvironmentConfig {
+        switch self {
+        case .production:
+            return SQLServerEnvironmentConfig(
+                hostname: "YOUR_PRODUCTION_SERVER_IP",
+                port: 1433,
+                database: "master",
+                username: "YOUR_PRODUCTION_USER",
+                password: "YOUR_PRODUCTION_PASSWORD"
+            )
+        case .staging:
+            return SQLServerEnvironmentConfig(
+                hostname: "YOUR_STAGING_SERVER_IP",
+                port: 1433,
+                database: "staging_db",
+                username: "YOUR_STAGING_USER",
+                password: "YOUR_STAGING_PASSWORD"
+            )
+        case .development:
+            return SQLServerEnvironmentConfig(
+                hostname: "YOUR_DEVELOPMENT_SERVER_IP",
+                port: 1433,
+                database: "dev_db",
+                username: "YOUR_DEV_USER",
+                password: "YOUR_DEV_PASSWORD"
+            )
+        case .local:
+            return SQLServerEnvironmentConfig(
+                hostname: "localhost",
+                port: 1433,
+                database: "swift_tds_database",
+                username: "swift_tds_user",
+                password: "SwiftTDS!"
+            )
+        }
+    }
+}
+
+public struct SQLServerEnvironmentConfig {
+    public let hostname: String
+    public let port: Int
+    public let database: String
+    public let username: String
+    public let password: String
+
+    public init(hostname: String, port: Int, database: String, username: String, password: String) {
+        self.hostname = hostname
+        self.port = port
+        self.database = database
+        self.username = username
+        self.password = password
+    }
+}
+
+/// Centralized environment manager for SQL Server tests
+public class TestEnvironmentManager {
+
+    /// Get the current test environment based on TEST_ENV environment variable
+    /// Falls back to local if not specified
+    public static var currentEnvironment: TestEnvironment {
+        let envName = ProcessInfo.processInfo.environment["TEST_ENV"] ?? "local"
+        return TestEnvironment(rawValue: envName) ?? .local
+    }
+
+    /// Get the configuration for the current environment
+    public static var currentConfig: SQLServerEnvironmentConfig {
+        return currentEnvironment.configuration
+    }
+
+    /// Load environment variables from the current test environment
+    public static func loadEnvironmentVariables() {
+        let config = currentConfig
+
+        print("🔧 Loading environment: \(currentEnvironment.displayName)")
+        print("   Server: \(config.hostname):\(config.port)")
+        print("   Database: \(config.database)")
+        print("   User: \(config.username)")
+
+        // Set environment variables for the test process
+        setenv("TDS_HOSTNAME", config.hostname, 1)
+        setenv("TDS_PORT", String(config.port), 1)
+        setenv("TDS_DATABASE", config.database, 1)
+        setenv("TDS_USERNAME", config.username, 1)
+        setenv("TDS_PASSWORD", config.password, 1)
+
+        print("✅ Environment variables loaded successfully")
+    }
+
+    /// List all available environments
+    public static func listAvailableEnvironments() {
+        print("📋 Available Test Environments:")
+        for env in TestEnvironment.allCases {
+            let config = env.configuration
+            print("   \(env.rawValue): \(env.displayName)")
+            print("     Server: \(config.hostname):\(config.port)")
+            print("     Database: \(config.database)")
+        }
+    }
+}
