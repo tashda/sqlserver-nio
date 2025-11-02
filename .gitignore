@@ -8,6 +8,12 @@ xcuserdata/
 Package.Resolved
 Tests/LinuxMain.swift
 .env
+
+# Environment configuration files with sensitive server data
+Tests/TestConfig.local.swift
+Tests/*/TestConfig.local.swift
+
+# These files contain server connection information and should be customized locally
 /AGENTS.md
 /Docs
 Private.xctestplan
@@ -25,3 +31,5 @@ Private.xctestplan
 .build-warning.log
 .claude/
 rpc.cap
+/.build-*/
+build/
