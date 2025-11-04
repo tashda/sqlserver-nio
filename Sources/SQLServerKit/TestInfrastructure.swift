@@ -30,7 +30,7 @@ public enum TestEnvironment: String, CaseIterable {
             return TestEnvironmentConfig(
                 hostname: "localhost",
                 port: 1433,
-                database: "master",
+                database: "AdventureWorks2022",
                 username: "sa",
                 password: "YourPassword123!"
             )
@@ -38,25 +38,25 @@ public enum TestEnvironment: String, CaseIterable {
             return TestEnvironmentConfig(
                 hostname: "localhost",
                 port: 1433,
-                database: "staging_db",
-                username: "staging_user",
-                password: "StagingPass123!"
+                database: "AdventureWorks2022",
+                username: "sa",
+                password: "YourPassword123!"
             )
         case .development:
             return TestEnvironmentConfig(
                 hostname: "localhost",
-                port: 1434,
-                database: "dev_db",
-                username: "dev_user",
-                password: "DevPass123!"
+                port: 1433,
+                database: "AdventureWorks2022",
+                username: "sa",
+                password: "YourPassword123!"
             )
         case .local:
             return TestEnvironmentConfig(
                 hostname: "localhost",
                 port: 1433,
-                database: "swift_tds_database",
-                username: "swift_tds_user",
-                password: "SwiftTDS!"
+                database: "AdventureWorks2022",
+                username: "sa",
+                password: "YourPassword123!"
             )
         }
     }
