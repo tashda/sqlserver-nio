@@ -54,6 +54,8 @@ extension TDSConnection {
                 }
             }
             let connection = TDSConnection(channel: channel, logger: logger)
+            // Start reading immediately to handle multi-packet responses
+            channel.read()
             return channel.eventLoop.makeSucceededFuture(connection)
         }.flatMap { (conn: TDSConnection) -> EventLoopFuture<TDSConnection> in
             return conn.prelogin(shouldNegotiateEncryption: tlsConfiguration != nil ? true : false)
