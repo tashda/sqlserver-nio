@@ -32,6 +32,8 @@ public final class TDSConnection {
     // Session state & data classification snapshots (raw payloads)
     private var lastSessionStatePayload: [UInt8] = []
     private var lastDataClassificationPayload: [UInt8] = []
+    // Stall detection support
+    var lastStallSnapshot: String = ""
     
     init(channel: Channel, logger: Logger) {
         self.channel = channel
@@ -101,18 +103,15 @@ public final class TDSConnection {
     }
 
     // MARK: - Session state & data classification
-    internal func updateSessionState(payload: [UInt8]) {
-        self.lastSessionStatePayload = payload
-        logger.trace("TDS session state token received (\(payload.count) bytes)")
-    }
-
-    internal func updateDataClassification(payload: [UInt8]) {
-        self.lastDataClassificationPayload = payload
-        logger.trace("TDS data classification token received (\(payload.count) bytes)")
-    }
-
     public func snapshotSessionStatePayload() -> [UInt8] { lastSessionStatePayload }
+
     public func snapshotDataClassificationPayload() -> [UInt8] { lastDataClassificationPayload }
+    public func rawSql(_ sql: String) -> EventLoopFuture<[TDSData]> {
+        let promise = self.channel.eventLoop.makePromise(of: [TDSData].self)
+        let request = RawSqlRequest(sql: sql, resultPromise: promise)
+        _ = self.send(request, logger: self.logger)
+        return promise.futureResult
+    }
 }
 
 extension TDSConnection: @unchecked Sendable {}

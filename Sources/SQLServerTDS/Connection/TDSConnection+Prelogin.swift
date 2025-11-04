@@ -13,31 +13,36 @@ extension TDSConnection {
 
 internal final class PreloginRequest: TDSRequest {
     private let clientEncryption: TDSMessages.PreloginEncryption
-    
-    private var storedPackets = [TDSPacket]()
-    
+
+    private var accumulatedData = ByteBuffer()
+
+    public let onRow: ((TDSRow) -> Void)? = nil
+    public let onMetadata: (([TDSTokens.ColMetadataToken.ColumnData]) -> Void)? = nil
+    public let onDone: ((TDSTokens.DoneToken) -> Void)? = nil
+    public let onMessage: ((TDSTokens.ErrorInfoToken, Bool) -> Void)? = nil
+    public let onReturnValue: ((TDSTokens.ReturnValueToken) -> Void)? = nil
+
     init(_ shouldNegotiateEncryption: Bool) {
         self.clientEncryption = shouldNegotiateEncryption ? .encryptOn : .encryptNotSup
     }
-    
+
     func log(to logger: Logger) {
         logger.debug("Sending Prelogin message.")
     }
-    
-    func handle(packet: TDSPacket, allocator: ByteBufferAllocator) throws -> TDSPacketResponse {
-        storedPackets.append(packet)
-        
-        guard packet.header.status == .eom else {
-            return .continue
-        }
-        
-        switch packet.type {
-        case .preloginResponse:
-            var messageBuffer = ByteBuffer(from: storedPackets, allocator: allocator)
-            guard let parsedMessage = try? TDSMessages.PreloginResponse.parse(from: &messageBuffer) else {
-                throw TDSError.protocolError("Unable to parse prelogin response from message contents.")
+
+    func handle(dataStream: ByteBuffer, allocator: ByteBufferAllocator) throws -> TDSPacketResponse {
+        var mutableDataStream = dataStream
+        accumulatedData.writeBuffer(&mutableDataStream)
+
+        // Check if this appears to be complete prelogin data
+        // Prelogin responses are typically small and fit in one packet
+        if accumulatedData.readableBytes >= 8 {
+            var dataCopy = accumulatedData
+            guard let parsedMessage = try? TDSMessages.PreloginResponse.parse(from: &dataCopy) else {
+                // Need more data for complete prelogin response
+                return .continue
             }
-            
+
             // Encryption Negotiation - Supports all or nothing encryption
             if let serverEncryption = parsedMessage.encryption {
                 switch (serverEncryption, clientEncryption) {
@@ -52,13 +57,11 @@ internal final class PreloginRequest: TDSRequest {
                     throw TDSError.protocolError("PRELOGIN Error: Incompatible client/server encyption configuration. Client: \(clientEncryption), Server: \(serverEncryption)")
                 }
             }
-        default:
-            break
         }
-        
-        return .done
+
+        return .continue
     }
-    
+
     func start(allocator: ByteBufferAllocator) throws -> [TDSPacket] {
         let prelogin = TDSMessages.PreloginMessage(version: "9.0.0", encryption: clientEncryption)
         let message = try TDSMessage(payload: prelogin, allocator: allocator)
