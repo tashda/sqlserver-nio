@@ -356,7 +356,7 @@ public final class SQLServerMetadataClient {
         }
     }
 
-    private let connection: TDSConnection
+    private let connection: SQLServerConnection
     private let logger: Logger
     private let queryExecutor: @Sendable (String) -> EventLoopFuture<[TDSRow]>
     private let cache: MetadataCache<[ColumnMetadata]>?
@@ -376,7 +376,7 @@ public final class SQLServerMetadataClient {
             return connection.execute(sql).map(\.rows)
         }
         self.init(
-            connection: connection.underlying,
+            connection: connection,
             configuration: configuration,
             sharedCache: nil,
             defaultDatabase: connection.currentDatabase,
@@ -385,16 +385,10 @@ public final class SQLServerMetadataClient {
         )
     }
 
-    @available(*, deprecated, message: "Pass SQLServerConnection instead")
-    public convenience init(
-        connection: TDSConnection,
-        configuration: Configuration = Configuration()
-    ) {
-        self.init(connection: connection, configuration: configuration, sharedCache: nil, defaultDatabase: nil)
-    }
+
 
     internal init(
-        connection: TDSConnection,
+        connection: SQLServerConnection,
         configuration: Configuration,
         sharedCache: MetadataCache<[ColumnMetadata]>?,
         defaultDatabase: String?,
@@ -420,7 +414,7 @@ public final class SQLServerMetadataClient {
             self.queryExecutor = executor
         } else {
             self.queryExecutor = { sql in
-                connection.rawSql(sql)
+                connection.query(sql)
             }
         }
     }
@@ -1478,17 +1472,18 @@ public final class SQLServerMetadataClient {
         JOIN \(qualified(database, object: "sys.objects")) AS o ON c.object_id = o.object_id
         JOIN \(qualified(database, object: "sys.schemas")) AS s ON o.schema_id = s.schema_id
         JOIN \(qualified(database, object: "sys.types")) AS ut ON c.user_type_id = ut.user_type_id
-        JOIN \(qualified(database, object: "sys.types")) AS st ON c.system_type_id = st.user_type_id AND st.user_type_id = st.system_type_id
+        JOIN \(qualified(database, object: "sys.types")) AS st ON c.system_type_id = st.user_type_id AND st.user_type_id = st.system_type_id 
         """
 
-        if includeDefaultMetadata {
-            fromClause += """
+        // Ensure there's a space before the LEFT JOIN
+        // Always add LEFT JOINs for tables referenced in SELECT clause
+        // The SELECT clause always references dc, cc, ic, ck regardless of includeDefaultMetadata setting
+        fromClause += """
         LEFT JOIN \(qualified(database, object: "sys.default_constraints")) AS dc ON c.default_object_id = dc.object_id
         LEFT JOIN \(qualified(database, object: "sys.computed_columns")) AS cc ON c.object_id = cc.object_id AND c.column_id = cc.column_id
         LEFT JOIN \(qualified(database, object: "sys.identity_columns")) AS ic ON c.object_id = ic.object_id AND c.column_id = ic.column_id
         LEFT JOIN \(qualified(database, object: "sys.check_constraints")) AS ck ON c.default_object_id = ck.object_id AND ck.parent_column_id = c.column_id
         """
-        }
 
         if includeComments {
             fromClause += """
@@ -1614,7 +1609,7 @@ public final class SQLServerMetadataClient {
         JOIN \(dbPrefix)sys.schemas AS s ON s.schema_id = o.schema_id
         LEFT JOIN \(dbPrefix)sys.parameters AS p ON p.object_id = o.object_id
         LEFT JOIN \(dbPrefix)sys.types AS ut ON ut.user_type_id = p.user_type_id AND ut.system_type_id = ut.user_type_id
-        LEFT JOIN \(dbPrefix)sys.types AS st ON st.system_type_id = p.system_type_id AND st.user_type_id = st.system_type_id
+        LEFT JOIN \(dbPrefix)sys.types AS st ON st.system_type_id = p.system_type_id AND st.user_type_id = st.system_type_id 
         WHERE s.name = N'\(escapedSchema)'
           AND o.name = N'\(escapedObject)'
           AND o.type IN ('P','PC','RF','AF','FN','TF','IF')
@@ -2043,60 +2038,44 @@ private func listPrimaryKeysForSingleTable(
         schema: String,
         table: String
     ) -> EventLoopFuture<[IndexMetadata]> {
-        // Use catalog views to capture included columns and filters, which sp_statistics lacks
-        let dbPrefix = effectiveDatabase(database).map { "[\(SQLServerMetadataClient.escapeIdentifier($0))]." } ?? ""
-        let sql = """
-        SELECT
-            s.name AS schema_name,
-            t.name AS table_name,
-            i.name AS index_name,
-            i.is_unique,
-            i.type AS index_type,
-            i.filter_definition,
-            ic.key_ordinal,
-            ic.is_descending_key,
-            ic.is_included_column,
-            c.name AS column_name
-        FROM \(dbPrefix)sys.indexes AS i
-        JOIN \(dbPrefix)sys.tables AS t ON i.object_id = t.object_id
-        JOIN \(dbPrefix)sys.schemas AS s ON t.schema_id = s.schema_id
-        JOIN \(dbPrefix)sys.index_columns AS ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
-        JOIN \(dbPrefix)sys.columns AS c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
-        WHERE s.name = N'\(SQLServerMetadataClient.escapeLiteral(schema))'
-          AND t.name = N'\(SQLServerMetadataClient.escapeLiteral(table))'
-          AND i.index_id > 0
-          AND i.is_hypothetical = 0
-        ORDER BY s.name, t.name, i.name, ic.is_included_column, ic.key_ordinal, ic.index_column_id;
-        """
+        // Use sp_statistics stored procedure for simpler token parsing
+        let dbQualifier = effectiveDatabase(database) ?? ""
+        var parameters = ["@table_name = N'\(SQLServerMetadataClient.escapeLiteral(table))'"]
+        parameters.append("@table_owner = N'\(SQLServerMetadataClient.escapeLiteral(schema))'")
+        if !dbQualifier.isEmpty {
+            parameters.append("@table_qualifier = N'\(SQLServerMetadataClient.escapeLiteral(dbQualifier))'")
+        }
+        // Reduce token churn by disabling rowcount messages from the stored procedure
+        let sql = "SET NOCOUNT ON; EXEC sp_statistics \(parameters.joined(separator: ", "));"
 
         return queryExecutor(sql).map { rows in
             struct PartialIndex { var schema: String; var table: String; var name: String; var isUnique: Bool; var isClustered: Bool; var filter: String?; var cols: [IndexColumnMetadata] }
             var grouped: [String: PartialIndex] = [:]
             for row in rows {
                 guard
-                    let schemaName = row.column("schema_name")?.string,
-                    let tableName = row.column("table_name")?.string,
-                    let indexName = row.column("index_name")?.string,
-                    let columnName = row.column("column_name")?.string
+                    let schemaName = row.column("TABLE_OWNER")?.string,
+                    let tableName = row.column("TABLE_NAME")?.string,
+                    let indexName = row.column("INDEX_NAME")?.string,
+                    let columnName = row.column("COLUMN_NAME")?.string
                 else { continue }
                 let key = "\(schemaName)|\(tableName)|\(indexName)"
                 var entry = grouped[key] ?? PartialIndex(
                     schema: schemaName,
                     table: tableName,
                     name: indexName,
-                    isUnique: (row.column("is_unique")?.int ?? 0) != 0,
-                    isClustered: (row.column("index_type")?.int ?? 0) == 1,
-                    filter: row.column("filter_definition")?.string,
+                    isUnique: (row.column("NON_UNIQUE")?.int ?? 1) == 0,
+                    isClustered: false, // sp_statistics doesn't provide cluster info
+                    filter: row.column("FILTER_CONDITION")?.string,
                     cols: []
                 )
                 if entry.cols.isEmpty {
-                    entry.isUnique = (row.column("is_unique")?.int ?? 0) != 0
-                    entry.isClustered = (row.column("index_type")?.int ?? 0) == 1
-                    entry.filter = row.column("filter_definition")?.string
+                    entry.isUnique = (row.column("NON_UNIQUE")?.int ?? 1) == 0
+                    entry.isClustered = false // sp_statistics doesn't provide cluster info
+                    entry.filter = row.column("FILTER_CONDITION")?.string
                 }
-                let isIncluded = (row.column("is_included_column")?.int ?? 0) != 0
-                let ord = row.column("key_ordinal")?.int ?? 0
-                let isDesc = (row.column("is_descending_key")?.int ?? 0) != 0
+                let isIncluded = false // sp_statistics doesn't distinguish included columns
+                let ord = row.column("SEQ_IN_INDEX")?.int ?? 0
+                let isDesc = false // sp_statistics doesn't provide sort direction
                 let idxCol = IndexColumnMetadata(column: columnName, ordinal: ord, isDescending: isDesc, isIncluded: isIncluded)
                 entry.cols.append(idxCol)
                 grouped[key] = entry

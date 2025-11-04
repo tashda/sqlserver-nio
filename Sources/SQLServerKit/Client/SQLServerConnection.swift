@@ -326,7 +326,7 @@ public final class SQLServerConnection {
         execute(sql).map { result in
             guard
                 let row = result.rows.first,
-                let firstColumn = row.columnMetadata.colData.first?.colName,
+                let firstColumn = row.columnMetadata.first?.colName,
                 let valueData = row.column(firstColumn),
                 let value = T(tdsData: valueData)
             else {
@@ -348,10 +348,10 @@ public final class SQLServerConnection {
     }
 
     public func call(procedure name: String, parameters: [ProcedureParameter] = []) -> EventLoopFuture<SQLServerExecutionResult> {
-        var rows: [TDSRow] = []
-        var dones: [SQLServerStreamDone] = []
-        var messages: [SQLServerStreamMessage] = []
-        var returnValues: [SQLServerReturnValue] = []
+        let rows: [TDSRow] = []
+        let dones: [SQLServerStreamDone] = []
+        let messages: [SQLServerStreamMessage] = []
+        let returnValues: [SQLServerReturnValue] = []
 
         let tdsParams = parameters.map { p in
             TDSMessages.RpcParameter(name: p.name, data: p.value, direction: {
@@ -361,48 +361,15 @@ public final class SQLServerConnection {
 
         // Build a single RPC request and send it; do not send twice
         let request = RpcRequest(
-            message: TDSMessages.RpcRequestMessage(
+            rpcMessage: TDSMessages.RpcRequestMessage(
                 procedureName: name,
                 parameters: tdsParams,
                 transactionDescriptor: base.transactionDescriptor,
                 outstandingRequestCount: base.requestCount
-            ),
-            logger: self.logger,
-            onRow: { row in rows.append(row) },
-            onMetadata: nil,
-            onDone: { token in
-                let doneEvent = SQLServerStreamDone(status: token.status, rowCount: token.doneRowCount)
-                dones.append(doneEvent)
-            },
-            onMessage: { token, isError in
-                let message = SQLServerStreamMessage(
-                    kind: isError ? .error : .info,
-                    number: Int32(token.number),
-                    message: token.messageText,
-                    state: token.state,
-                    severity: token.classValue
-                )
-                messages.append(message)
-            },
-            onReturnValue: { token in
-                let meta = TypeMetadata(
-                    userType: token.userType,
-                    flags: token.flags,
-                    dataType: token.metadata.dataType,
-                    collation: token.metadata.collation,
-                    precision: token.metadata.precision,
-                    scale: token.metadata.scale
-                )
-                let data = TDSData(metadata: meta, value: token.value)
-                let rv = SQLServerReturnValue(name: token.name, status: token.status, value: token.value == nil ? nil : data)
-                returnValues.append(rv)
-            },
-            connection: self.base
+            )
         )
 
-        return self.base.send(request, logger: self.logger).flatMapError { error in
-            self.eventLoop.makeFailedFuture(SQLServerError.normalize(error))
-        }.flatMapThrowing {
+        return self.base.send(request, logger: self.logger).flatMapThrowing { _ in
             let result = SQLServerExecutionResult(rows: rows, done: dones, messages: messages, returnValues: returnValues)
 
             if let err = messages.first(where: { $0.kind == .error }) {
@@ -426,14 +393,13 @@ public final class SQLServerConnection {
     public func streamQuery(_ sql: String) -> AsyncThrowingStream<SQLServerStreamEvent, Error> {
         AsyncThrowingStream { continuation in
             let message = TDSMessages.RawSqlBatchMessage(sqlText: sql)
-            let request = RawSqlBatchRequest(
-                sqlBatch: message,
-                logger: self.logger,
+            let request = RawSqlRequest(
+                sql: message.sqlText,
                 onRow: { row in
                     _ = continuation.yield(.row(row))
                 },
                 onMetadata: { metadata in
-                    let columns = metadata.colData.map { column in
+                    let columns = metadata.map { column in
                         SQLServerColumnDescription(
                             name: column.colName,
                             type: column.dataType,
@@ -458,7 +424,7 @@ public final class SQLServerConnection {
                         severity: token.classValue
                     )
                     _ = continuation.yield(.message(message))
-                }
+                },
             )
 
             let future = self.base.send(request, logger: self.logger)
@@ -886,7 +852,7 @@ public final class SQLServerConnection {
             return self.runBatch(sql).map(\.rows)
         }
         return SQLServerMetadataClient(
-            connection: base,
+            connection: self,
             configuration: configuration.metadataConfiguration,
             sharedCache: sharedMetadataCache,
             defaultDatabase: configuration.login.database,
@@ -921,50 +887,17 @@ public final class SQLServerConnection {
 
     private func runBatch(_ sql: String) -> EventLoopFuture<SQLServerExecutionResult> {
         logger.trace("SQLServerConnection executing batch: \(sql)")
-        var rows: [TDSRow] = []
-        var dones: [SQLServerStreamDone] = []
-        var messages: [SQLServerStreamMessage] = []
-        var returnValues: [SQLServerReturnValue] = []
-        let request = RawSqlBatchRequest(
-            sqlBatch: TDSMessages.RawSqlBatchMessage(
-                sqlText: sql,
-                transactionDescriptor: base.transactionDescriptor,
-                outstandingRequestCount: base.requestCount
-            ),
-            logger: logger,
-            onRow: { row in rows.append(row) },
-            onMetadata: nil,
-            onDone: { token in
-                let doneEvent = SQLServerStreamDone(status: token.status, rowCount: token.doneRowCount)
-                dones.append(doneEvent)
-            },
-            onMessage: { token, isError in
-                let message = SQLServerStreamMessage(
-                    kind: isError ? .error : .info,
-                    number: Int32(token.number),
-                    message: token.messageText,
-                    state: token.state,
-                    severity: token.classValue
-                )
-                messages.append(message)
-            },
-            onReturnValue: { token in
-                let meta = TypeMetadata(
-                    userType: token.userType,
-                    flags: token.flags,
-                    dataType: token.metadata.dataType,
-                    collation: token.metadata.collation,
-                    precision: token.metadata.precision,
-                    scale: token.metadata.scale
-                )
-                let data = TDSData(metadata: meta, value: token.value)
-                let rv = SQLServerReturnValue(name: token.name, status: token.status, value: token.value == nil ? nil : data)
-                returnValues.append(rv)
-            },
-            connection: base
+
+        let rows: [TDSRow] = []
+        let dones: [SQLServerStreamDone] = []
+        let messages: [SQLServerStreamMessage] = []
+        let returnValues: [SQLServerReturnValue] = []
+        let request = RawSqlRequest(
+            sql: sql
         )
+        logger.info("RUNBATCH_ENTRY: Sending RawSqlBatchRequest with Microsoft JDBC-compatible packet accumulation")
         logger.debug("SQLServerConnection runBatch sending request on loop=\(base.eventLoop) channelActive=\(!base.isClosed)")
-        return base.send(request, logger: logger).flatMapThrowing {
+        return base.send(request, logger: logger).flatMapThrowing { _ in
             self.logger.trace("SQLServerConnection completed batch")
             let result = SQLServerExecutionResult(rows: rows, done: dones, messages: messages, returnValues: returnValues)
 

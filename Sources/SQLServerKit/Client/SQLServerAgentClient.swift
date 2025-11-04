@@ -1221,7 +1221,7 @@ public final class SQLServerAgentClient: @unchecked Sendable {
         return run(sql).map { rows in
             guard let row = rows.first else { return [:] }
             var result: [String: TDSData] = [:]
-            for column in row.columnMetadata.colData {
+            for column in row.columnMetadata {
                 let name = column.colName
                 if let value = row.column(name) {
                     result[name] = value
