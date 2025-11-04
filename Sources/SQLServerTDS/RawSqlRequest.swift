@@ -1,9 +1,9 @@
+
 import NIOCore
 import Logging
 
-public class RpcRequest: TDSRequest {
-    private let rpcMessage: TDSMessages.RpcRequestMessage
-
+public class RawSqlRequest: TDSRequest {
+    private let sql: String
     public let onRow: ((TDSRow) -> Void)?
     public let onMetadata: (([TDSTokens.ColMetadataToken.ColumnData]) -> Void)?
     public let onDone: ((TDSTokens.DoneToken) -> Void)?
@@ -12,7 +12,7 @@ public class RpcRequest: TDSRequest {
     public let resultPromise: EventLoopPromise<[TDSData]>?
 
     public init(
-        rpcMessage: TDSMessages.RpcRequestMessage,
+        sql: String,
         onRow: ((TDSRow) -> Void)? = nil,
         onMetadata: (([TDSTokens.ColMetadataToken.ColumnData]) -> Void)? = nil,
         onDone: ((TDSTokens.DoneToken) -> Void)? = nil,
@@ -20,7 +20,7 @@ public class RpcRequest: TDSRequest {
         onReturnValue: ((TDSTokens.ReturnValueToken) -> Void)? = nil,
         resultPromise: EventLoopPromise<[TDSData]>? = nil
     ) {
-        self.rpcMessage = rpcMessage
+        self.sql = sql
         self.onRow = onRow
         self.onMetadata = onMetadata
         self.onDone = onDone
@@ -30,11 +30,12 @@ public class RpcRequest: TDSRequest {
     }
 
     public func start(allocator: ByteBufferAllocator) throws -> [TDSPacket] {
-        let message = try TDSMessage(payload: rpcMessage, allocator: allocator)
-        return message.packets
+        let message = TDSMessages.RawSqlBatchMessage(sqlText: sql)
+        let tdsMessage = try TDSMessage(payload: message, allocator: allocator)
+        return tdsMessage.packets
     }
 
     public func log(to logger: Logger) {
-        logger.debug("Sending RPC request: \(rpcMessage.procedureName)")
+        logger.debug("Sending raw SQL request: \(sql)")
     }
 }

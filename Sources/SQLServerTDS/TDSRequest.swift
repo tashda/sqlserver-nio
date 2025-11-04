@@ -5,37 +5,52 @@ import Logging
 
 extension TDSConnection: TDSClient {
     public func send(_ request: TDSRequest, logger: Logger) -> EventLoopFuture<Void> {
-        // Allow writes even if the channel isn't active when using EmbeddedChannel in tests;
-        // production pipelines will guard via normal channel state and handler behavior.
         request.log(to: self.logger)
-        // Separate write completion from request completion. Avoid creating extra
-        // EventLoopPromises where possible to reduce the surface for leaks on loop shutdown.
         let completionPromise: EventLoopPromise<Void> = PromiseTracker.makeTrackedPromise(on: self.channel.eventLoop, label: "TDSRequest.completion")
-        let context = TDSRequestContext(delegate: request, promise: completionPromise)
-        // Track completion locally to decide whether to fail on channel close
+        let resultPromise: EventLoopPromise<[TDSData]>
+        if let rawSqlRequest = request as? RawSqlRequest, let existingPromise = rawSqlRequest.resultPromise {
+            resultPromise = existingPromise
+        } else {
+            resultPromise = PromiseTracker.makeTrackedPromise(on: self.channel.eventLoop, label: "TDSRequest.result")
+        }
+        let tokenHandler = RequestTokenHandler(
+            promise: completionPromise,
+            onRow: request.onRow,
+            onMetadata: request.onMetadata,
+            onDone: request.onDone,
+            onMessage: request.onMessage,
+            onReturnValue: request.onReturnValue
+        )
+        let context = TDSRequestContext(
+            delegate: request,
+            completionPromise: completionPromise,
+            resultPromise: resultPromise,
+            tokenHandler: tokenHandler
+        )
         var didComplete = false
         completionPromise.futureResult.whenComplete { _ in didComplete = true }
         self.logger.debug("[TDSRequest.send] creating promises on loop=\(self.channel.eventLoop) channelActive=\(self.channel.isActive)")
         let writeFuture = self.channel.writeAndFlush(context)
-        // If the channel closes at any point before the request completes, fail the
-        // completion promise to avoid leaking a promise on loop shutdown. The channel’s
-        // closeFuture completes successfully on normal close, so we must fail explicitly.
         self.channel.closeFuture.whenComplete { _ in
             if !didComplete {
                 completionPromise.fail(TDSError.connectionClosed)
+                resultPromise.fail(TDSError.connectionClosed)
             }
         }
-        // If the write fails (e.g., channel closed), reflect failure onto the overall completion.
         writeFuture.cascadeFailure(to: completionPromise)
-        // We intentionally avoid waiting here; EmbeddedChannel processes writes synchronously.
+        writeFuture.cascadeFailure(to: resultPromise)
         return completionPromise.futureResult
     }
 }
 
 public protocol TDSRequest {
-    func handle(packet: TDSPacket, allocator: ByteBufferAllocator) throws -> TDSPacketResponse
     func start(allocator: ByteBufferAllocator) throws -> [TDSPacket]
     func log(to logger: Logger)
+    var onRow: ((TDSRow) -> Void)? { get }
+    var onMetadata: (([TDSTokens.ColMetadataToken.ColumnData]) -> Void)? { get }
+    var onDone: ((TDSTokens.DoneToken) -> Void)? { get }
+    var onMessage: ((TDSTokens.ErrorInfoToken, Bool) -> Void)? { get }
+    var onReturnValue: ((TDSTokens.ReturnValueToken) -> Void)? { get }
 }
 
 public enum TDSPacketResponse {
@@ -47,18 +62,28 @@ public enum TDSPacketResponse {
 
 final class TDSRequestContext {
     let delegate: TDSRequest
-    let promise: EventLoopPromise<Void>
+    let completionPromise: EventLoopPromise<Void>
+    let resultPromise: EventLoopPromise<[TDSData]>
+    let tokenHandler: TokenHandler
     var lastError: Error?
     var started: Bool = false
-    
-    init(delegate: TDSRequest, promise: EventLoopPromise<Void>) {
+    var rows: [TDSRow] = []
+
+    init(
+        delegate: TDSRequest,
+        completionPromise: EventLoopPromise<Void>,
+        resultPromise: EventLoopPromise<[TDSData]>,
+        tokenHandler: TokenHandler
+    ) {
         self.delegate = delegate
-        self.promise = promise
+        self.completionPromise = completionPromise
+        self.resultPromise = resultPromise
+        self.tokenHandler = tokenHandler
     }
 }
 
 final class TDSRequestHandler: ChannelDuplexHandler {
-    typealias InboundIn = TDSPacket
+    typealias InboundIn = ByteBuffer  // Complete messages from Message Assembly Layer
     typealias OutboundIn = TDSRequestContext
     typealias OutboundOut = TDSPacket
     
@@ -70,8 +95,12 @@ final class TDSRequestHandler: ChannelDuplexHandler {
     private let firstDecoderName: String
     private let firstEncoderName: String
     private let pipelineCoordinatorName: String
-    
+
     var sslClientHandler: NIOSSLClientHandler?
+
+    // Reference to the actual decoder for mode switching
+    private let packetDecoder: TDSPacketDecoder
+    private let streamParser: TDSStreamParser
     
     var pipelineCoordinator: PipelineOrganizationHandler!
     
@@ -115,36 +144,57 @@ final class TDSRequestHandler: ChannelDuplexHandler {
         self.firstDecoderName = firstDecoderName
         self.firstEncoderName = firstEncoderName
         self.pipelineCoordinatorName = pipelineCoordinatorName
+
+        // Create a reference to the decoder for mode switching
+        // Since ByteToMessageHandler doesn't expose its decoder directly,
+        // we'll create our own instance that we can control
+        self.packetDecoder = TDSPacketDecoder(logger: logger)
+        self.streamParser = TDSStreamParser()
+
+        // Replace the provided decoder with our controllable one
+        self.firstDecoder = ByteToMessageHandler(packetDecoder)
     }
     
     private func _channelRead(context: ChannelHandlerContext, data: NIOAny) throws {
-        let packet = self.unwrapInboundIn(data)
         guard let request = self.currentRequest else {
-            // discard packet
+            // discard data
             return
         }
-        
+
         do {
-            let response = try request.delegate.handle(packet: packet, allocator: context.channel.allocator)
-            switch response {
-            case .kickoffSSL:
-                guard case .sentPrelogin = state else {
-                    throw TDSError.protocolError("Unexpected state to initiate SSL kickoff. If encryption is negotiated, the SSL exchange should immediately follow the PRELOGIN phase.")
+            var data = self.unwrapInboundIn(data)
+        streamParser.buffer.writeBuffer(&data)
+            let tokenParser = TDSTokenParser(streamParser: streamParser, logger: logger)
+            let tokens = try tokenParser.parse()
+
+            for token in tokens {
+                switch token.type {
+                case .colMetadata:
+                    let colMetadataToken = token as! TDSTokens.ColMetadataToken
+                    request.delegate.onMetadata?(colMetadataToken.colData)
+                    request.tokenHandler.onColMetadata(colMetadataToken)
+                case .row:
+                    let rowToken = token as! TDSTokens.RowToken
+                    let row = TDSRow(token: rowToken, columns: request.tokenHandler.columns)
+                    request.rows.append(row)
+                    request.delegate.onRow?(row)
+                    request.tokenHandler.onRow(rowToken)
+                case .done, .doneInProc, .doneProc:
+                    let doneToken = token as! TDSTokens.DoneToken
+                    request.delegate.onDone?(doneToken)
+                    request.tokenHandler.onDone(doneToken)
+                    request.resultPromise.succeed(request.rows.flatMap { $0.data })
+                case .info, .error:
+                    let messageToken = token as! TDSTokens.ErrorInfoToken
+                    request.delegate.onMessage?(messageToken, token.type == .error)
+                    request.tokenHandler.onMessage(messageToken)
+                case .returnValue:
+                    let returnValueToken = token as! TDSTokens.ReturnValueToken
+                    request.delegate.onReturnValue?(returnValueToken)
+                    request.tokenHandler.onReturnValue(returnValueToken)
+                default:
+                    break
                 }
-                try sslKickoff(context: context)
-            case .respond(let packets):
-                try write(context: context, packets: packets, promise: nil)
-                context.flush()
-            case .continue:
-                return
-            case .done:
-                if request.delegate is LoginRequest {
-                    // Mark connection as logged in after LOGIN completes
-                    self.state = .loggedIn
-                }
-                cleanupRequest(request)
-                // Start the next queued request, if any
-                startNextIfQueued(context: context)
             }
         } catch {
             cleanupRequest(request, error: error)
@@ -176,9 +226,11 @@ final class TDSRequestHandler: ChannelDuplexHandler {
     private func cleanupRequest(_ request: TDSRequestContext, error: Error? = nil) {
         self.queue.removeFirst()
         if let error = error {
-            request.promise.fail(error)
+            request.completionPromise.fail(error)
+            request.resultPromise.fail(error)
         } else {
-            request.promise.succeed(())
+            request.completionPromise.succeed(())
+            request.resultPromise.succeed(request.rows.flatMap { $0.data })
         }
     }
     
@@ -259,7 +311,8 @@ final class TDSRequestHandler: ChannelDuplexHandler {
             if self.state == .loggedIn {
                 // After successful login, any further LOGIN attempts are no-ops.
                 self.logger.debug("Dropping LOGIN after connection is already logged in")
-                request.promise.succeed(())
+                request.completionPromise.succeed(())
+                request.resultPromise.succeed([])
                 promise?.succeed(())
                 return
             } else if loginAlreadyQueued || self.state == .sentLogin {
@@ -267,7 +320,8 @@ final class TDSRequestHandler: ChannelDuplexHandler {
                 // duplicate request before it ever enters the queue. The original LOGIN
                 // remains the head and will complete normally.
                 self.logger.debug("Dropping duplicate queued LOGIN request")
-                request.promise.succeed(())
+                request.completionPromise.succeed(())
+                request.resultPromise.succeed([])
                 promise?.succeed(())
                 return
             }
@@ -297,7 +351,8 @@ final class TDSRequestHandler: ChannelDuplexHandler {
         context.close(mode: mode, promise: promise)
         
         for current in self.queue {
-            current.promise.fail(TDSError.connectionClosed)
+            current.completionPromise.fail(TDSError.connectionClosed)
+            current.resultPromise.fail(TDSError.connectionClosed)
         }
         self.queue = []
     }
@@ -306,9 +361,13 @@ final class TDSRequestHandler: ChannelDuplexHandler {
         logger.error("TDS pipeline error: \(error.localizedDescription)")
         context.fireErrorCaught(error)
         if !queue.isEmpty {
-            cleanupRequest(queue[0], error: error)
+            let req = queue.removeFirst()
+            req.completionPromise.fail(error)
+            req.resultPromise.fail(error)
             while !queue.isEmpty {
-                cleanupRequest(queue[0], error: TDSError.connectionClosed)
+                let nextReq = queue.removeFirst()
+                nextReq.completionPromise.fail(TDSError.connectionClosed)
+                nextReq.resultPromise.fail(TDSError.connectionClosed)
             }
         }
     }
@@ -330,7 +389,7 @@ final class TDSRequestHandler: ChannelDuplexHandler {
             
             let future = removals.flatMap { _ in
                 do {
-                    let newDecoder = ByteToMessageHandler(TDSPacketDecoder(logger: self.logger))
+                    let newDecoder = ByteToMessageHandler(self.packetDecoder)
                     let newEncoder = MessageToByteHandler(TDSPacketEncoder(logger: self.logger))
                     let ops = pipeline.syncOperations
                     try ops.addHandler(newDecoder, name: self.firstDecoderName, position: .after(sslHandler))
@@ -394,7 +453,8 @@ final class TDSRequestHandler: ChannelDuplexHandler {
             case .failCurrentRequestTimeout:
                 // Fail the current request promise with a timeout-like error without closing the channel.
                 if let current = self.currentRequest, context.channel.isActive {
-                    cleanupRequest(current, error: TDSError.protocolError("request timeout"))
+                    current.completionPromise.fail(TDSError.protocolError("request timeout"))
+                    current.resultPromise.fail(TDSError.protocolError("request timeout"))
                 }
                 promise?.succeed(())
                 return
@@ -408,7 +468,9 @@ final class TDSRequestHandler: ChannelDuplexHandler {
         // Fail any pending TLS handshake output promise to avoid leaking promises on loop shutdown.
         pipelineCoordinator?.failHandshakeIfPending()
         while !queue.isEmpty {
-            cleanupRequest(queue[0], error: TDSError.connectionClosed)
+            let req = queue.removeFirst()
+            req.completionPromise.fail(TDSError.connectionClosed)
+            req.resultPromise.fail(TDSError.connectionClosed)
         }
         // Diagnostic: dump any unresolved promises we created on this loop
         PromiseTracker.dumpUnresolved(context: "channelInactive loop=\(context.eventLoop)")
@@ -423,7 +485,8 @@ final class TDSRequestHandler: ChannelDuplexHandler {
         }
         while !queue.isEmpty {
             let req = queue.removeFirst()
-            req.promise.fail(TDSError.connectionClosed)
+            req.completionPromise.fail(TDSError.connectionClosed)
+            req.resultPromise.fail(TDSError.connectionClosed)
         }
     }
 
@@ -437,6 +500,8 @@ final class TDSRequestHandler: ChannelDuplexHandler {
             let packets = try next.delegate.start(allocator: context.channel.allocator)
             try write(context: context, packets: packets, promise: nil)
             context.flush()
+            // Explicitly request reading to handle multi-packet responses
+            context.read()
         } catch {
             self.errorCaught(context: context, error: error)
         }
