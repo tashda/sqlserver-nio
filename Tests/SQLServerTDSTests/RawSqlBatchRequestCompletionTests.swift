@@ -22,7 +22,7 @@ final class RawSqlBatchRequestCompletionTests: XCTestCase {
 
         let packet = TDSPacket(from: &payload, ofType: .tabularResult, isLastPacket: true, packetId: 1, allocator: ByteBufferAllocator())
 
-        let response = try request.handle(packet: packet, allocator: ByteBufferAllocator())
+        let response = try request.handle(dataStream: packet.messageBuffer, allocator: ByteBufferAllocator())
         switch response {
         case .done:
             break // expected
@@ -45,7 +45,7 @@ final class RawSqlBatchRequestCompletionTests: XCTestCase {
         p1.writeInteger(TDSTokens.TokenType.done.rawValue, as: UInt8.self)
         p1.writeInteger(UInt8(0)) // only low byte of status
         let pkt1 = TDSPacket(from: &p1, ofType: .tabularResult, isLastPacket: false, packetId: 1, allocator: ByteBufferAllocator())
-        let r1 = try request.handle(packet: pkt1, allocator: ByteBufferAllocator())
+        let r1 = try request.handle(dataStream: pkt1.messageBuffer, allocator: ByteBufferAllocator())
         switch r1 {
         case .continue:
             break // expected until we receive the rest
@@ -60,7 +60,7 @@ final class RawSqlBatchRequestCompletionTests: XCTestCase {
         p2.writeInteger(UInt16(0), endianness: .little) // curCmd
         p2.writeInteger(UInt64(0), endianness: .little) // rowcount
         let pkt2 = TDSPacket(from: &p2, ofType: .tabularResult, isLastPacket: true, packetId: 2, allocator: ByteBufferAllocator())
-        let r2 = try request.handle(packet: pkt2, allocator: ByteBufferAllocator())
+        let r2 = try request.handle(dataStream: pkt2.messageBuffer, allocator: ByteBufferAllocator())
         switch r2 {
         case .done:
             break // expected now that token is complete

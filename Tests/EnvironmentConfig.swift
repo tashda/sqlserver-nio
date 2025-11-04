@@ -100,6 +100,12 @@ public class TestEnvironmentManager {
         return currentEnvironment.configuration
     }
 
+    /// Get the test database for metadata analysis from TDS_TEST_DB environment variable
+    /// Falls back to current config database if not specified
+    public static var testDatabase: String? {
+        return ProcessInfo.processInfo.environment["TDS_TEST_DB"] ?? currentConfig.database
+    }
+
     /// Load environment variables from the current test environment
     public static func loadEnvironmentVariables() {
         let config = currentConfig
