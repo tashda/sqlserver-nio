@@ -53,18 +53,6 @@ final class SQLServerDataTypeRoundTripTests: XCTestCase {
                 try await dbAdminClient.createTable(name: tableName, columns: columns)
 
                 // Insert data using SQLServerKit APIs
-                let insertValues: [String: Any] = [
-                    "bit_value": 1,
-                    "tiny_value": 255,
-                    "small_value": -120,
-                    "int_value": 214748364,
-                    "big_value": 922337203685,
-                    "decimal_value": 98765.4321,
-                    "numeric_value": 123.456,
-                    "money_value": 88.88,
-                    "float_value": 3.1415926535,
-                    "real_value": 1.25
-                ]
                 try await dbClient.query("INSERT INTO [dbo].[\(tableName)] (bit_value, tiny_value, small_value, int_value, big_value, decimal_value, numeric_value, money_value, float_value, real_value) VALUES (1, 255, -120, 214748364, 922337203685, 98765.4321, 123.456, 88.88, 3.1415926535, 1.25)").get()
 
                 // Query data back using SQLServerKit APIs

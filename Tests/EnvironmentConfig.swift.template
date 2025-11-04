@@ -100,14 +100,24 @@ public class TestEnvironmentManager {
         return currentEnvironment.configuration
     }
 
+    /// Get the test database for metadata analysis from TDS_TEST_DB environment variable
+    /// Falls back to current config database if not specified
+    public static var testDatabase: String {
+        return ProcessInfo.processInfo.environment["TDS_TEST_DB"] ?? currentConfig.database
+    }
+
     /// Load environment variables from the current test environment
     public static func loadEnvironmentVariables() {
         let config = currentConfig
+        let testDb = testDatabase
 
         print("🔧 Loading environment: \(currentEnvironment.displayName)")
         print("   Server: \(config.hostname):\(config.port)")
         print("   Database: \(config.database)")
         print("   User: \(config.username)")
+        if ProcessInfo.processInfo.environment["TDS_TEST_DB"] != nil {
+            print("   Test Database (TDS_TEST_DB): \(testDb)")
+        }
 
         // Set environment variables for the test process
         setenv("TDS_HOSTNAME", config.hostname, 1)
@@ -115,6 +125,7 @@ public class TestEnvironmentManager {
         setenv("TDS_DATABASE", config.database, 1)
         setenv("TDS_USERNAME", config.username, 1)
         setenv("TDS_PASSWORD", config.password, 1)
+        setenv("TDS_TEST_DB", testDb, 1)
 
         print("✅ Environment variables loaded successfully")
     }
