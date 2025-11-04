@@ -33,3 +33,16 @@ Private.xctestplan
 rpc.cap
 /.build-*/
 build/
+TEST.md
+Comprehensive-Restructuring-Plan.md
+COMPREHENSIVE_TEST_GUIDE.md
+debug_tds_parsing.swift
+TDS_FIXES_VALIDATION_SUMMARY.md
+Test-API-Coverage-Plan.md
+Test-Restructuring-Completed.md
+Test-Restructuring-Plan.md
+CLAUDE.md
+test_metadata_fix.swift
+test_tds_fix.swift
+test_tds_stream.swift
+Tests/SETUP.md
