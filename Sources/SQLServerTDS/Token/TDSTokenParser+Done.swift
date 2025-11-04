@@ -1,22 +1,25 @@
+import NIOCore
+
 extension TDSTokenParser {
-    public static func parseDoneToken(from buffer: inout ByteBuffer) throws -> TDSTokens.DoneToken {
-        // DONE token layout: STATUS (2) + CURCMD (2) + ROWCOUNT (8)
-        let requiredBytes = 2 + 2 + 8
-        guard buffer.readableBytes >= requiredBytes else {
-            // Not enough bytes to parse the DONE token; ask for more data.
-            throw TDSError.needMoreData
-        }
-        guard let status = buffer.readUShort() else {
-            throw TDSError.protocolError("Invalid DONE token: missing status")
-        }
-        guard let curCmd = buffer.readUShort() else {
-            throw TDSError.protocolError("Invalid DONE token: missing curCmd")
-        }
-        guard let doneRowCount = buffer.readULongLong() else {
-            throw TDSError.protocolError("Invalid DONE token: missing rowcount")
+    public func parseDoneToken() throws -> TDSTokens.DoneToken? {
+        guard let tokenType = streamParser.readUInt8(), tokenType == TDSTokens.TokenType.done.rawValue else {
+            // This is not a DONE token, so we should reset the position and return nil
+            streamParser.position -= 1
+            return nil
         }
 
-        let token = TDSTokens.DoneToken(status: status, curCmd: curCmd, doneRowCount: doneRowCount)
-        return token
+        guard let status = streamParser.readUInt16LE() else {
+            throw TDSError.needMoreData
+        }
+
+        guard let curCmd = streamParser.readUInt16LE() else {
+            throw TDSError.needMoreData
+        }
+
+        guard let doneRowCount = streamParser.readUInt64LE() else {
+            throw TDSError.needMoreData
+        }
+
+        return TDSTokens.DoneToken(status: status, curCmd: curCmd, doneRowCount: doneRowCount)
     }
 }

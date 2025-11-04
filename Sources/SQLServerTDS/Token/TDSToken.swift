@@ -44,8 +44,16 @@ public enum TDSTokens {
         case colMetadata = 0x81
         /// COLUMNSTATUS - Provides column status information
         case columnStatus = 0x65
+        /// UNKNOWN_0x04 - Undocumented Microsoft TDS token, appears during parsing
+        case unknown0x04 = 0x04
+        /// UNKNOWN_0x61 - Undocumented Microsoft TDS token, appears during metadata operations
+        case unknown0x61 = 0x61
         /// UNKNOWN_0x74 - Undocumented Microsoft TDS token, appears during metadata operations
         case unknown0x74 = 0x74
+        /// UNKNOWN_0xc1 - Undocumented Microsoft TDS token, appears during parsing
+        case unknown0xc1 = 0xc1
+        /// RESULTSET - Microsoft JDBC compatible result set token (0x38)
+        case resultSet = 0x38
         /// DATACLASSIFICATION
         case dataClassification = 0xA3
         /// DONE
@@ -104,7 +112,7 @@ public enum TDSTokens {
         public var count: UShort
         public var colData: [ColumnData]
 
-        public struct ColumnData: Metadata {
+        public struct ColumnData: Metadata, Sendable {
             public var userType: ULong
             public var flags: UShort
             public var dataType: TDSDataType
@@ -121,7 +129,7 @@ public enum TDSTokens {
         public var type: TokenType = .row
         public var colData: [ColumnData]
 
-        public struct ColumnData {
+        public struct ColumnData: Sendable {
             public var textPointer: [Byte]
             public var timestamp: [Byte]
             public var data: ByteBuffer?
@@ -185,6 +193,10 @@ public enum TDSTokens {
         public var payload: ByteBuffer
     }
 
+    public struct Unknown0x61Token: TDSToken {
+        public var type: TokenType = .unknown0x61
+        public var payload: ByteBuffer
+    }
     public struct Unknown0x74Token: TDSToken {
         public var type: TokenType = .unknown0x74
         public var payload: ByteBuffer
@@ -209,6 +221,12 @@ public enum TDSTokens {
         public var type: TokenType = .columnStatus
         public var status: UShort
         public var data: [Byte]
+    }
+
+    /// RESULTSET token - Microsoft JDBC compatible result set metadata token
+    public struct ResultSetToken: TDSToken {
+        public var type: TokenType = .resultSet
+        public var data: ByteBuffer
     }
 
     public struct DoneToken: TDSToken {
