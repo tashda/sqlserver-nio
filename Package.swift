@@ -180,6 +180,16 @@ let package = Package(
             ],
             path: "Tests/MetadataTests"),
 
+        // Metadata Analysis Tests
+        .testTarget(
+            name: "SQLServerMetadataAnalysisTests",
+            dependencies: [
+                "SQLServerKit",
+                .product(name: "NIOTestUtils", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+            ],
+            path: "Tests/MetadataAnalysisTests"),
+
         // Advanced Tests
         .testTarget(
             name: "SQLServerAdvancedTests",
@@ -219,5 +229,6 @@ let package = Package(
                 .product(name: "NIOHTTP1", package: "swift-nio"),
             ],
         ),
+
     ]
 )
