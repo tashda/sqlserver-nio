@@ -1,6 +1,6 @@
 import Foundation
 
-public enum TDSError: Error, LocalizedError, CustomStringConvertible {
+public enum TDSError: Error, LocalizedError, CustomStringConvertible, Equatable {
     case protocolError(String)
     case connectionClosed
     case invalidCredentials

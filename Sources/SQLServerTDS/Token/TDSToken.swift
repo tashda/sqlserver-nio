@@ -122,6 +122,35 @@ public enum TDSTokens {
             public var colName: String
             public var precision: Int?
             public var scale: Int?
+
+            /// Provides enhanced type information for the column
+            public var typeInfo: TypeInfo {
+                return TypeInfo(
+                    name: String(describing: self.dataType),
+                    maxColumnLength: self.normalizedLength
+                )
+            }
+
+            /// Returns the display name for the data type
+            public var displayName: String {
+                return String(describing: self.dataType)
+            }
+
+            /// Returns the normalized length for the column
+            public var normalizedLength: Int? {
+                return self.length
+            }
+        }
+
+        /// Enhanced type information for column metadata
+        public struct TypeInfo: Sendable {
+            public let name: String
+            public let maxColumnLength: Int?
+
+            public init(name: String, maxColumnLength: Int? = nil) {
+                self.name = name
+                self.maxColumnLength = maxColumnLength
+            }
         }
     }
 

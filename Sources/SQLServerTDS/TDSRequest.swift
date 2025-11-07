@@ -51,6 +51,7 @@ public protocol TDSRequest {
     var onDone: ((TDSTokens.DoneToken) -> Void)? { get }
     var onMessage: ((TDSTokens.ErrorInfoToken, Bool) -> Void)? { get }
     var onReturnValue: ((TDSTokens.ReturnValueToken) -> Void)? { get }
+    var stream: Bool { get }
 }
 
 public enum TDSPacketResponse {
@@ -163,9 +164,32 @@ final class TDSRequestHandler: ChannelDuplexHandler {
 
         do {
             var data = self.unwrapInboundIn(data)
-        streamParser.buffer.writeBuffer(&data)
+
+            if let preloginRequest = request.delegate as? PreloginRequest {
+                logger.trace("Received PRELOGIN response chunk (\(data.readableBytes) bytes)")
+                let response = try preloginRequest.handle(dataStream: data, allocator: context.channel.allocator)
+
+                switch response {
+                case .done:
+                    logger.trace("PRELOGIN completed successfully; advancing to LOGIN")
+                    cleanupRequest(request)
+                    startNextIfQueued(context: context)
+                case .continue:
+                    break
+                case .respond(let packets):
+                    try write(context: context, packets: packets, promise: nil)
+                    context.flush()
+                case .kickoffSSL:
+                    try sslKickoff(context: context)
+                }
+
+                return
+            }
+
+            streamParser.buffer.writeBuffer(&data)
             let tokenParser = TDSTokenParser(streamParser: streamParser, logger: logger)
             let tokens = try tokenParser.parse()
+            var loginAckReceived = false
 
             for token in tokens {
                 switch token.type {
@@ -179,11 +203,22 @@ final class TDSRequestHandler: ChannelDuplexHandler {
                     request.rows.append(row)
                     request.delegate.onRow?(row)
                     request.tokenHandler.onRow(rowToken)
+                case .nbcRow:
+                    let nbcRowToken = token as! TDSTokens.NbcRowToken
+                    let syntheticRow = TDSTokens.RowToken(colData: nbcRowToken.colData)
+                    let row = TDSRow(token: syntheticRow, columns: request.tokenHandler.columns)
+                    request.rows.append(row)
+                    request.delegate.onRow?(row)
+                    request.tokenHandler.onRow(syntheticRow)
                 case .done, .doneInProc, .doneProc:
                     let doneToken = token as! TDSTokens.DoneToken
                     request.delegate.onDone?(doneToken)
                     request.tokenHandler.onDone(doneToken)
-                    request.resultPromise.succeed(request.rows.flatMap { $0.data })
+                    let doneMoreFlag: UShort = 0x0001
+                    if (doneToken.status & doneMoreFlag) == 0 {
+                        cleanupRequest(request)
+                        startNextIfQueued(context: context)
+                    }
                 case .info, .error:
                     let messageToken = token as! TDSTokens.ErrorInfoToken
                     request.delegate.onMessage?(messageToken, token.type == .error)
@@ -192,9 +227,25 @@ final class TDSRequestHandler: ChannelDuplexHandler {
                     let returnValueToken = token as! TDSTokens.ReturnValueToken
                     request.delegate.onReturnValue?(returnValueToken)
                     request.tokenHandler.onReturnValue(returnValueToken)
+                case .loginAck:
+                    loginAckReceived = true
+                    logger.info("Received LOGINACK token; connection authenticated.")
+                    self.state = .loggedIn
+                case .envchange:
+                    // Handle envchange tokens during login
+                    // These are expected during login and should be ignored
+                    break
                 default:
                     break
                 }
+            }
+
+            if loginAckReceived,
+               let current = self.currentRequest,
+               current === request,
+               request.delegate is LoginRequest {
+                cleanupRequest(request)
+                startNextIfQueued(context: context)
             }
         } catch {
             cleanupRequest(request, error: error)

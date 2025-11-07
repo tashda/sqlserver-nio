@@ -2,24 +2,29 @@ import NIOCore
 
 extension TDSTokenParser {
     public func parseDoneToken() throws -> TDSTokens.DoneToken? {
-        guard let tokenType = streamParser.readUInt8(), tokenType == TDSTokens.TokenType.done.rawValue else {
-            // This is not a DONE token, so we should reset the position and return nil
-            streamParser.position -= 1
+        let start = streamParser.position
+
+        guard let tokenByte = streamParser.readUInt8() else {
             return nil
         }
 
-        guard let status = streamParser.readUInt16LE() else {
+        guard let tokenType = TDSTokens.TokenType(rawValue: tokenByte),
+              tokenType == .done || tokenType == .doneInProc || tokenType == .doneProc
+        else {
+            streamParser.position = start
+            return nil
+        }
+
+        guard let status = streamParser.readUInt16LE(),
+              let curCmd = streamParser.readUInt16LE(),
+              let doneRowCount = streamParser.readUInt64LE()
+        else {
+            streamParser.position = start
             throw TDSError.needMoreData
         }
 
-        guard let curCmd = streamParser.readUInt16LE() else {
-            throw TDSError.needMoreData
-        }
-
-        guard let doneRowCount = streamParser.readUInt64LE() else {
-            throw TDSError.needMoreData
-        }
-
-        return TDSTokens.DoneToken(status: status, curCmd: curCmd, doneRowCount: doneRowCount)
+        var token = TDSTokens.DoneToken(status: status, curCmd: curCmd, doneRowCount: doneRowCount)
+        token.type = tokenType
+        return token
     }
 }

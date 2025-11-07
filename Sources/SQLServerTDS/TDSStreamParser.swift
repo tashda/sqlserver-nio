@@ -23,6 +23,13 @@ public class TDSStreamParser {
         return value
     }
 
+    public func peekUInt8() -> UInt8? {
+        guard buffer.readableBytes >= 1 else {
+            return nil
+        }
+        return buffer.getInteger(at: position, as: UInt8.self)
+    }
+
     public func readUInt16LE() -> UInt16? {
         guard buffer.readableBytes >= 2 else {
             return nil
