@@ -10,6 +10,8 @@ public class LoginRequest: TDSRequest {
     public let onDone: ((TDSTokens.DoneToken) -> Void)? = nil
     public let onMessage: ((TDSTokens.ErrorInfoToken, Bool) -> Void)? = nil
     public let onReturnValue: ((TDSTokens.ReturnValueToken) -> Void)? = nil
+    public let stream: Bool = false // Login requests are always non-streaming
+    public let onData: ((TDSData) -> Void)? = nil // Login requests don't use onData
 
     public init(payload: TDSMessages.Login7Message) {
         self.payload = payload

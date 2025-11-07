@@ -10,6 +10,8 @@ public class RpcRequest: TDSRequest {
     public let onMessage: ((TDSTokens.ErrorInfoToken, Bool) -> Void)?
     public let onReturnValue: ((TDSTokens.ReturnValueToken) -> Void)?
     public let resultPromise: EventLoopPromise<[TDSData]>?
+    public let stream: Bool = false // RPC requests are always non-streaming
+    public let onData: ((TDSData) -> Void)? = nil // RPC requests don't use onData
 
     public init(
         rpcMessage: TDSMessages.RpcRequestMessage,

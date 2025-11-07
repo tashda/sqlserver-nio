@@ -21,6 +21,8 @@ internal final class PreloginRequest: TDSRequest {
     public let onDone: ((TDSTokens.DoneToken) -> Void)? = nil
     public let onMessage: ((TDSTokens.ErrorInfoToken, Bool) -> Void)? = nil
     public let onReturnValue: ((TDSTokens.ReturnValueToken) -> Void)? = nil
+    public let stream: Bool = false // Prelogin requests are always non-streaming
+    public let onData: ((TDSData) -> Void)? = nil // Prelogin requests don't use onData
 
     init(_ shouldNegotiateEncryption: Bool) {
         self.clientEncryption = shouldNegotiateEncryption ? .encryptOn : .encryptNotSup

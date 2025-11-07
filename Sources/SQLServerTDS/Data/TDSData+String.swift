@@ -35,8 +35,31 @@ extension TDSData {
             return nil
         }
         
-        // TODO
         switch self.metadata.dataType {
+        case .bit, .bitn:
+            if let bool = self.bool {
+                return bool ? "1" : "0"
+            }
+            return nil
+        case .tinyInt, .smallInt, .int, .bigInt, .intn:
+            if let intValue = self.int64 {
+                return String(intValue)
+            }
+            if let uintValue = self.uint64 {
+                return String(uintValue)
+            }
+            return nil
+        case .real:
+            return self.float.map { String($0) }
+        case .float, .floatn:
+            return self.double.map { String($0) }
+        case .numeric, .numericLegacy, .decimal, .decimalLegacy:
+            if let decimalValue = self.decimal {
+                return "\(decimalValue)"
+            }
+            return self.double.map { String($0) }
+        case .smallMoney, .money, .moneyn:
+            return self.double.map { String($0) }
         case .charLegacy, .varcharLegacy, .char, .varchar, .text:
             guard let bytes = value.readBytes(length: value.readableBytes) else {
                 return nil
