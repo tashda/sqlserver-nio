@@ -46,3 +46,5 @@ test_metadata_fix.swift
 test_tds_fix.swift
 test_tds_stream.swift
 Tests/SETUP.md
+Docs/
+Debug/
