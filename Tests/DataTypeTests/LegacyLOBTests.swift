@@ -50,7 +50,7 @@ final class SQLServerLegacyLobRoundTripTests: XCTestCase {
                     let imageLiteral = SQLServerLiteralValue.bytes(imagePayload).sqlLiteral()
 
                     // Insert data using SQLServerKit APIs
-                    try await dbClient.query("""
+                    _ = try await dbClient.query("""
                         INSERT INTO [\(table)] (t, n, i) VALUES (\(textLiteral), \(ntextLiteral), \(imageLiteral))
                     """).get()
 
@@ -63,7 +63,7 @@ final class SQLServerLegacyLobRoundTripTests: XCTestCase {
                     XCTAssertEqual(row.column("il")?.int, imagePayload.count)
 
                     // Also verify NBCROW behavior with nulls
-                    try await dbClient.query("INSERT INTO [\(table)] (t, n, i) VALUES (NULL, NULL, NULL)").get()
+                    _ = try await dbClient.query("INSERT INTO [\(table)] (t, n, i) VALUES (NULL, NULL, NULL)").get()
                     let nullRow = try await dbClient.query("SELECT t, n, i FROM [\(table)] WHERE t IS NULL").get().first
                     XCTAssertNil(nullRow?.column("t")?.string)
                     XCTAssertNil(nullRow?.column("n")?.string)
@@ -97,7 +97,7 @@ final class SQLServerLegacyLobRoundTripTests: XCTestCase {
                     let vbLiteral = SQLServerLiteralValue.bytes(vbPayload).sqlLiteral()
 
                     // Insert data using SQLServerKit APIs
-                    try await dbClient.query("""
+                    _ = try await dbClient.query("""
                         INSERT INTO [\(table)] (x, nv, vb) VALUES (\(xmlLiteral), \(nvLiteral), \(vbLiteral))
                     """).get()
 

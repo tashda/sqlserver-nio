@@ -12,17 +12,21 @@ final class TDSTokenParserVariantNullTests: XCTestCase {
         ]
         let meta = TDSTokens.ColMetadataToken(count: 3, colData: cols)
 
-        var buf = ByteBufferAllocator().buffer(capacity: 32)
+        var buffer = ByteBufferAllocator().buffer(capacity: 32)
         // sql_variant: 4-byte totalLength. Historically we observed servers emitting 0 here for catalog views.
         // Ensure the parser consumes these 4 bytes and returns nil without misalignment.
-        buf.writeInteger(UInt32(0), endianness: .little)
+        buffer.writeInteger(UInt32(0), endianness: .little)
         // bit: fixed 1 byte payload, value = 1
-        buf.writeInteger(UInt8(1))
+        buffer.writeInteger(UInt8(1))
         // nvarchar(max): PLP unknown length (0xFE...FF) followed by 0-length chunk terminator
-        buf.writeInteger(UInt64.max &- 1, endianness: .little) // PLP_UNKNOWN total length
-        buf.writeInteger(UInt32(0), endianness: .little) // zero-length chunk -> end of PLP
+        buffer.writeInteger(UInt64.max &- 1, endianness: .little) // PLP_UNKNOWN total length
+        buffer.writeInteger(UInt32(0), endianness: .little) // zero-length chunk -> end of PLP
 
-        let row = try TDSTokenParser.parseRowToken(from: &buf, with: meta)
+        let stream = TDSStreamParser()
+        stream.buffer.writeBuffer(&buffer)
+        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        parser.colMetadata = meta
+        let row = try XCTUnwrap(parser.parseRowToken())
 
         XCTAssertEqual(row.colData.count, 3)
         // sql_variant -> nil
@@ -34,7 +38,7 @@ final class TDSTokenParserVariantNullTests: XCTestCase {
         // nvarchar(max) -> empty (non-nil) buffer
         XCTAssertEqual(row.colData[2].data?.readableBytes, 0)
         // and the overall buffer should be fully consumed
-        XCTAssertEqual(buf.readableBytes, 0)
+        XCTAssertEqual(stream.buffer.readableBytes, 0)
     }
 }
 

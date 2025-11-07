@@ -31,15 +31,19 @@ final class TDSTokenParserGuidTests: XCTestCase {
     }
 
     func testRowGuid_WithBytelenPrefix() throws {
-        var buf = ByteBufferAllocator().buffer(capacity: 32)
-        buf.writeInteger(UInt8(0x10)) // BYTELEN (16)
-        buf.writeBytes(expectedGuidBytes())
+        var buffer = ByteBufferAllocator().buffer(capacity: 32)
+        buffer.writeInteger(TDSTokens.TokenType.row.rawValue)
+        buffer.writeInteger(UInt8(0x10)) // BYTELEN (16)
+        buffer.writeBytes(expectedGuidBytes())
 
-        var copy = buf
-        let meta = makeGuidMeta()
-        let row = try TDSTokenParser.parseRowToken(from: &copy, with: meta)
+        let stream = TDSStreamParser()
+        stream.buffer.writeBuffer(&buffer)
+        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        parser.colMetadata = makeGuidMeta()
 
-        XCTAssertEqual(copy.readableBytes, 0, "row should consume all bytes")
+        let row = try XCTUnwrap(parser.parseRowToken())
+
+        XCTAssertEqual(stream.buffer.readableBytes, 0, "row should consume all bytes")
         XCTAssertEqual(row.colData.count, 1)
         guard let payload = row.colData[0].data else { return XCTFail("GUID should be non-nil") }
         XCTAssertEqual(payload.readableBytes, 16)
@@ -48,43 +52,58 @@ final class TDSTokenParserGuidTests: XCTestCase {
     }
 
     func testRowGuid_NullSentinel() throws {
-        var buf = ByteBufferAllocator().buffer(capacity: 1)
-        buf.writeInteger(UInt8(0xFF)) // BYTELEN null
+        var buffer = ByteBufferAllocator().buffer(capacity: 1)
+        buffer.writeInteger(TDSTokens.TokenType.row.rawValue)
+        buffer.writeInteger(UInt8(0xFF)) // BYTELEN null
 
-        var copy = buf
-        let meta = makeGuidMeta()
-        let row = try TDSTokenParser.parseRowToken(from: &copy, with: meta)
+        let stream = TDSStreamParser()
+        stream.buffer.writeBuffer(&buffer)
+        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        parser.colMetadata = makeGuidMeta()
 
-        XCTAssertEqual(copy.readableBytes, 0)
+        let row = try XCTUnwrap(parser.parseRowToken())
+
+        XCTAssertEqual(stream.buffer.readableBytes, 0)
         XCTAssertEqual(row.colData.count, 1)
         XCTAssertNil(row.colData[0].data)
     }
 
     func testRowGuid_NoPrefix_FallbackFixed16() throws {
-        var buf = ByteBufferAllocator().buffer(capacity: 16)
-        buf.writeBytes(expectedGuidBytes()) // no BYTELEN prefix present
+        var buffer = ByteBufferAllocator().buffer(capacity: 17)
+        buffer.writeInteger(TDSTokens.TokenType.row.rawValue)
+        buffer.writeBytes(expectedGuidBytes()) // no BYTELEN prefix present
 
-        var copy = buf
-        let meta = makeGuidMeta()
-        let row = try TDSTokenParser.parseRowToken(from: &copy, with: meta)
+        let stream = TDSStreamParser()
+        stream.buffer.writeBuffer(&buffer)
+        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        parser.colMetadata = makeGuidMeta()
 
-        XCTAssertEqual(copy.readableBytes, 0)
+        let row = try XCTUnwrap(parser.parseRowToken())
+
+        XCTAssertEqual(stream.buffer.readableBytes, 0)
         guard let payload = row.colData[0].data else { return XCTFail("GUID should be non-nil") }
         let bytes = payload.getBytes(at: payload.readerIndex, length: payload.readableBytes)!
         XCTAssertEqual(bytes, expectedGuidBytes())
     }
 
     func testNbcRowGuid_WithBytelenPrefix_NotNull() throws {
+        var buffer = ByteBufferAllocator().buffer(capacity: 33)
+        buffer.writeInteger(TDSTokens.TokenType.nbcRow.rawValue)
         // Null bitmap for 1 column -> 1 byte (bit 0 = 0 means not null)
-        var buf = ByteBufferAllocator().buffer(capacity: 32)
-        buf.writeInteger(UInt8(0x00)) // null bitmap
-        buf.writeInteger(UInt8(0x10)) // BYTELEN (16)
-        buf.writeBytes(expectedGuidBytes())
+        buffer.writeInteger(UInt8(0x00)) // null bitmap
+        buffer.writeInteger(UInt8(0x10)) // BYTELEN (16)
+        buffer.writeBytes(expectedGuidBytes())
 
-        var copy = buf
-        let meta = makeGuidMeta()
-        let nbc = try TDSTokenParser.parseNbcRowToken(from: &copy, with: meta)
-        XCTAssertEqual(copy.readableBytes, 0)
+        let stream = TDSStreamParser()
+        stream.buffer.writeBuffer(&buffer)
+        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        parser.colMetadata = makeGuidMeta()
+
+        let tokens = try parser.parse()
+        XCTAssertEqual(tokens.count, 1)
+
+        let nbc = try XCTUnwrap(tokens[0] as? TDSTokens.NbcRowToken)
+        XCTAssertEqual(stream.buffer.readableBytes, 0)
         XCTAssertEqual(nbc.colData.count, 1)
         guard let payload = nbc.colData[0].data else { return XCTFail("GUID should be non-nil") }
         XCTAssertEqual(payload.readableBytes, 16)
@@ -93,14 +112,21 @@ final class TDSTokenParserGuidTests: XCTestCase {
     }
 
     func testNbcRowGuid_Null_ViaBitmap() throws {
+        var buffer = ByteBufferAllocator().buffer(capacity: 2)
+        buffer.writeInteger(TDSTokens.TokenType.nbcRow.rawValue)
         // Null bitmap: bit 0 = 1 means NULL; no value bytes should follow
-        var buf = ByteBufferAllocator().buffer(capacity: 1)
-        buf.writeInteger(UInt8(0x01)) // null bitmap (column 0 is NULL)
+        buffer.writeInteger(UInt8(0x01)) // null bitmap (column 0 is NULL)
 
-        var copy = buf
-        let meta = makeGuidMeta()
-        let nbc = try TDSTokenParser.parseNbcRowToken(from: &copy, with: meta)
-        XCTAssertEqual(copy.readableBytes, 0)
+        let stream = TDSStreamParser()
+        stream.buffer.writeBuffer(&buffer)
+        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        parser.colMetadata = makeGuidMeta()
+
+        let tokens = try parser.parse()
+        XCTAssertEqual(tokens.count, 1)
+
+        let nbc = try XCTUnwrap(tokens[0] as? TDSTokens.NbcRowToken)
+        XCTAssertEqual(stream.buffer.readableBytes, 0)
         XCTAssertEqual(nbc.colData.count, 1)
         XCTAssertNil(nbc.colData[0].data)
     }

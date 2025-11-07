@@ -32,13 +32,15 @@ final class TDSTokenParserClrUdtFallbackTests: XCTestCase {
         let meta = TDSTokens.ColMetadataToken(count: 1, colData: [column])
 
         // Value payload: USHORTCHARBINLEN(3) + 3 bytes
-        var buf = ByteBufferAllocator().buffer(capacity: 5)
-        buf.writeInteger(UInt16(3), endianness: .little)
-        buf.writeBytes([0x01, 0x02, 0x03])
-
+        var buffer = ByteBufferAllocator().buffer(capacity: 6)
+        buffer.writeInteger(TDSTokens.TokenType.row.rawValue)
+        buffer.writeInteger(UInt16(3), endianness: .little)
         let row = try await withTimeout(5) {
-            var copy = buf
-            return try TDSTokenParser.parseRowToken(from: &copy, with: meta)
+            let stream = TDSStreamParser()
+            stream.buffer.writeBuffer(&buffer)
+            let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+            parser.colMetadata = meta
+            return try XCTUnwrap(parser.parseRowToken())
         }
         XCTAssertEqual(row.colData.count, 1)
         guard var data = row.colData[0].data else {
@@ -64,12 +66,16 @@ final class TDSTokenParserClrUdtFallbackTests: XCTestCase {
         let meta = TDSTokens.ColMetadataToken(count: 1, colData: [column])
 
         // NULL payload for CLR UDT fallback: USHORTCHARBINLEN(0xFFFF)
-        var buf = ByteBufferAllocator().buffer(capacity: 2)
-        buf.writeInteger(UInt16(0xFFFF), endianness: .little)
+        var buffer = ByteBufferAllocator().buffer(capacity: 3)
+        buffer.writeInteger(TDSTokens.TokenType.row.rawValue)
+        buffer.writeInteger(UInt16(0xFFFF), endianness: .little)
 
         let row = try await withTimeout(5) {
-            var copy = buf
-            return try TDSTokenParser.parseRowToken(from: &copy, with: meta)
+            let stream = TDSStreamParser()
+            stream.buffer.writeBuffer(&buffer)
+            let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+            parser.colMetadata = meta
+            return try XCTUnwrap(parser.parseRowToken())
         }
         XCTAssertNil(row.colData[0].data)
     }

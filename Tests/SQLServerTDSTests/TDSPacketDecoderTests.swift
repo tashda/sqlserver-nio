@@ -4,11 +4,11 @@ import NIO
 import NIOEmbedded
 import Logging
 
-final class TDSPacketDecoderTests: XCTestCase {
+final class TDSPacketDecoderTests: XCTestCase, @unchecked Sendable {
     func makeChannelWithDecoder() throws -> EmbeddedChannel {
         let channel = EmbeddedChannel()
         let logger = Logger(label: "tds.decoder.tests")
-        try channel.pipeline.addHandler(ByteToMessageHandler(TDSPacketDecoder(logger: logger))).wait()
+        try channel.pipeline.addHandler(ByteToMessageHandler(TDSPacketDecoder(logger: logger)) as! (any Sendable & ChannelHandler)).wait()
         return channel
     }
 
