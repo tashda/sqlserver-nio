@@ -45,7 +45,7 @@ final class SQLServerPlpChunkingTests: XCTestCase {
                         let vbLit = SQLServerLiteralValue.bytes(vb).sqlLiteral()
 
                         // Insert data using SQLServerKit APIs
-                        try await dbClient.query("INSERT INTO [dbo].[\(table)] (nv, vb) VALUES (\(nvLit), \(vbLit))").get()
+                        _ = try await dbClient.query("INSERT INTO [dbo].[\(table)] (nv, vb) VALUES (\(nvLit), \(vbLit))").get()
                     }
 
                     // Query data back using SQLServerKit APIs
