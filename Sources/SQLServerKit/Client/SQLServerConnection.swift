@@ -888,12 +888,41 @@ public final class SQLServerConnection {
     private func runBatch(_ sql: String) -> EventLoopFuture<SQLServerExecutionResult> {
         logger.trace("SQLServerConnection executing batch: \(sql)")
 
-        let rows: [TDSRow] = []
-        let dones: [SQLServerStreamDone] = []
-        let messages: [SQLServerStreamMessage] = []
-        let returnValues: [SQLServerReturnValue] = []
+        var rows: [TDSRow] = []
+        var dones: [SQLServerStreamDone] = []
+        var messages: [SQLServerStreamMessage] = []
+        var returnValues: [SQLServerReturnValue] = []
         let request = RawSqlRequest(
-            sql: sql
+            sql: sql,
+            onRow: { row in
+                rows.append(row)
+            },
+            onMetadata: nil,
+            onData: nil,
+            onDone: { token in
+                let done = SQLServerStreamDone(status: token.status, rowCount: token.doneRowCount)
+                dones.append(done)
+            },
+            onMessage: { token, isError in
+                let message = SQLServerStreamMessage(
+                    kind: isError ? .error : .info,
+                    number: Int32(token.number),
+                    message: token.messageText,
+                    state: token.state,
+                    severity: token.classValue
+                )
+                messages.append(message)
+            },
+            onReturnValue: { token in
+                let tdsValue: TDSData?
+                if let payload = token.value {
+                    tdsValue = TDSData(metadata: token.metadata, value: payload)
+                } else {
+                    tdsValue = nil
+                }
+                let value = SQLServerReturnValue(name: token.name, status: token.status, value: tdsValue)
+                returnValues.append(value)
+            }
         )
         logger.info("RUNBATCH_ENTRY: Sending RawSqlBatchRequest with Microsoft JDBC-compatible packet accumulation")
         logger.debug("SQLServerConnection runBatch sending request on loop=\(base.eventLoop) channelActive=\(!base.isClosed)")

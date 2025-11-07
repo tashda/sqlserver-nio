@@ -1,0 +1,220 @@
+import XCTest
+import NIOCore
+import Logging
+@testable import SQLServerTDS
+@testable import SQLServerKit
+
+/// Consolidated query tests for SQLServerNIO
+/// Covers basic SQL queries, parameter binding, and result handling
+final class QueryTests: XCTestCase {
+    private var group: EventLoopGroup!
+    private var client: SQLServerClient!
+    private let logger = Logger(label: "QueryTests")
+
+    override func setUp() async throws {
+        TestEnvironmentManager.loadEnvironmentVariables()
+
+        var config = makeSQLServerClientConfiguration()
+        config.poolConfiguration.connectionIdleTimeout = nil
+        config.poolConfiguration.minimumIdleConnections = 0
+
+        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        self.client = try await SQLServerClient.connect(
+            configuration: config,
+            eventLoopGroupProvider: .shared(group)
+        ).get()
+    }
+
+    override func tearDown() async throws {
+        try await client?.shutdownGracefully()
+        try await group?.shutdownGracefully()
+    }
+
+    // MARK: - Basic Query Tests
+
+    func testBasicSQLQuery() async throws {
+        logger.info("🚀 ===== Basic SQL Query Test =====")
+
+        let result = try await client.query("SELECT 1 as test_col, 'working' as test_val")
+        logger.info("✅ Basic query successful: \(result.count) rows")
+
+        XCTAssertEqual(result.count, 1)
+
+        // Verify the result data
+        if let firstRow = result.first {
+            XCTAssertEqual(firstRow.column("test_col")?.integer, 1)
+            XCTAssertEqual(firstRow.column("test_val")?.string, "working")
+        }
+
+        logger.info("🎉 Basic SQL Query Test completed successfully!")
+    }
+
+    func testMultipleRowQuery() async throws {
+        logger.info("🔧 Testing multiple row query...")
+
+        let result = try await client.query("""
+            SELECT 1 as id, 'First' as name
+            UNION ALL
+            SELECT 2 as id, 'Second' as name
+            UNION ALL
+            SELECT 3 as id, 'Third' as name
+        """)
+
+        XCTAssertEqual(result.count, 3)
+
+        // Verify all rows are present
+        let ids = result.compactMap { $0.column("id")?.integer }
+        let names = result.compactMap { $0.column("name")?.string }
+
+        XCTAssertEqual(ids, [1, 2, 3])
+        XCTAssertEqual(names, ["First", "Second", "Third"])
+
+        logger.info("✅ Multiple row query successful!")
+    }
+
+    func testParameterizedQuery() async throws {
+        logger.info("🔧 Testing parameterized query...")
+
+        let result = try await client.query(
+            "SELECT ? as test_col, ? as test_val",
+            parameters: [42, "parameter_test"]
+        )
+
+        XCTAssertEqual(result.count, 1)
+
+        if let firstRow = result.first {
+            XCTAssertEqual(firstRow.column("test_col")?.integer, 42)
+            XCTAssertEqual(firstRow.column("test_val")?.string, "parameter_test")
+        }
+
+        logger.info("✅ Parameterized query successful!")
+    }
+
+    // MARK: - Data Type Tests
+
+    func testBasicDataTypes() async throws {
+        logger.info("🔧 Testing basic data types...")
+
+        let result = try await client.query("""
+            SELECT
+                42 as integer_val,
+                3.14159 as decimal_val,
+                'test string' as string_val,
+                CAST(1 as bit) as boolean_val,
+                CAST('2023-01-01' as date) as date_val,
+                CAST('12:34:56' as time) as time_val
+        """)
+
+        XCTAssertEqual(result.count, 1)
+
+        if let row = result.first {
+            XCTAssertEqual(row.column("integer_val")?.integer, 42)
+            XCTAssertEqual(row.column("string_val")?.string, "test string")
+            // Note: Decimal, boolean, date, and time type assertions would go here
+        }
+
+        logger.info("✅ Basic data types test successful!")
+    }
+
+    // MARK: - Error Handling Tests
+
+    func testInvalidSQLQuery() async throws {
+        logger.info("🔧 Testing invalid SQL query...")
+
+        do {
+            let _ = try await client.query("SELECT * FROM nonexistent_table_xyz")
+            XCTFail("Should have thrown an error for invalid table")
+        } catch {
+            logger.info("✅ Invalid query properly handled: \(error)")
+            XCTAssertTrue(error.localizedDescription.contains("not found") ||
+                         error.localizedDescription.contains("Invalid object name"))
+        }
+    }
+
+    func testSQLSyntaxError() async throws {
+        logger.info("🔧 Testing SQL syntax error...")
+
+        do {
+            let _ = try await client.query("SELCT 1") // Intentional typo
+            XCTFail("Should have thrown a syntax error")
+        } catch {
+            logger.info("✅ SQL syntax error properly handled: \(error)")
+        }
+    }
+
+    // MARK: - Batch Query Tests
+
+    func testBatchQueries() async throws {
+        logger.info("🔧 Testing batch queries...")
+
+        let result = try await client.query("""
+            SELECT 1 as batch1_id;
+            SELECT 2 as batch2_id, 'batch2' as batch2_name;
+            SELECT 3 as batch3_id, 'batch3' as batch3_name, 3.14 as batch3_value;
+        """)
+
+        // Should return multiple result sets
+        XCTAssertGreaterThan(result.count, 0)
+        logger.info("✅ Batch query successful, returned \(result.count) total rows")
+    }
+
+    // MARK: - Transaction Tests
+
+    func testSimpleTransaction() async throws {
+        logger.info("🔧 Testing simple transaction...")
+
+        let result = try await client.transaction { transaction in
+            return try await transaction.query("SELECT 1 as test_in_transaction")
+        }
+
+        XCTAssertEqual(result.count, 1)
+        if let firstRow = result.first {
+            XCTAssertEqual(firstRow.column("test_in_transaction")?.integer, 1)
+        }
+
+        logger.info("✅ Simple transaction successful!")
+    }
+
+    func testTransactionRollback() async throws {
+        logger.info("🔧 Testing transaction rollback...")
+
+        do {
+            let _ = try await client.transaction { transaction in
+                // Start a transaction
+                try await transaction.query("SELECT 1 as before_error")
+
+                // Intentionally cause an error
+                try await transaction.query("SELECT * FROM nonexistent_table_xyz")
+
+                // This should not be reached
+                return try await transaction.query("SELECT 2 as after_error")
+            }
+            XCTFail("Transaction should have failed and rolled back")
+        } catch {
+            logger.info("✅ Transaction rollback properly handled: \(error)")
+        }
+    }
+
+    // MARK: - Performance Tests
+
+    func testQueryPerformance() async throws {
+        logger.info("🔧 Testing query performance...")
+
+        let startTime = Date()
+
+        let result = try await client.query("""
+            SELECT TOP 100
+                ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) as row_num,
+                'Performance Test Data ' + CAST(ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) as varchar) as data
+            FROM sys.objects o1
+            CROSS JOIN sys.objects o2
+        """)
+
+        let duration = Date().timeIntervalSince(startTime)
+
+        XCTAssertGreaterThan(result.count, 0)
+        XCTAssertLessThan(duration, 5.0, "Query should complete within 5 seconds")
+
+        logger.info("✅ Performance test completed: \(result.count) rows in \(String(format: "%.3f", duration)) seconds")
+    }
+}
