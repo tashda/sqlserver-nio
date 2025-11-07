@@ -200,25 +200,27 @@ let package = Package(
             ],
             path: "Tests/AdvancedTests"),
 
-        // Performance Tests
-        .testTarget(
-            name: "SQLServerPerformanceTests",
-            dependencies: [
-                "SQLServerKit",
-                .product(name: "NIOTestUtils", package: "swift-nio"),
-                .product(name: "NIOHTTP1", package: "swift-nio"),
-            ],
-            path: "Tests/PerformanceTests"),
+        // Performance Tests (original - can be removed if no longer needed)
+        // .testTarget(
+        //     name: "SQLServerPerformanceTests",
+        //     dependencies: [
+        //         "SQLServerKit",
+        //         .product(name: "NIOTestUtils", package: "swift-nio"),
+        //         .product(name: "NIOHTTP1", package: "swift-nio"),
+        //     ],
+        //     path: "Tests/PerformanceTests"
+        // ),
 
-        // Integration Tests
-        .testTarget(
-            name: "SQLServerIntegrationTests",
-            dependencies: [
-                "SQLServerKit",
-                .product(name: "NIOTestUtils", package: "swift-nio"),
-                .product(name: "NIOHTTP1", package: "swift-nio"),
-            ],
-            path: "Tests/IntegrationTests"),
+        // Integration Tests (original - can be removed if no longer needed)
+        // .testTarget(
+        //     name: "SQLServerIntegrationTests",
+        //     dependencies: [
+        //         "SQLServerKit",
+        //         .product(name: "NIOTestUtils", package: "swift-nio"),
+        //         .product(name: "NIOHTTP1", package: "swift-nio"),
+        //     ],
+        //     path: "Tests/IntegrationTests"
+        // ),
         .testTarget(
             name: "SQLServerTDSTests",
             dependencies: [
@@ -228,6 +230,84 @@ let package = Package(
                 .product(name: "NIOTestUtils", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
             ],
+            exclude: [
+                "TDSLoginDuplicateTests.swift.disabled",
+                "TDSConnectionRawSqlTests.swift.disabled"
+            ]
+        ),
+
+        // Core functionality tests
+        .testTarget(
+            name: "CoreTests",
+            dependencies: [
+                "SQLServerTDS",
+                "SQLServerKit",
+                .product(name: "NIOEmbedded", package: "swift-nio"),
+                .product(name: "NIOTestUtils", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+            ],
+            path: "Tests/CoreTests",
+            exclude: [
+                "QueryTests.swift.disabled",
+                "StreamingTests.swift.disabled"
+            ]
+        ),
+
+        // Integration workflow tests (disabled - no active source files)
+        // .testTarget(
+        //     name: "WorkflowTests",
+        //     dependencies: [
+        //         "SQLServerTDS",
+        //         "SQLServerKit",
+        //         .product(name: "NIOEmbedded", package: "swift-nio"),
+        //         .product(name: "NIOTestUtils", package: "swift-nio"),
+        //         .product(name: "NIOHTTP1", package: "swift-nio"),
+        //     ],
+        //     path: "Tests/WorkflowTests"
+        // ),
+
+        // Performance benchmarks (new organized tests)
+        .testTarget(
+            name: "PerformanceBenchmarks",
+            dependencies: [
+                "SQLServerTDS",
+                "SQLServerKit",
+                .product(name: "NIOEmbedded", package: "swift-nio"),
+                .product(name: "NIOTestUtils", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+            ],
+            path: "Tests/PerformanceTests",
+            exclude: [
+                "PerformanceTests.swift.disabled"
+            ]
+        ),
+
+        // Migration and compatibility tests (disabled - no active source files)
+        // .testTarget(
+        //     name: "MigrationTests",
+        //     dependencies: [
+        //         "SQLServerTDS",
+        //         "SQLServerKit",
+        //         .product(name: "NIOEmbedded", package: "swift-nio"),
+        //         .product(name: "NIOTestUtils", package: "swift-nio"),
+        //         .product(name: "NIOHTTP1", package: "swift-nio"),
+        //     ],
+        //     path: "Tests/MigrationTests"
+        // ),
+
+    
+        // TDS Layer comprehensive tests
+        .testTarget(
+            name: "TDSLayerTests",
+            dependencies: [
+                "SQLServerTDS",
+                "SQLServerKit",
+                .product(name: "NIOEmbedded", package: "swift-nio"),
+                .product(name: "NIOTestUtils", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+            ],
+            path: "Tests/TDSLayerTests",
+            exclude: ["Backup"]
         ),
 
     ]

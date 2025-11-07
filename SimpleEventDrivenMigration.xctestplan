@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>kind</key>
+	<string>swift</string>
+	<key>name</key>
+	<string>Simple EventDriven Migration Tests</string>
+	<key>formatVersion</key>
+	<string>1</string>
+	<key>target</key>
+	<dict>
+		<key>name</key>
+		<string>EventDrivenMigrationTests</string>
+		<key>path</key>
+		<string>.</string>
+	</dict>
+	<key>testConfigurations</key>
+	<array>
+		<dict>
+			<key>name</key>
+			<string>Phase 1 Only</string>
+			<key>testTargets</key>
+			<array>
+				<dict>
+					<key>name</key>
+					<string>EventDrivenMigrationTests</string>
+					<key>parallelizable</key>
+					<false/>
+					<key>randomExecutionOrdering</key>
+					<false/>
+				</dict>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>
