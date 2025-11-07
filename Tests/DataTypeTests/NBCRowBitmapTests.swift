@@ -39,7 +39,7 @@ final class SQLServerNbcRowBitmapTests: XCTestCase {
                     var values: [String] = []
                     for i in 1...20 { values.append(i % 2 == 1 ? String(i) : "NULL") }
                     let insert = "INSERT INTO [dbo].[\(table)] VALUES (\(values.joined(separator: ", ")))"
-                    try await dbClient.query(insert).get()
+                    _ = try await dbClient.query(insert).get()
 
                     // Query data back using SQLServerKit APIs
                     let rows = try await dbClient.query("SELECT * FROM [dbo].[\(table)]").get()
