@@ -42,21 +42,25 @@ final class TDSTokenParserVarlenNullTests: XCTestCase {
 
     func testVarcharNullSentinelLen16ConsumesAndReturnsNil() throws {
         // Arrange row: NVARCHAR("Adventure"), INTN(4->123), VARCHAR(NULL via 0xFFFF)
-        var buf = ByteBufferAllocator().buffer(capacity: 128)
+        var buffer = ByteBufferAllocator().buffer(capacity: 128)
+        buffer.writeInteger(TDSTokens.TokenType.row.rawValue)
         // nvarchar value: length in bytes (UInt16) then UTF-16LE payload
         let s = "Adventure"
         let utf16ByteCount = s.utf16.count * 2
-        buf.writeInteger(UInt16(utf16ByteCount), endianness: .little)
-        buf.writeUTF16String(s)
+        buffer.writeInteger(UInt16(utf16ByteCount), endianness: .little)
+        buffer.writeUTF16String(s)
         // intn: ByteLen=4 + Int32 value
-        buf.writeInteger(UInt8(4))
-        buf.writeInteger(Int32(123), endianness: .little)
+        buffer.writeInteger(UInt8(4))
+        buffer.writeInteger(Int32(123), endianness: .little)
         // varchar: USHORTCHARBINLEN = 0xFFFF indicates NULL
-        buf.writeInteger(UInt16.max, endianness: .little)
+        buffer.writeInteger(UInt16.max, endianness: .little)
 
-        var copy = buf
-        let meta = makeMeta()
-        let row = try TDSTokenParser.parseRowToken(from: &copy, with: meta)
+        let stream = TDSStreamParser()
+        stream.buffer.writeBuffer(&buffer)
+        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        parser.colMetadata = makeMeta()
+
+        let row = try XCTUnwrap(parser.parseRowToken())
         XCTAssertEqual(row.colData.count, 3)
 
         // col0 string
@@ -64,7 +68,7 @@ final class TDSTokenParserVarlenNullTests: XCTestCase {
         let len0 = c0.readableBytes
         XCTAssertEqual(len0, utf16ByteCount)
         // sanity decode back to string
-        let str0 = String(bytes: c0.readBytes(length: len0)!, encoding: .utf16LittleEndian)
+        let str0 = String(bytes: c0.readBytes(length: len0)!, encoding: String.Encoding.utf16LittleEndian)
         XCTAssertEqual(str0, s)
 
         // col1 intn
@@ -78,15 +82,16 @@ final class TDSTokenParserVarlenNullTests: XCTestCase {
 
     func testVarcharLegacyNullSentinelLen8ConsumesAndReturnsNil() throws {
         // Same shape but with legacy VARCHAR (1-byte length with 0xFF = NULL)
-        var buf = ByteBufferAllocator().buffer(capacity: 64)
+        var buffer = ByteBufferAllocator().buffer(capacity: 64)
+        buffer.writeInteger(TDSTokens.TokenType.row.rawValue)
         // nvarchar("A") -> len=2 bytes + UTF-16LE 'A'
-        buf.writeInteger(UInt16(2), endianness: .little)
-        buf.writeUTF16String("A")
+        buffer.writeInteger(UInt16(2), endianness: .little)
+        buffer.writeUTF16String("A")
         // intn: ByteLen=4 + value 0
-        buf.writeInteger(UInt8(4))
-        buf.writeInteger(Int32(0), endianness: .little)
+        buffer.writeInteger(UInt8(4))
+        buffer.writeInteger(Int32(0), endianness: .little)
         // varcharLegacy: len8=0xFF => NULL
-        buf.writeInteger(UInt8(0xFF))
+        buffer.writeInteger(UInt8(0xFF))
 
         let col0 = TDSTokens.ColMetadataToken.ColumnData(
             userType: 0, flags: 0, dataType: .nvarchar, length: 256,
@@ -100,9 +105,14 @@ final class TDSTokenParserVarlenNullTests: XCTestCase {
             userType: 0, flags: 0, dataType: .varcharLegacy, length: 255,
             collation: [], tableName: nil, colName: "v", precision: nil, scale: nil
         )
-        var copy = buf
         let meta = TDSTokens.ColMetadataToken(count: 3, colData: [col0, col1, col2])
-        let row = try TDSTokenParser.parseRowToken(from: &copy, with: meta)
+
+        let stream = TDSStreamParser()
+        stream.buffer.writeBuffer(&buffer)
+        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        parser.colMetadata = meta
+
+        let row = try XCTUnwrap(parser.parseRowToken())
         XCTAssertEqual(row.colData.count, 3)
         XCTAssertNil(row.colData[2].data)
     }

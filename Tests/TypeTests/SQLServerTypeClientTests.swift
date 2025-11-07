@@ -93,10 +93,10 @@ final class SQLServerTypeClientTests: XCTestCase {
         try await withTemporaryDatabase(client: self.client, prefix: "udtt_list") { db in
             try await withDbClient(for: db, using: self.group) { dbClient in
                 let typeClient = SQLServerTypeClient(client: dbClient)
-                let adminClient = SQLServerAdministrationClient(client: dbClient)
+
 
                 // Create custom schema first
-                try await dbClient.execute("CREATE SCHEMA [custom]").get()
+                _ = try await dbClient.execute("CREATE SCHEMA [custom]").get()
 
                 // Create types in different schemas
                 let dboType = UserDefinedTableTypeDefinition(

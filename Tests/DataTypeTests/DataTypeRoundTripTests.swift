@@ -53,7 +53,7 @@ final class SQLServerDataTypeRoundTripTests: XCTestCase {
                 try await dbAdminClient.createTable(name: tableName, columns: columns)
 
                 // Insert data using SQLServerKit APIs
-                try await dbClient.query("INSERT INTO [dbo].[\(tableName)] (bit_value, tiny_value, small_value, int_value, big_value, decimal_value, numeric_value, money_value, float_value, real_value) VALUES (1, 255, -120, 214748364, 922337203685, 98765.4321, 123.456, 88.88, 3.1415926535, 1.25)").get()
+                _ = try await dbClient.query("INSERT INTO [dbo].[\(tableName)] (bit_value, tiny_value, small_value, int_value, big_value, decimal_value, numeric_value, money_value, float_value, real_value) VALUES (1, 255, -120, 214748364, 922337203685, 98765.4321, 123.456, 88.88, 3.1415926535, 1.25)").get()
 
                 // Query data back using SQLServerKit APIs
                 let rows = try await dbClient.query("SELECT * FROM [dbo].[\(tableName)]").get()
@@ -100,7 +100,7 @@ final class SQLServerDataTypeRoundTripTests: XCTestCase {
                     try await dbAdminClient.createTable(name: tableName, columns: columns)
 
                     // Insert data using SQLServerKit APIs
-                    try await dbClient.query("""
+                    _ = try await dbClient.query("""
                         INSERT INTO [\(tableName)] (date_value, datetime_value, smalldatetime_value, time_value, datetimeoffset_value)
                         VALUES ('2023-11-18', '2023-11-18T13:15:30.1234567', '2023-11-18T13:15:00', '13:15:30.9876543', '2023-11-18T13:15:30.1234567+02:00')
                     """).get()
@@ -201,7 +201,7 @@ final class SQLServerDataTypeRoundTripTests: XCTestCase {
                     let binaryLiteral = SQLServerLiteralValue.bytes(binaryPayload).sqlLiteral()
 
                     // Insert data using SQLServerKit APIs
-                    try await dbClient.query("""
+                    _ = try await dbClient.query("""
                         INSERT INTO [\(tableName)] (text_value, binary_value)
                         VALUES (\(textLiteral), \(binaryLiteral))
                     """).get()
