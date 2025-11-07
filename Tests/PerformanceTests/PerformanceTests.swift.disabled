@@ -1,0 +1,150 @@
+import XCTest
+import NIOCore
+import Logging
+@testable import SQLServerTDS
+@testable import SQLServerKit
+
+/// Performance and benchmark tests for SQLServerNIO
+/// Tests performance characteristics and identifies bottlenecks
+final class PerformanceTests: XCTestCase {
+    private var group: EventLoopGroup!
+    private var client: SQLServerClient!
+    private let logger = Logger(label: "PerformanceTests")
+
+    override func setUp() async throws {
+        TestEnvironmentManager.loadEnvironmentVariables()
+
+        var config = makeSQLServerClientConfiguration()
+        config.poolConfiguration.connectionIdleTimeout = nil
+        config.poolConfiguration.minimumIdleConnections = 0
+
+        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        self.client = try await SQLServerClient.connect(
+            configuration: config,
+            eventLoopGroupProvider: .shared(group)
+        ).get()
+    }
+
+    override func tearDown() async throws {
+        try await client?.shutdownGracefully()
+        try await group?.shutdownGracefully()
+    }
+
+    // MARK: - Connection Performance Tests
+
+    func testConnectionPerformance() async throws {
+        logger.info("🔧 Testing connection performance...")
+
+        let connectionCount = 5
+        var connectionTimes: [TimeInterval] = []
+
+        for i in 1...connectionCount {
+            let startTime = Date()
+
+            var config = makeSQLServerClientConfiguration()
+            config.poolConfiguration.connectionIdleTimeout = nil
+            config.poolConfiguration.minimumIdleConnections = 0
+
+            let testClient = try await SQLServerClient.connect(
+                configuration: config,
+                eventLoopGroupProvider: .createNew(numberOfThreads: 1)
+            ).get()
+
+            let connectionTime = Date().timeIntervalSince(startTime)
+            connectionTimes.append(connectionTime)
+
+            // Execute a simple query to ensure connection is working
+            let _ = try await testClient.query("SELECT 1 as connection_test")
+            try await testClient.shutdownGracefully()
+
+            logger.info("   Connection \(i): \(String(format: "%.3f", connectionTime))s")
+        }
+
+        let averageConnectionTime = connectionTimes.reduce(0, +) / Double(connectionTimes.count)
+
+        logger.info("📊 Connection Performance Results:")
+        logger.info("   Average: \(String(format: "%.3f", averageConnectionTime))s")
+
+        // Performance assertions (adjust based on your environment)
+        XCTAssertLessThan(averageConnectionTime, 2.0, "Average connection time should be under 2 seconds")
+
+        logger.info("✅ Connection performance test completed!")
+    }
+
+    // MARK: - Query Performance Tests
+
+    func testQueryPerformance() async throws {
+        logger.info("🔧 Testing query performance...")
+
+        let queries = [
+            "Simple Query": "SELECT 1 as test",
+            "System Table Query": "SELECT TOP 5 * FROM sys.objects",
+            "Join Query": """
+                SELECT TOP 5
+                    t.name as table_name,
+                    s.name as schema_name
+                FROM sys.tables t
+                INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
+            """
+        ]
+
+        var performanceResults: [String: TimeInterval] = [:]
+
+        for (queryName, query) in queries {
+            let startTime = Date()
+            let result = try await client.query(query)
+            let duration = Date().timeIntervalSince(startTime)
+            performanceResults[queryName] = duration
+
+            logger.info("   \(queryName): \(result.count) rows in \(String(format: "%.3f", duration))s")
+        }
+
+        // Performance assertions
+        XCTAssertLessThanOrEqual(performanceResults["Simple Query"] ?? 0, 0.1, "Simple query should be fast")
+        XCTAssertLessThanOrEqual(performanceResults["System Table Query"] ?? 0, 1.0, "System table query should complete in reasonable time")
+
+        logger.info("✅ Query performance test completed!")
+    }
+
+    // MARK: - Streaming Performance Tests
+
+    func testStreamingPerformance() async throws {
+        logger.info("🔧 Testing streaming performance...")
+
+        let rowCount = 100
+        var streamingResults: [String: TimeInterval] = [:]
+
+        let startTime = Date()
+        var firstDataTime: Date?
+        var lastDataTime: Date?
+
+        let stream = try await client.queryStream("""
+            SELECT TOP (\(rowCount))
+                ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) as row_num,
+                REPLICATE('x', 100) as data_payload
+            FROM sys.objects o1
+            CROSS JOIN sys.objects o2
+        """)
+
+        for try await data in stream {
+            let now = Date()
+            if firstDataTime == nil {
+                firstDataTime = now
+            }
+            lastDataTime = now
+        }
+
+        let totalTime = Date().timeIntervalSince(startTime)
+        let timeToFirstData = firstDataTime.map { $0.timeIntervalSince(startTime) } ?? 0
+
+        logger.info("   \(rowCount) rows:")
+        logger.info("     Total Time: \(String(format: "%.3f", totalTime))s")
+        logger.info("     Time to First Data: \(String(format: "%.3f", timeToFirstData))s")
+
+        // Performance assertions
+        let rowsPerSecond = Double(rowCount) / totalTime
+        XCTAssertGreaterThan(rowsPerSecond, 50, "Should process at least 50 rows per second")
+
+        logger.info("✅ Streaming performance test completed!")
+    }
+}

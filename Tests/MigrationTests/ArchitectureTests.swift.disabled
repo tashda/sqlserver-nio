@@ -1,0 +1,348 @@
+import XCTest
+import NIOCore
+import Logging
+@testable import SQLServerTDS
+@testable import SQLServerKit
+
+/// Architecture validation tests for SQLServerNIO
+/// Tests the architectural decisions and design patterns
+final class ArchitectureTests: XCTestCase {
+    private var group: EventLoopGroup!
+    private var client: SQLServerClient!
+    private let logger = Logger(label: "ArchitectureTests")
+
+    override func setUp() async throws {
+        TestEnvironmentManager.loadEnvironmentVariables()
+
+        var config = makeSQLServerClientConfiguration()
+        config.poolConfiguration.connectionIdleTimeout = nil
+        config.poolConfiguration.minimumIdleConnections = 0
+
+        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        self.client = try await SQLServerClient.connect(
+            configuration: config,
+            eventLoopGroupProvider: .shared(group)
+        ).get()
+    }
+
+    override func tearDown() async throws {
+        try await client?.shutdownGracefully()
+        try await group?.shutdownGracefully()
+    }
+
+    // MARK: - Protocol Compliance Tests
+
+    func testTDSRequestProtocolCompliance() throws {
+        logger.info("🔧 Testing TDSRequest protocol compliance...")
+
+        // Test RawSqlRequest
+        let rawSqlRequest = RawSqlRequest(sql: "SELECT 1")
+        XCTAssertTrue(rawSqlRequest is TDSRequest, "RawSqlRequest should conform to TDSRequest")
+        XCTAssertFalse(rawSqlRequest.stream, "stream should default to false")
+        XCTAssertNil(rawSqlRequest.onData, "onData should default to nil")
+
+        // Test RpcRequest (if available)
+        let rpcRequest = RpcRequest(procedureName: "sp_test")
+        XCTAssertTrue(rpcRequest is TDSRequest, "RpcRequest should conform to TDSRequest")
+
+        logger.info("✅ TDSRequest protocol compliance verified!")
+    }
+
+    // MARK: - Connection Architecture Tests
+
+    func testConnectionArchitecturePatterns() async throws {
+        logger.info("🔧 Testing connection architecture patterns...")
+
+        // Test 1: Direct connection management
+        var connectionEvents: [String] = []
+
+        let directResult = try await client.withConnection { connection in
+            connectionEvents.append("connection_acquired")
+            let queryResult = try await connection.query("SELECT 1 as test")
+            connectionEvents.append("query_executed")
+            return queryResult
+        }.get()
+
+        connectionEvents.append("connection_released")
+
+        XCTAssertEqual(connectionEvents.count, 3)
+        XCTAssertEqual(connectionEvents[0], "connection_acquired")
+        XCTAssertEqual(connectionEvents[1], "query_executed")
+        XCTAssertEqual(connectionEvents[2], "connection_released")
+
+        // Test 2: Pooled connection behavior
+        var poolConnectionIds: [String] = []
+
+        for i in 0..<3 {
+            try await client.withConnection { connection in
+                let connectionId = "\(ObjectIdentifier(connection))"
+                if !poolConnectionIds.contains(connectionId) {
+                    poolConnectionIds.append(connectionId)
+                }
+                return connection.query("SELECT \(i) as iteration")
+            }.get()
+        }
+
+        // With pooling, we might see connection reuse
+        logger.info("📊 Used \(poolConnectionIds.count) unique connections for 3 operations")
+
+        logger.info("✅ Connection architecture patterns verified!")
+    }
+
+    // MARK: - Streaming Architecture Tests
+
+    func testStreamingArchitecture() async throws {
+        logger.info("🔧 Testing streaming architecture...")
+
+        // Test callback-based streaming
+        var callbackData: [String] = []
+        var metadataReceived = false
+        var doneReceived = false
+
+        let result = try await client.streamQuery(
+            "SELECT 'Stream Test' as data UNION ALL SELECT 'Another Row'",
+            onMetadata: { metadata in
+                metadataReceived = true
+                logger.info("📡 Streaming metadata received")
+            },
+            onRow: { row in
+                if let data = row.column("data")?.string {
+                    callbackData.append(data)
+                }
+                logger.info("📡 Streaming row received: \(data)")
+            },
+            onDone: { doneToken in
+                doneReceived = true
+                logger.info("📡 Streaming done received")
+            }
+        )
+
+        XCTAssertEqual(callbackData.count, 2)
+        XCTAssertTrue(callbackData.contains("Stream Test"))
+        XCTAssertTrue(callbackData.contains("Another Row"))
+        XCTAssertTrue(metadataReceived)
+        XCTAssertTrue(doneReceived)
+
+        // Test AsyncSequence-based streaming
+        var asyncData: [String] = []
+
+        let stream = try await client.queryStream("SELECT 'Async Stream' as data UNION ALL SELECT 'Async Row 2'")
+
+        for try await data in stream {
+            for row in data.rows {
+                if let streamData = row.column("data")?.string {
+                    asyncData.append(streamData)
+                }
+            }
+        }
+
+        XCTAssertEqual(asyncData.count, 2)
+        XCTAssertTrue(asyncData.contains("Async Stream"))
+        XCTAssertTrue(asyncData.contains("Async Row 2"))
+
+        logger.info("✅ Streaming architecture verified!")
+    }
+
+    // MARK: - Error Handling Architecture Tests
+
+    func testErrorHandlingArchitecture() async throws {
+        logger.info("🔧 Testing error handling architecture...")
+
+        // Test SQL error propagation
+        var sqlErrorCaught = false
+        var sqlErrorMessage = ""
+
+        do {
+            let _ = try await client.query("SELECT * FROM nonexistent_table_xyz")
+        } catch {
+            sqlErrorCaught = true
+            sqlErrorMessage = error.localizedDescription
+            logger.info("📡 SQL error caught: \(error)")
+        }
+
+        XCTAssertTrue(sqlErrorCaught)
+        XCTAssertFalse(sqlErrorMessage.isEmpty)
+
+        // Test connection error handling
+        var connectionErrorCaught = false
+
+        do {
+            var invalidConfig = makeSQLServerClientConfiguration()
+            invalidConfig.connection.port = 9999
+
+            let invalidClient = try await SQLServerClient.connect(
+                configuration: invalidConfig,
+                eventLoopGroupProvider: .createNew(numberOfThreads: 1)
+            ).get()
+            try await invalidClient.shutdownGracefully()
+        } catch {
+            connectionErrorCaught = true
+            logger.info("📡 Connection error caught: \(error)")
+        }
+
+        XCTAssertTrue(connectionErrorCaught)
+
+        logger.info("✅ Error handling architecture verified!")
+    }
+
+    // MARK: - Memory Management Architecture Tests
+
+    func testMemoryManagementArchitecture() async throws {
+        logger.info("🔧 Testing memory management architecture...")
+
+        // Test streaming doesn't accumulate large amounts of data
+        let largeDatasetSize = 1000
+        var processedBatches = 0
+        var totalMemoryEfficientRows = 0
+
+        let stream = try await client.queryStream("""
+            SELECT TOP (\(largeDatasetSize))
+                ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) as row_num,
+                REPLICATE('x', 500) as data_chunk -- 500 bytes per row
+            FROM sys.objects o1
+            CROSS JOIN sys.objects o2
+        """)
+
+        for try await data in stream {
+            processedBatches += 1
+            totalMemoryEfficientRows += data.rows.count
+
+            // Verify each batch is a reasonable size
+            XCTAssertLessThan(data.rows.count, 1000, "Individual batches should be reasonably sized")
+
+            // Process data and allow memory cleanup
+            for row in data.rows {
+                let rowNum = row.column("row_num")?.integer ?? 0
+                let dataSize = row.column("data_chunk")?.string?.count ?? 0
+                XCTAssertEqual(dataSize, 500, "Data chunk should be 500 characters")
+
+                if rowNum % 100 == 0 {
+                    logger.info("   Processed \(rowNum) memory-efficient rows")
+                }
+            }
+
+            // Simulate some memory pressure relief
+            if processedBatches % 5 == 0 {
+                try await Task.sleep(nanoseconds: 1_000_000) // 1ms
+            }
+        }
+
+        XCTAssertEqual(totalMemoryEfficientRows, largeDatasetSize)
+        XCTAssertGreaterThan(processedBatches, 1, "Should have multiple batches")
+
+        logger.info("✅ Memory management architecture verified!")
+    }
+
+    // MARK: - Thread Safety Architecture Tests
+
+    func testThreadSafetyArchitecture() async throws {
+        logger.info("🔧 Testing thread safety architecture...")
+
+        let concurrentOperations = 10
+        let operationsPerThread = 5
+
+        async func threadSafeOperation(operationId: Int) async throws -> ThreadSafetyResult {
+            var operations = 0
+            var errors = 0
+
+            for i in 1...operationsPerThread {
+                do {
+                    let result = try await client.query(
+                        "SELECT ? as op_id, ? as iteration, 'Thread Safe' as status",
+                        parameters: [operationId, i]
+                    )
+                    operations += 1
+
+                    XCTAssertEqual(result.count, 1)
+                    XCTAssertEqual(result.first?.column("op_id")?.integer, operationId)
+                    XCTAssertEqual(result.first?.column("iteration")?.integer, i)
+                    XCTAssertEqual(result.first?.column("status")?.string, "Thread Safe")
+
+                } catch {
+                    errors += 1
+                    logger.warning("⚠️ Operation \(operationId)-\(i) failed: \(error)")
+                }
+            }
+
+            return ThreadSafetyResult(
+                operationId: operationId,
+                operations: operations,
+                errors: errors
+            )
+        }
+
+        let results = try await withThrowingTaskGroup(of: ThreadSafetyResult.self, returning: [ThreadSafetyResult].self) { group in
+            for operationId in 1...concurrentOperations {
+                group.addTask {
+                    return try await threadSafeOperation(operationId: operationId)
+                }
+            }
+
+            var allResults: [ThreadSafetyResult] = []
+            for try await result in group {
+                allResults.append(result)
+            }
+            return allResults.sorted { $0.operationId < $1.operationId }
+        }
+
+        XCTAssertEqual(results.count, concurrentOperations)
+
+        let totalOperations = results.reduce(0) { $0 + $1.operations }
+        let totalErrors = results.reduce(0) { $0 + $1.errors }
+
+        XCTAssertEqual(totalOperations, concurrentOperations * operationsPerThread)
+        XCTAssertEqual(totalErrors, 0, "Should have no errors in thread-safe operations")
+
+        logger.info("📊 Thread Safety Results:")
+        logger.info("   Total Operations: \(totalOperations)")
+        logger.info("   Total Errors: \(totalErrors)")
+        logger.info("   Success Rate: \(String(format: "%.1f", Double(totalOperations) / Double(totalOperations + totalErrors) * 100))%")
+
+        logger.info("✅ Thread safety architecture verified!")
+    }
+
+    // MARK: - Performance Architecture Tests
+
+    func testPerformanceArchitecture() async throws {
+        logger.info("🔧 Testing performance architecture...")
+
+        // Test connection reuse performance
+        let queryCount = 20
+        var queryTimes: [TimeInterval] = []
+
+        for i in 1...queryCount {
+            let startTime = Date()
+            let result = try await client.query("SELECT ? as iteration, GETDATE() as timestamp", parameters: [i])
+            let duration = Date().timeIntervalSince(startTime)
+
+            queryTimes.append(duration)
+            XCTAssertEqual(result.count, 1)
+
+            if i % 5 == 0 {
+                logger.info("   Query \(i): \(String(format: "%.3f", duration))s")
+            }
+        }
+
+        let averageQueryTime = queryTimes.reduce(0, +) / Double(queryTimes.count)
+        let maxQueryTime = queryTimes.max() ?? 0
+
+        logger.info("📊 Query Performance Results:")
+        logger.info("   Average: \(String(format: "%.3f", averageQueryTime))s")
+        logger.info("   Max: \(String(format: "%.3f", maxQueryTime))s")
+        logger.info("   Total: \(queryCount) queries in \(String(format: "%.3f", queryTimes.reduce(0, +)))s")
+
+        // Performance assertions (adjust based on your environment)
+        XCTAssertLessThan(averageQueryTime, 0.5, "Average query time should be reasonable")
+        XCTAssertLessThan(maxQueryTime, 2.0, "Max query time should not be excessive")
+
+        logger.info("✅ Performance architecture verified!")
+    }
+
+    // MARK: - Helper Types
+
+    struct ThreadSafetyResult {
+        let operationId: Int
+        let operations: Int
+        let errors: Int
+    }
+}

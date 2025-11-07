@@ -1,0 +1,281 @@
+import XCTest
+import NIOCore
+import Logging
+@testable import SQLServerTDS
+@testable import SQLServerKit
+
+/// End-to-end workflow tests for SQLServerNIO
+/// Tests complete user workflows from connection to data retrieval
+final class WorkflowTests: XCTestCase {
+    private var group: EventLoopGroup!
+    private var client: SQLServerClient!
+    private let logger = Logger(label: "WorkflowTests")
+
+    override func setUp() async throws {
+        TestEnvironmentManager.loadEnvironmentVariables()
+
+        var config = makeSQLServerClientConfiguration()
+        config.poolConfiguration.connectionIdleTimeout = nil
+        config.poolConfiguration.minimumIdleConnections = 0
+
+        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        self.client = try await SQLServerClient.connect(
+            configuration: config,
+            eventLoopGroupProvider: .shared(group)
+        ).get()
+    }
+
+    override func tearDown() async throws {
+        try await client?.shutdownGracefully()
+        try await group?.shutdownGracefully()
+    }
+
+    // MARK: - Complete SQL Workflow Tests
+
+    func testCompleteSQLWorkflow() async throws {
+        logger.info("🚀 ===== Complete SQL Workflow Test =====")
+
+        // Step 1: Basic connection and simple query
+        logger.info("📋 Step 1: Testing basic connection and query")
+        let basicResult = try await client.query("SELECT 1 as step, 'basic' as type")
+        XCTAssertEqual(basicResult.count, 1)
+        XCTAssertEqual(basicResult.first?.column("step")?.integer, 1)
+
+        // Step 2: More complex query with joins
+        logger.info("📋 Step 2: Testing complex query")
+        let complexResult = try await client.query("""
+            SELECT
+                t.name as table_name,
+                p.name as table_type
+            FROM sys.tables t
+            INNER JOIN sys.objects p ON t.object_id = p.object_id
+            WHERE t.is_ms_shipped = 0
+            ORDER BY t.name
+            LIMIT 5
+        """)
+        logger.info("📊 Found \(complexResult.count) user tables")
+
+        // Step 3: Parameterized query
+        logger.info("📋 Step 3: Testing parameterized query")
+        let paramResult = try await client.query(
+            "SELECT ? as param_number, ? as param_text",
+            parameters: [42, "workflow_test"]
+        )
+        XCTAssertEqual(paramResult.count, 1)
+        XCTAssertEqual(paramResult.first?.column("param_number")?.integer, 42)
+
+        // Step 4: Batch queries
+        logger.info("📋 Step 4: Testing batch queries")
+        let batchResult = try await client.query("""
+            SELECT 'batch_1' as batch_id, 1 as step_number;
+            SELECT 'batch_2' as batch_id, 2 as step_number;
+            SELECT 'batch_3' as batch_id, 3 as step_number;
+        """)
+        XCTAssertGreaterThan(batchResult.count, 0)
+
+        // Step 5: Streaming query
+        logger.info("📋 Step 5: Testing streaming query")
+        var streamedRows = 0
+        let stream = try await client.queryStream("""
+            SELECT TOP 10
+                ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) as row_num,
+                'Workflow Stream Data ' + CAST(ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) as varchar) as data
+            FROM sys.objects
+        """)
+
+        for try await data in stream {
+            streamedRows += data.rows.count
+        }
+        XCTAssertEqual(streamedRows, 10)
+
+        // Step 6: Transaction workflow
+        logger.info("📋 Step 6: Testing transaction workflow")
+        let transactionResult = try await client.transaction { transaction in
+            let tempResult = try await transaction.query("SELECT 1 as transaction_step")
+            XCTAssertEqual(tempResult.count, 1)
+            return try await transaction.query("SELECT 2 as final_step")
+        }
+        XCTAssertEqual(transactionResult.count, 1)
+        XCTAssertEqual(transactionResult.first?.column("final_step")?.integer, 2)
+
+        logger.info("✅ Complete SQL Workflow Test completed successfully!")
+    }
+
+    // MARK: - Data Analysis Workflow Tests
+
+    func testDataAnalysisWorkflow() async throws {
+        logger.info("🔧 Testing data analysis workflow...")
+
+        // Simulate a typical data analysis workflow
+        async func analyzeDatabaseStructure() async throws -> DatabaseAnalysis {
+            let analysis = DatabaseAnalysis()
+
+            // Step 1: Get table count
+            let tableResult = try await client.query("SELECT COUNT(*) as table_count FROM sys.tables WHERE is_ms_shipped = 0")
+            analysis.userTableCount = tableResult.first?.column("table_count")?.integer ?? 0
+
+            // Step 2: Get view count
+            let viewResult = try await client.query("SELECT COUNT(*) as view_count FROM sys.views WHERE is_ms_shipped = 0")
+            analysis.userViewCount = viewResult.first?.column("view_count")?.integer ?? 0
+
+            // Step 3: Get stored procedure count
+            let procResult = try await client.query("SELECT COUNT(*) as proc_count FROM sys.procedures WHERE is_ms_shipped = 0")
+            analysis.userProcedureCount = procResult.first?.column("proc_count")?.integer ?? 0
+
+            // Step 4: Sample table data
+            let sampleResult = try await client.query("""
+                SELECT TOP 5
+                    OBJECT_NAME(object_id) as table_name,
+                    SUM(rows) as row_count
+                FROM sys.partitions
+                WHERE index_id IN (0, 1)
+                GROUP BY object_id
+                HAVING SUM(rows) > 0
+                ORDER BY SUM(rows) DESC
+            """)
+            analysis.sampleTables = sampleResult.compactMap { row in
+                guard let name = row.column("table_name")?.string,
+                      let count = row.column("row_count")?.integer else { return nil }
+                return TableInfo(name: name, rowCount: count)
+            }
+
+            return analysis
+        }
+
+        let analysis = try await analyzeDatabaseStructure()
+
+        XCTAssertGreaterThan(analysis.userTableCount, 0, "Should have at least one user table")
+        XCTAssertGreaterThanOrEqual(analysis.userViewCount, 0, "View count should be non-negative")
+        XCTAssertGreaterThanOrEqual(analysis.userProcedureCount, 0, "Procedure count should be non-negative")
+        XCTAssertGreaterThan(analysis.sampleTables.count, 0, "Should have sample table data")
+
+        logger.info("📊 Database Analysis Results:")
+        logger.info("   User Tables: \(analysis.userTableCount)")
+        logger.info("   User Views: \(analysis.userViewCount)")
+        logger.info("   User Procedures: \(analysis.userProcedureCount)")
+        logger.info("   Sample Tables: \(analysis.sampleTables.count)")
+
+        logger.info("✅ Data analysis workflow completed successfully!")
+    }
+
+    // MARK: - Error Recovery Workflow Tests
+
+    func testErrorRecoveryWorkflow() async throws {
+        logger.info("🔧 Testing error recovery workflow...")
+
+        // Test workflow with error handling and recovery
+        async func resilientQuery(_ sql: String, maxRetries: Int = 3) async throws -> SQLServerExecutionResult {
+            var lastError: Error?
+
+            for attempt in 1...maxRetries {
+                do {
+                    logger.info("📋 Attempt \(attempt) of \(maxRetries) for query")
+                    return try await client.query(sql)
+                } catch {
+                    lastError = error
+                    logger.warning("⚠️ Query attempt \(attempt) failed: \(error)")
+
+                    if attempt < maxRetries {
+                        // Wait before retry
+                        try await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+                    }
+                }
+            }
+
+            throw lastError!
+        }
+
+        // Test successful query
+        let successResult = try await resilientQuery("SELECT 1 as success_test")
+        XCTAssertEqual(successResult.count, 1)
+
+        // Test failed query (should eventually throw)
+        do {
+            let _ = try await resilientQuery("SELECT * FROM definitely_nonexistent_table_xyz", maxRetries: 2)
+            XCTFail("Should have eventually thrown an error")
+        } catch {
+            logger.info("✅ Error recovery workflow properly handled failure")
+        }
+
+        logger.info("✅ Error recovery workflow completed successfully!")
+    }
+
+    // MARK: - Concurrent Workflow Tests
+
+    func testConcurrentWorkflowOperations() async throws {
+        logger.info("🔧 Testing concurrent workflow operations...")
+
+        async func concurrentAnalysisTask(taskId: Int) async throws -> TaskResult {
+            let startTime = Date()
+
+            // Each task performs its own analysis
+            let result = try await client.query("""
+                SELECT
+                    TASK_DELAY(?, 'millisecond') as delay_ms,
+                    GETDATE() as task_time,
+                    DB_ID() as database_id
+            """, parameters: [taskId * 10])
+
+            let duration = Date().timeIntervalSince(startTime)
+
+            return TaskResult(
+                taskId: taskId,
+                rowCount: result.count,
+                duration: duration,
+                timestamp: Date()
+            )
+        }
+
+        // Run multiple analysis tasks concurrently
+        let concurrentTasks = 5
+        let startTime = Date()
+
+        let results = try await withThrowingTaskGroup(of: TaskResult.self, returning: [TaskResult].self) { group in
+            for taskId in 1...concurrentTasks {
+                group.addTask {
+                    return try await concurrentAnalysisTask(taskId: taskId)
+                }
+            }
+
+            var allResults: [TaskResult] = []
+            for try await result in group {
+                allResults.append(result)
+            }
+            return allResults.sorted { $0.taskId < $1.taskId }
+        }
+
+        let totalDuration = Date().timeIntervalSince(startTime)
+
+        XCTAssertEqual(results.count, concurrentTasks)
+        XCTAssertTrue(totalDuration < 2.0, "Concurrent operations should complete quickly")
+
+        logger.info("📊 Concurrent Workflow Results:")
+        for result in results {
+            logger.info("   Task \(result.taskId): \(result.rowCount) rows in \(String(format: "%.3f", result.duration))s")
+        }
+        logger.info("   Total Duration: \(String(format: "%.3f", totalDuration))s")
+
+        logger.info("✅ Concurrent workflow operations completed successfully!")
+    }
+
+    // MARK: - Helper Types
+
+    struct DatabaseAnalysis {
+        var userTableCount: Int = 0
+        var userViewCount: Int = 0
+        var userProcedureCount: Int = 0
+        var sampleTables: [TableInfo] = []
+    }
+
+    struct TableInfo {
+        let name: String
+        let rowCount: Int
+    }
+
+    struct TaskResult {
+        let taskId: Int
+        let rowCount: Int
+        let duration: TimeInterval
+        let timestamp: Date
+    }
+}

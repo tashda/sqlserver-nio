@@ -1,0 +1,340 @@
+import XCTest
+import NIOCore
+import Logging
+@testable import SQLServerTDS
+@testable import SQLServerKit
+
+/// Consolidated streaming tests for SQLServerNIO
+/// Covers streaming functionality, callbacks, and memory efficiency
+final class StreamingTests: XCTestCase {
+    private var group: EventLoopGroup!
+    private var client: SQLServerClient!
+    private let logger = Logger(label: "StreamingTests")
+
+    override func setUp() async throws {
+        TestEnvironmentManager.loadEnvironmentVariables()
+
+        var config = makeSQLServerClientConfiguration()
+        config.poolConfiguration.connectionIdleTimeout = nil
+        config.poolConfiguration.minimumIdleConnections = 0
+
+        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        self.client = try await SQLServerClient.connect(
+            configuration: config,
+            eventLoopGroupProvider: .shared(group)
+        ).get()
+    }
+
+    override func tearDown() async throws {
+        try await client?.shutdownGracefully()
+        try await group?.shutdownGracefully()
+    }
+
+    // MARK: - Basic Streaming Tests
+
+    func testBasicQueryStreamWithCallbacks() async throws {
+        logger.info("🔧 Testing basic query stream with callbacks...")
+
+        var receivedRows: [TDSRow] = []
+        var receivedMetadata: [[TDSTokens.ColMetadataToken.ColumnData]] = []
+        var receivedDoneTokens: [TDSTokens.DoneToken] = []
+
+        let result = try await client.streamQuery(
+            "SELECT 1 as test_col, 'streaming' as test_val UNION ALL SELECT 2, 'streaming'",
+            onMetadata: { metadata in
+                receivedMetadata.append(metadata)
+                logger.info("📡 Received metadata for \(metadata.count) columns")
+            },
+            onRow: { row in
+                receivedRows.append(row)
+                logger.info("📡 Received row: \(row)")
+            },
+            onDone: { doneToken in
+                receivedDoneTokens.append(doneToken)
+                logger.info("📡 Received done token")
+            }
+        )
+
+        XCTAssertEqual(result.count, 2)
+        XCTAssertEqual(receivedRows.count, 2)
+        XCTAssertGreaterThan(receivedMetadata.count, 0)
+        XCTAssertGreaterThan(receivedDoneTokens.count, 0)
+
+        logger.info("✅ Basic query stream with callbacks successful!")
+    }
+
+    func testAsyncQueryStream() async throws {
+        logger.info("🔧 Testing async query stream...")
+
+        var rowCount = 0
+
+        let stream = try await client.queryStream("""
+            SELECT TOP 5
+                ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) as row_num,
+                'Async Stream Data ' + CAST(ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) as varchar) as data
+            FROM sys.objects
+        """)
+
+        for try await data in stream {
+            rowCount += data.rows.count
+            logger.info("📡 Received batch: \(data.rows.count) rows")
+        }
+
+        XCTAssertEqual(rowCount, 5)
+        logger.info("✅ Async query stream successful!")
+    }
+
+    // MARK: - Memory Efficiency Tests
+
+    func testStreamingMemoryUsage() async throws {
+        logger.info("🔧 Testing streaming memory usage...")
+
+        // This test demonstrates streaming large datasets without loading everything into memory
+        var processedRows = 0
+        let maxRowsToProcess = 1000
+
+        let stream = try await client.queryStream("""
+            SELECT TOP (\(maxRowsToProcess))
+                ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) as row_num,
+                REPLICATE('x', 1000) as large_data -- 1KB per row
+            FROM sys.objects o1
+            CROSS JOIN sys.objects o2
+        """)
+
+        for try await data in stream {
+            processedRows += data.rows.count
+
+            // Process each batch and allow memory to be cleaned up
+            for row in data.rows {
+                let row_num = row.column("row_num")?.integer ?? 0
+                let data_size = row.column("large_data")?.string?.count ?? 0
+                XCTAssertEqual(data_size, 1000, "Each row should have 1000 characters")
+
+                if row_num % 100 == 0 {
+                    logger.info("📡 Processed \(row_num) rows")
+                }
+            }
+        }
+
+        XCTAssertGreaterThan(processedRows, 0, "Should have processed some rows")
+        XCTAssertLessThanOrEqual(processedRows, maxRowsToProcess, "Should not exceed max rows")
+
+        logger.info("✅ Streaming memory usage test successful! Processed \(processedRows) rows")
+    }
+
+    // MARK: - Streaming Performance Tests
+
+    func testStreamingPerformance() async throws {
+        logger.info("🔧 Testing streaming performance...")
+
+        let startTime = Date()
+        var totalRowsProcessed = 0
+
+        let stream = try await client.queryStream("""
+            SELECT TOP 1000
+                ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) as row_num,
+                'Performance Test Data ' + CAST(ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) as varchar) as data,
+                NEWID() as random_id
+            FROM sys.objects o1
+            CROSS JOIN sys.objects o2
+        """)
+
+        for try await data in stream {
+            totalRowsProcessed += data.rows.count
+        }
+
+        let duration = Date().timeIntervalSince(startTime)
+        let rowsPerSecond = Double(totalRowsProcessed) / duration
+
+        XCTAssertGreaterThan(totalRowsProcessed, 0)
+        XCTAssertGreaterThan(rowsPerSecond, 100, "Should process at least 100 rows per second")
+
+        logger.info("✅ Streaming performance: \(totalRowsProcessed) rows in \(String(format: "%.3f", duration))s (\(String(format: "%.0f", rowsPerSecond)) rows/s)")
+    }
+
+    // MARK: - Connection Held During Streaming Tests
+
+    func testConnectionHeldDuringStreaming() async throws {
+        logger.info("🔧 Testing connection held during streaming...")
+
+        var rowsReceived = 0
+        let expectedRows = 50
+
+        let stream = try await client.queryStream("""
+            SELECT TOP (\(expectedRows))
+                ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) as row_num
+            FROM sys.objects o1
+            CROSS JOIN sys.objects o2
+        """)
+
+        // Simulate processing that takes time
+        for try await data in stream {
+            for row in data.rows {
+                rowsReceived += 1
+
+                // Simulate some processing time
+                try await Task.sleep(nanoseconds: 1_000_000) // 1ms
+
+                if rowsReceived % 10 == 0 {
+                    logger.info("📡 Processed \(rowsReceived)/\(expectedRows) rows")
+                }
+            }
+        }
+
+        XCTAssertEqual(rowsReceived, expectedRows)
+        logger.info("✅ Connection held during streaming test successful!")
+    }
+
+    // MARK: - Streaming Error Handling Tests
+
+    func testStreamingErrorHandling() async throws {
+        logger.info("🔧 Testing streaming error handling...")
+
+        do {
+            let stream = try await client.queryStream("SELECT * FROM nonexistent_table_xyz")
+
+            for try await _ in stream {
+                XCTFail("Should not receive any data from non-existent table")
+            }
+
+            XCTFail("Should have thrown an error for non-existent table")
+        } catch {
+            logger.info("✅ Streaming error properly handled: \(error)")
+            XCTAssertTrue(error.localizedDescription.contains("not found") ||
+                         error.localizedDescription.contains("Invalid object name"))
+        }
+    }
+
+    // MARK: - Large Dataset Streaming Tests
+
+    func testLargeDatasetStreaming() async throws {
+        logger.info("🔧 Testing large dataset streaming...")
+
+        var totalRows = 0
+        let targetRows = 5000
+
+        let startTime = Date()
+
+        let stream = try await client.queryStream("""
+            SELECT TOP (\(targetRows))
+                ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) as row_num,
+                'Large Dataset Row ' + CAST(ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) as varchar) as description,
+                CHECKSUM(NEWID()) as checksum_value
+            FROM sys.objects o1
+            CROSS JOIN sys.objects o2
+            CROSS JOIN sys.objects o3
+        """)
+
+        var batchCount = 0
+        for try await data in stream {
+            batchCount += 1
+            totalRows += data.rows.count
+
+            if batchCount % 10 == 0 {
+                logger.info("📡 Processed batch \(batchCount), total rows: \(totalRows)")
+            }
+        }
+
+        let duration = Date().timeIntervalSince(startTime)
+
+        XCTAssertEqual(totalRows, targetRows)
+        XCTAssertLessThan(duration, 30.0, "Should complete within 30 seconds")
+
+        logger.info("✅ Large dataset streaming completed: \(totalRows) rows in \(String(format: "%.2f", duration))s")
+    }
+
+    // MARK: - Concurrent Streaming Tests
+
+    func testConcurrentStreamingOperations() async throws {
+        logger.info("🔧 Testing concurrent streaming operations...")
+
+        let concurrentOperations = 3
+        let rowsPerOperation = 50
+
+        async func streamingTask(taskId: Int) async throws -> Int {
+            var processedRows = 0
+
+            let stream = try await client.queryStream("""
+                SELECT TOP (\(rowsPerOperation))
+                    ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) as row_num,
+                    'Task \(taskId) Data' as task_data
+                FROM sys.objects
+            """)
+
+            for try await data in stream {
+                processedRows += data.rows.count
+            }
+
+            return processedRows
+        }
+
+        let startTime = Date()
+
+        // Run multiple streaming operations concurrently
+        let results = try await withThrowingTaskGroup(of: Int.self, returning: [Int].self) { group in
+            for taskId in 1...concurrentOperations {
+                group.addTask {
+                    return try await streamingTask(taskId: taskId)
+                }
+            }
+
+            var allResults: [Int] = []
+            for try await result in group {
+                allResults.append(result)
+            }
+            return allResults
+        }
+
+        let duration = Date().timeIntervalSince(startTime)
+        let totalRows = results.reduce(0, +)
+
+        XCTAssertEqual(results.count, concurrentOperations)
+        XCTAssertEqual(totalRows, concurrentOperations * rowsPerOperation)
+
+        logger.info("✅ Concurrent streaming completed: \(totalRows) total rows in \(String(format: "%.3f", duration))s")
+    }
+
+    // MARK: - Streaming Properties Tests
+
+    func testRawSqlRequestStreamingProperties() throws {
+        logger.info("🔧 Testing RawSqlRequest streaming properties...")
+
+        let request = RawSqlRequest(sql: "SELECT 1")
+
+        // Test default properties
+        XCTAssertFalse(request.stream, "Default should be batch mode (false)")
+        XCTAssertNil(request.onData, "onData callback should be nil by default")
+        XCTAssertNil(request.onRow, "onRow callback should be nil by default")
+        XCTAssertNil(request.onMetadata, "onMetadata callback should be nil by default")
+        XCTAssertNil(request.onDone, "onDone callback should be nil by default")
+
+        logger.info("✅ RawSqlRequest streaming properties verified!")
+    }
+
+    func testRawSqlRequestStreamingModeEnabled() throws {
+        logger.info("🔧 Testing RawSqlRequest streaming mode enabled...")
+
+        var onDataCallCount = 0
+        var onRowCallCount = 0
+
+        let request = RawSqlRequest(
+            sql: "SELECT 1",
+            stream: true,
+            onRow: { row in
+                onRowCallCount += 1
+                logger.info("📡 Row processed in streaming mode")
+            },
+            onData: { data in
+                onDataCallCount += 1
+                logger.info("📡 Data item processed in streaming mode")
+            }
+        )
+
+        // Test streaming mode properties
+        XCTAssertTrue(request.stream, "Should be in streaming mode")
+        XCTAssertNotNil(request.onRow, "Should have onRow callback")
+        XCTAssertNotNil(request.onData, "Should have onData callback")
+
+        logger.info("✅ RawSqlRequest streaming mode verified!")
+    }
+}
