@@ -1,55 +1,56 @@
+# macOS
 .DS_Store
+
+# Swift Package Manager
 /.build
 /Packages
+Package.Resolved
+/.swiftpm
+/.build-*/
+
+# Xcode
 /*.xcodeproj
 DerivedData
 xcuserdata/
-/.swiftpm
-Package.Resolved
-Tests/LinuxMain.swift
-.env
 
-# Environment configuration files with sensitive server data
+# Build artifacts
+build/
+.build-agent/
+.build-sec/
+.build-tdsdecoder/
+.build-tmp/
+*.log
+
+# Packet captures
+*.cap
+
+# IDE and tool config
+.xcodebuildmcp/
+.claude/
+
+# -----------------------------------------------------------------------
+# Credentials / local-only configuration
+# -----------------------------------------------------------------------
+# Copy Tests/EnvironmentConfig.swift.template → Tests/EnvironmentConfig.swift
+# and fill in your server details. Never commit the filled-in copy.
+.env
+Tests/EnvironmentConfig.swift
 Tests/TestConfig.local.swift
 Tests/*/TestConfig.local.swift
 
-# These files contain server connection information and should be customized locally
-/AGENTS.md
-/Docs
+# Private test plans contain environment-specific connection settings
 Private.xctestplan
+Private*.xctestplan
 
-# Tool and IDE generated directories
-.xcodebuildmcp/
-
-# Build artifacts and temporary files
-.build-agent/
-.build-release.log
-.build-sec/
-.build-tdsdecoder/
-.build-tests-warning-release.log
-.build-tests-warning.log
-.build-tests.log
-.build-tmp/
-.build-warning-release.log
-.build-warning.log
-.claude/
-rpc.cap
-metadata-run.log
-*.log
-/.build-*/
-build/
-TEST.md
-Comprehensive-Restructuring-Plan.md
-COMPREHENSIVE_TEST_GUIDE.md
-debug_tds_parsing.swift
-TDS_FIXES_VALIDATION_SUMMARY.md
-Test-API-Coverage-Plan.md
-Test-Restructuring-Completed.md
-Test-Restructuring-Plan.md
+# -----------------------------------------------------------------------
+# Local development notes (personal docs, not for public consumption)
+# -----------------------------------------------------------------------
 CLAUDE.md
-test_metadata_fix.swift
-test_tds_fix.swift
-test_tds_stream.swift
+AGENTS.md
 Tests/SETUP.md
 Docs/
 Debug/
+
+# One-off debug/test scripts
+debug_*.swift
+test_*.swift
