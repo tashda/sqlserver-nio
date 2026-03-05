@@ -31,6 +31,18 @@ let package = Package(
                 .product(name: "Logging", package: "swift-log"),
             ],
             path: "Sources/SQLServerKit"),
+        // Test-only helpers: XCTest, TestEnvironmentManager, withTemporaryDatabase, etc.
+        // Kept separate so SQLServerKit.swiftmodule has no XCTest dependency.
+        .target(
+            name: "SQLServerKitTesting",
+            dependencies: [
+                "SQLServerKit",
+                "SQLServerTDS",
+                .product(name: "NIO", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio"),
+                .product(name: "Logging", package: "swift-log"),
+            ],
+            path: "Sources/SQLServerKitTesting"),
         .target(
             name: "SQLServerTDS",
             dependencies: [
@@ -45,6 +57,7 @@ let package = Package(
             name: "SQLServerConnectionTests",
             dependencies: [
                 "SQLServerKit",
+                "SQLServerKitTesting",
                 .product(name: "NIOTestUtils", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
             ],
@@ -55,6 +68,7 @@ let package = Package(
             name: "SQLServerTableTests",
             dependencies: [
                 "SQLServerKit",
+                "SQLServerKitTesting",
                 .product(name: "NIOTestUtils", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
             ],
@@ -65,6 +79,7 @@ let package = Package(
             name: "SQLServerIndexTests",
             dependencies: [
                 "SQLServerKit",
+                "SQLServerKitTesting",
                 .product(name: "NIOTestUtils", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
             ],
@@ -75,6 +90,7 @@ let package = Package(
             name: "SQLServerConstraintTests",
             dependencies: [
                 "SQLServerKit",
+                "SQLServerKitTesting",
                 .product(name: "NIOTestUtils", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
             ],
@@ -85,6 +101,7 @@ let package = Package(
             name: "SQLServerViewTests",
             dependencies: [
                 "SQLServerKit",
+                "SQLServerKitTesting",
                 .product(name: "NIOTestUtils", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
             ],
@@ -95,6 +112,7 @@ let package = Package(
             name: "SQLServerTriggerTests",
             dependencies: [
                 "SQLServerKit",
+                "SQLServerKitTesting",
                 .product(name: "NIOTestUtils", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
             ],
@@ -105,6 +123,7 @@ let package = Package(
             name: "SQLServerRoutineTests",
             dependencies: [
                 "SQLServerKit",
+                "SQLServerKitTesting",
                 .product(name: "NIOTestUtils", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
             ],
@@ -115,6 +134,7 @@ let package = Package(
             name: "SQLServerSecurityTests",
             dependencies: [
                 "SQLServerKit",
+                "SQLServerKitTesting",
                 .product(name: "NIOTestUtils", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
             ],
@@ -125,6 +145,7 @@ let package = Package(
             name: "SQLServerAgentTests",
             dependencies: [
                 "SQLServerKit",
+                "SQLServerKitTesting",
                 .product(name: "NIOTestUtils", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
             ],
@@ -135,6 +156,7 @@ let package = Package(
             name: "SQLServerBulkTests",
             dependencies: [
                 "SQLServerKit",
+                "SQLServerKitTesting",
                 .product(name: "NIOTestUtils", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
             ],
@@ -145,6 +167,7 @@ let package = Package(
             name: "SQLServerTransactionTests",
             dependencies: [
                 "SQLServerKit",
+                "SQLServerKitTesting",
                 .product(name: "NIOTestUtils", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
             ],
@@ -155,6 +178,7 @@ let package = Package(
             name: "SQLServerTypeTests",
             dependencies: [
                 "SQLServerKit",
+                "SQLServerKitTesting",
                 .product(name: "NIOTestUtils", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
             ],
@@ -165,6 +189,7 @@ let package = Package(
             name: "SQLServerDataTypeTests",
             dependencies: [
                 "SQLServerKit",
+                "SQLServerKitTesting",
                 .product(name: "NIOTestUtils", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
             ],
@@ -175,6 +200,7 @@ let package = Package(
             name: "SQLServerMetadataTests",
             dependencies: [
                 "SQLServerKit",
+                "SQLServerKitTesting",
                 .product(name: "NIOTestUtils", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
             ],
@@ -185,6 +211,7 @@ let package = Package(
             name: "SQLServerMetadataAnalysisTests",
             dependencies: [
                 "SQLServerKit",
+                "SQLServerKitTesting",
                 .product(name: "NIOTestUtils", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
             ],
@@ -195,6 +222,7 @@ let package = Package(
             name: "SQLServerAdvancedTests",
             dependencies: [
                 "SQLServerKit",
+                "SQLServerKitTesting",
                 .product(name: "NIOTestUtils", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
             ],
@@ -226,6 +254,7 @@ let package = Package(
             dependencies: [
                 "SQLServerTDS",
                 "SQLServerKit",
+                "SQLServerKitTesting",
                 .product(name: "NIOEmbedded", package: "swift-nio"),
                 .product(name: "NIOTestUtils", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
@@ -242,6 +271,7 @@ let package = Package(
             dependencies: [
                 "SQLServerTDS",
                 "SQLServerKit",
+                "SQLServerKitTesting",
                 .product(name: "NIOEmbedded", package: "swift-nio"),
                 .product(name: "NIOTestUtils", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
@@ -272,6 +302,7 @@ let package = Package(
             dependencies: [
                 "SQLServerTDS",
                 "SQLServerKit",
+                "SQLServerKitTesting",
                 .product(name: "NIOEmbedded", package: "swift-nio"),
                 .product(name: "NIOTestUtils", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
@@ -302,12 +333,12 @@ let package = Package(
             dependencies: [
                 "SQLServerTDS",
                 "SQLServerKit",
+                "SQLServerKitTesting",
                 .product(name: "NIOEmbedded", package: "swift-nio"),
                 .product(name: "NIOTestUtils", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
             ],
-            path: "Tests/TDSLayerTests",
-            exclude: ["Backup"]
+            path: "Tests/TDSLayerTests"
         ),
 
     ]
