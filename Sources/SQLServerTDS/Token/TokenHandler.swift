@@ -53,6 +53,6 @@ final class RequestTokenHandler: TokenHandler {
     }
 
     func onReturnValue(_ token: TDSTokens.ReturnValueToken) {
-        self.onReturnValueCallback?(token)
+        // no-op: callback is fired directly from TDSRequestHandler via request.delegate.onReturnValue
     }
 }

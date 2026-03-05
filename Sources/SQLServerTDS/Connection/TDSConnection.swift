@@ -52,12 +52,10 @@ public final class TDSConnection {
         return outstandingRequestCount
     }
     
-    internal func updateTransactionState(descriptor: [UInt8], requestCount: UInt32) {
+    public func updateTransactionState(descriptor: [UInt8], requestCount: UInt32) {
         self.currentTransactionDescriptor = descriptor
         self.outstandingRequestCount = requestCount
         self.isInTransaction = !descriptor.allSatisfy { $0 == 0 }
-        let descriptorHex = descriptor.map { String(format: "%02x", $0) }.joined()
-        logger.trace("TDS transaction state updated: descriptor=\(descriptorHex), requestCount=\(requestCount), inTransaction=\(isInTransaction)")
     }
     
     public func close() -> EventLoopFuture<Void> {

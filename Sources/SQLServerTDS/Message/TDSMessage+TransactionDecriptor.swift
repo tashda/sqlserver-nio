@@ -3,7 +3,9 @@ import NIO
 extension TDSMessage {
 
     static public func serializeAllHeaders(_ buffer: inout ByteBuffer, transactionDescriptor: [UInt8] = [0, 0, 0, 0, 0, 0, 0, 0], outstandingRequestCount: UInt32 = 1) {
-        // Match Microsoft JDBC framing observed on wire:
+        // Removed debug logging to test if it was causing issues
+
+        // Match the framing used by SQL Server clients
         // TotalLength (DWORD) = 4 (MarsHeaderLen field) + 18 (MARS header bytes)
         // MarsHeaderLen (DWORD) = 18
         // HeaderType (USHORT) = 0x0002

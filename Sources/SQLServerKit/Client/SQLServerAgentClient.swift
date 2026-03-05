@@ -345,45 +345,83 @@ public final class SQLServerAgentClient: @unchecked Sendable {
     }
 
     /// Comprehensive job listing that returns all detailed information needed for job management
-    /// Uses Microsoft stored procedures and provides complete job details including category, owner, schedules
+    /// Uses Microsoft stored procedures and augments them with agent metadata such as last/next run details.
     public func listJobsDetailed() -> EventLoopFuture<[SQLServerAgentJobDetail]> {
-        let sql = """
-        EXEC msdb.dbo.sp_help_job;
+        let jobSql = "EXEC msdb.dbo.sp_help_job;"
+        let lastRunSql = """
+        SELECT CONVERT(nvarchar(36), job_id) AS job_id, last_run_date, last_run_time
+        FROM msdb.dbo.sysjobservers;
         """
-        return run(sql).map { rows in
-            rows.compactMap { row in
-                guard let name = row.column("name")?.string,
-                      let jobId = row.column("job_id")?.string else { return nil }
+        let nextRunSql = """
+        SELECT CONVERT(nvarchar(36), job_id) AS job_id, next_run_date, next_run_time
+        FROM msdb.dbo.sysjobschedules;
+        """
 
-                let enabled = (row.column("enabled")?.int ?? 0) != 0
-                let description = row.column("description")?.string
-                let ownerLoginName = row.column("owner_login_name")?.string
-                let categoryName = row.column("category_name")?.string
-                let startStepId = row.column("start_step_id")?.int
-                let lastRunOutcome = row.column("last_run_outcome")?.string
-                let lastRunDateInt = row.column("last_run_date")?.int
-                let lastRunTimeInt = row.column("last_run_time")?.int
-                let nextRunDateInt = row.column("next_run_date")?.int
-                let nextRunTimeInt = row.column("next_run_time")?.int
-                let hasSchedule = (row.column("has_schedule")?.int ?? 0) != 0
+        return run(lastRunSql).and(run(nextRunSql)).flatMap { lastRunRows, nextRunRows in
+            var lastRunByJob: [String: Date] = [:]
+            for row in lastRunRows {
+                guard let jobId = row.column("job_id")?.string else { continue }
+                let dateValue = self.convertSqlDateTime(date: row.column("last_run_date")?.int,
+                                                        time: row.column("last_run_time")?.int)
+                guard let dateValue else { continue }
+                if let existing = lastRunByJob[jobId] {
+                    if dateValue > existing {
+                        lastRunByJob[jobId] = dateValue
+                    }
+                } else {
+                    lastRunByJob[jobId] = dateValue
+                }
+            }
 
-                // Convert date/time integers to Date objects
-                let lastRunDate = self.convertSqlDateTime(date: lastRunDateInt, time: lastRunTimeInt)
-                let nextRunDate = self.convertSqlDateTime(date: nextRunDateInt, time: nextRunTimeInt)
+            var nextRunByJob: [String: Date] = [:]
+            for row in nextRunRows {
+                guard let jobId = row.column("job_id")?.string else { continue }
+                let dateValue = self.convertSqlDateTime(date: row.column("next_run_date")?.int,
+                                                        time: row.column("next_run_time")?.int)
+                guard let dateValue else { continue }
+                if let existing = nextRunByJob[jobId] {
+                    if dateValue < existing {
+                        nextRunByJob[jobId] = dateValue
+                    }
+                } else {
+                    nextRunByJob[jobId] = dateValue
+                }
+            }
 
-                return SQLServerAgentJobDetail(
-                    jobId: jobId,
-                    name: name,
-                    description: description,
-                    enabled: enabled,
-                    ownerLoginName: ownerLoginName,
-                    categoryName: categoryName,
-                    startStepId: startStepId,
-                    lastRunOutcome: lastRunOutcome,
-                    lastRunDate: lastRunDate,
-                    nextRunDate: nextRunDate,
-                    hasSchedule: hasSchedule
-                )
+            return self.run(jobSql).map { rows in
+                rows.compactMap { row in
+                    guard let name = row.column("name")?.string,
+                          let jobId = row.column("job_id")?.string else { return nil }
+
+                    let enabled = (row.column("enabled")?.int ?? 0) != 0
+                    let description = row.column("description")?.string ?? row.column("job_description")?.string
+                    let ownerLoginName = row.column("owner_login_name")?.string ?? row.column("owner")?.string
+                    let categoryName = row.column("category_name")?.string ?? row.column("category")?.string
+                    let startStepId = row.column("start_step_id")?.int
+                    let lastRunOutcome = row.column("last_run_outcome")?.string
+                    let lastRunDateInt = row.column("last_run_date")?.int
+                    let lastRunTimeInt = row.column("last_run_time")?.int
+                    let nextRunDateInt = row.column("next_run_date")?.int
+                    let nextRunTimeInt = row.column("next_run_time")?.int
+                    let hasSchedule = (row.column("has_schedule")?.int ?? 0) != 0
+
+                    let lastRunDate = self.convertSqlDateTime(date: lastRunDateInt, time: lastRunTimeInt) ?? lastRunByJob[jobId]
+                    let nextRunDate = self.convertSqlDateTime(date: nextRunDateInt, time: nextRunTimeInt) ?? nextRunByJob[jobId]
+
+                    return SQLServerAgentJobDetail(
+                        jobId: jobId,
+                        name: name,
+                        description: description,
+                        enabled: enabled,
+                        ownerLoginName: ownerLoginName,
+                        categoryName: categoryName,
+                        startStepId: startStepId,
+                        lastRunOutcome: lastRunOutcome,
+                        lastRunDate: lastRunDate,
+                        nextRunDate: nextRunDate,
+                        hasSchedule: hasSchedule
+                    )
+                }
             }
         }
     }
@@ -400,9 +438,9 @@ public final class SQLServerAgentClient: @unchecked Sendable {
                   let name = row.column("name")?.string else { return nil }
 
             let enabled = (row.column("enabled")?.int ?? 0) != 0
-            let description = row.column("description")?.string
-            let ownerLoginName = row.column("owner_login_name")?.string
-            let categoryName = row.column("category_name")?.string
+            let description = row.column("description")?.string ?? row.column("job_description")?.string
+            let ownerLoginName = row.column("owner_login_name")?.string ?? row.column("owner")?.string
+            let categoryName = row.column("category_name")?.string ?? row.column("category")?.string
             let startStepId = row.column("start_step_id")?.int
             let lastRunOutcome = row.column("last_run_outcome")?.string
             let lastRunDateInt = row.column("last_run_date")?.int
@@ -511,12 +549,17 @@ public final class SQLServerAgentClient: @unchecked Sendable {
 
     /// Get detailed job history with proper date formatting
     public func getJobHistory(jobName: String? = nil, top: Int = 100) -> EventLoopFuture<[SQLServerAgentJobHistoryDetail]> {
-        let jobFilter = jobName != nil ? "@job_name = N'\(escapeLiteral(jobName!))'" : ""
+        var parameters: [String] = []
+        if let jobName {
+            parameters.append("@job_name = N'\(escapeLiteral(jobName))'")
+        }
+        parameters.append("@mode = 'FULL'")
+        let paramSql = parameters.isEmpty ? "" : " " + parameters.joined(separator: ", ")
         let sql = """
-        EXEC msdb.dbo.sp_help_jobhistory \(jobFilter), @mode = 'FULL', @order_by = 'DATE DESC', @top_rows = \(top);
+        EXEC msdb.dbo.sp_help_jobhistory\(paramSql);
         """
         return run(sql).map { rows in
-            rows.compactMap { row in
+            let historyEntries: [SQLServerAgentJobHistoryDetail] = rows.compactMap { row in
                 guard let instanceId = row.column("instance_id")?.int,
                       let jobName = row.column("job_name")?.string,
                       let stepId = row.column("step_id")?.int,
@@ -544,6 +587,13 @@ public final class SQLServerAgentClient: @unchecked Sendable {
                     runDurationSeconds: runDurationSeconds
                 )
             }
+            guard top > 0 else {
+                return historyEntries
+            }
+            if historyEntries.count <= top {
+                return historyEntries
+            }
+            return Array(historyEntries.prefix(top))
         }
     }
 

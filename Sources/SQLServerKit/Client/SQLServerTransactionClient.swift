@@ -167,9 +167,7 @@ public final class SQLServerTransactionClient {
             name,
             transaction_type,
             transaction_state,
-            transaction_begin_time,
-            transaction_type_desc,
-            transaction_state_desc
+            transaction_begin_time
         FROM sys.dm_tran_active_transactions
         WHERE transaction_id = CURRENT_TRANSACTION_ID()
         """
@@ -179,8 +177,30 @@ public final class SQLServerTransactionClient {
 
             let transactionId = row.column("transaction_id")?.string
             let name = row.column("name")?.string
-            let transactionType = row.column("transaction_type_desc")?.string
-            let transactionState = row.column("transaction_state_desc")?.string
+            let transactionTypeCode = row.column("transaction_type")?.int
+            let transactionStateCode = row.column("transaction_state")?.int
+
+            let transactionType: String?
+            switch transactionTypeCode {
+            case 2: transactionType = "READ"   // read-only
+            case 1, 3, 4: transactionType = "WRITE" // read/write, system, distributed
+            default: transactionType = nil
+            }
+
+            let transactionState: String?
+            switch transactionStateCode {
+            case 0: transactionState = "Not Initialized"
+            case 1: transactionState = "Initialized"
+            case 2: transactionState = "Active"
+            case 3: transactionState = "Ended"
+            case 4: transactionState = "Committing"
+            case 5: transactionState = "Prepared"
+            case 6: transactionState = "Committed"
+            case 7: transactionState = "Rolling Back"
+            case 8: transactionState = "Rolled Back"
+            default: transactionState = nil
+            }
+
             let beginTime = row.column("transaction_begin_time")?.date
 
             return TransactionInfo(

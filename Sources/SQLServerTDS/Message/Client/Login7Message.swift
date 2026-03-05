@@ -51,7 +51,7 @@ extension TDSMessages {
             buffer.moveWriterIndex(forwardBy: 4)
             
             buffer.writeBytes([
-                0x02, 0x00, 0x09, 0x72, // TDS version
+                0x04, 0x00, 0x00, 0x74, // TDS version 7.4 (SQL Server 2012+, required for SQL Server 2025)
                 0x00, 0x10, 0x00, 0x00, // Packet length negotiation
                 0x00, 0x00, 0x00, 0x01, // Client version, 0x07 in example
             ])

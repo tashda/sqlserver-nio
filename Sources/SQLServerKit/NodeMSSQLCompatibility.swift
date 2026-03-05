@@ -71,6 +71,9 @@ public final class NodeMSSQLRequest {
     }
 
     private func executeWithConnection(_ connection: SQLServerConnection, pool: NodeMSSQLConnectionPool) {
+        // Execute using underlying TDS connection with simplified error handling
+        let tdsConnection = connection.underlying
+
         // Create RawSqlRequest with node-mssql callbacks
         let rawRequest = RawSqlRequest(
             sql: self.sql,
@@ -85,9 +88,6 @@ public final class NodeMSSQLRequest {
                 self.onDone?(doneToken)
             }
         )
-
-        // Execute using underlying TDS connection with simplified error handling
-        let tdsConnection = connection.underlying
         tdsConnection.send(rawRequest, logger: tdsConnection.logger).whenComplete { [weak self] result in
             guard let self = self else { return }
 
