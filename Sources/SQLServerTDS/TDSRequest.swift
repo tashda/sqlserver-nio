@@ -87,7 +87,7 @@ final class TDSRequestHandler: ChannelDuplexHandler {
     typealias InboundIn = ByteBuffer  // Complete messages from Message Assembly Layer
     typealias OutboundIn = TDSRequestContext
     typealias OutboundOut = TDSPacket
-    
+
     /// `TDSMessage` handlers
     var firstDecoder: ByteToMessageHandler<TDSPacketDecoder>
     var firstEncoder: MessageToByteHandler<TDSPacketEncoder>
@@ -102,8 +102,11 @@ final class TDSRequestHandler: ChannelDuplexHandler {
     // Reference to the actual decoder for mode switching
     private let packetDecoder: TDSPacketDecoder
     private let streamParser: TDSStreamParser
-    
+
     var pipelineCoordinator: PipelineOrganizationHandler!
+
+    // Reference to the TDSConnection for updating transaction state
+    private weak var connection: TDSConnection?
     
     enum State: Int {
         case start
@@ -134,7 +137,8 @@ final class TDSRequestHandler: ChannelDuplexHandler {
         serverHostname: String? = nil,
         firstDecoderName: String,
         firstEncoderName: String,
-        pipelineCoordinatorName: String
+        pipelineCoordinatorName: String,
+        connection: TDSConnection? = nil
     ) {
         self.logger = logger
         self.queue = []
@@ -145,6 +149,7 @@ final class TDSRequestHandler: ChannelDuplexHandler {
         self.firstDecoderName = firstDecoderName
         self.firstEncoderName = firstEncoderName
         self.pipelineCoordinatorName = pipelineCoordinatorName
+        self.connection = connection
 
         // Create a reference to the decoder for mode switching
         // Since ByteToMessageHandler doesn't expose its decoder directly,
@@ -155,7 +160,49 @@ final class TDSRequestHandler: ChannelDuplexHandler {
         // Replace the provided decoder with our controllable one
         self.firstDecoder = ByteToMessageHandler(packetDecoder)
     }
-    
+
+    /// Simpler ENVCHANGE token processing - SAFER approach that was working yesterday
+    /// Only handle explicit transaction state changes, ignore implicit operations
+    private func processEnvchangeToken(_ envToken: TDSTokens.EnvchangeToken<[Byte]>) {
+        guard let connection = self.connection else {
+            logger.warning("Received ENVCHANGE token but no connection reference available")
+            return
+        }
+
+        switch envToken.envchangeType {
+        case .beingTransaction: // Type 8
+            logger.debug("ENVCHANGE beginTransaction received, newValue length=\(envToken.newValue.count)")
+            let descriptor = Array(envToken.newValue.prefix(8))
+            if descriptor.count == 8 {
+                let hex = descriptor.map { String(format: "%02x", $0) }.joined()
+                logger.info("🔧 Transaction begin detected, descriptor=\(hex)")
+                connection.updateTransactionState(descriptor: descriptor, requestCount: 1)
+            }
+
+        case .commitTransaction, // Type 9
+             .rollbackTransaction, // Type 10
+             .defectTransaction, // Type 12
+             .transactionEnded: // Type 17
+            logger.debug("ENVCHANGE transaction completion received type=\(envToken.envchangeType)")
+            // Reset to AutoCommit mode for all transaction completions
+            let currentDescriptor = connection.transactionDescriptor
+            let isInAutoCommit = currentDescriptor.allSatisfy { $0 == 0 }
+
+            if !isInAutoCommit {
+                let autocommitDescriptor = [UInt8](repeating: 0, count: 8)
+                connection.updateTransactionState(descriptor: autocommitDescriptor, requestCount: 1)
+                let action = envToken.envchangeType == .commitTransaction ? "committed" :
+                           envToken.envchangeType == .rollbackTransaction ? "rolled back" :
+                           envToken.envchangeType == .defectTransaction ? "defected" : "ended"
+                logger.info("🔧 Transaction \(action), returning to AutoCommit mode")
+            }
+
+        default:
+            // Ignore all other ENVCHANGE types to prevent connection state corruption
+            break
+        }
+    }
+
     private func _channelRead(context: ChannelHandlerContext, data: NIOAny) throws {
         guard let request = self.currentRequest else {
             // discard data
@@ -232,9 +279,9 @@ final class TDSRequestHandler: ChannelDuplexHandler {
                     logger.info("Received LOGINACK token; connection authenticated.")
                     self.state = .loggedIn
                 case .envchange:
-                    // Handle envchange tokens during login
-                    // These are expected during login and should be ignored
-                    break
+                    if let envToken = token as? TDSTokens.EnvchangeToken<[Byte]> {
+                        processEnvchangeToken(envToken)
+                    }
                 default:
                     break
                 }
@@ -252,6 +299,11 @@ final class TDSRequestHandler: ChannelDuplexHandler {
         }
     }
     
+    /// Set the TDSConnection reference after it's created
+    internal func setConnection(_ connection: TDSConnection) {
+        self.connection = connection
+    }
+
     private func sslKickoff(context: ChannelHandlerContext) throws {
         guard let tlsConfig = tlsConfiguration else {
             throw TDSError.protocolError("Encryption was requested but a TLS Configuration was not provided.")
@@ -387,6 +439,13 @@ final class TDSRequestHandler: ChannelDuplexHandler {
         if self.queue.count == 1 {
             do {
                 request.started = true
+                // Propagate the current transaction descriptor into RawSqlRequest batches so that
+                // explicit transactions (BEGIN/COMMIT/ROLLBACK) use a valid MARS header.
+                if let connection = self.connection,
+                   let raw = request.delegate as? RawSqlRequest {
+                    raw.transactionDescriptorOverride = connection.transactionDescriptor
+                    raw.outstandingRequestCountOverride = connection.requestCount
+                }
                 let packets = try request.delegate.start(allocator: context.channel.allocator)
                 try write(context: context, packets: packets, promise: promise)
                 context.flush()

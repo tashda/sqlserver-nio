@@ -17,11 +17,11 @@ extension TDSData {
 
         switch self.metadata.dataType {
         case .real:
-            return value.readFloat().map {
+            return value.readFloat(endianness: .little).map {
                 Double($0)
             }
         case .float:
-            return value.readDouble()
+            return value.readDouble(endianness: .little)
         case .floatn:
             switch value.readableBytes {
             case 0:

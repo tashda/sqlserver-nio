@@ -125,29 +125,12 @@ public final class SQLServerAdministrationClient {
     @available(macOS 12.0, *)
     private func executeWithTransactionControl(createTableSql: String, commentStatements: [String]) async throws {
         try await client.withConnection { connection in
-            do {
-                // Begin transaction
-                _ = try await connection.underlying.rawSql("BEGIN TRANSACTION").get()
-                
-                // Create table
-                _ = try await connection.underlying.rawSql(createTableSql).get()
-                
-                // Add comments
+            try await connection.withTransaction { conn in
+                _ = try await conn.execute(createTableSql)
                 for commentSql in commentStatements {
-                    _ = try await connection.underlying.rawSql(commentSql).get()
+                    _ = try await conn.execute(commentSql)
                 }
-                
-                // Commit transaction
-                _ = try await connection.underlying.rawSql("COMMIT").get()
-            } catch {
-                // Rollback on any error
-                do {
-                    _ = try await connection.underlying.rawSql("ROLLBACK").get()
-                } catch {
-                    // Log rollback failure but don't mask original error
-                    self.client.logger.warning("Failed to rollback transaction: \(error)")
-                }
-                throw error
+                return ()
             }
         }
     }

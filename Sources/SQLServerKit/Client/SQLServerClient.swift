@@ -204,43 +204,36 @@ public final class SQLServerClient {
             self.pool.checkout(on: loop).flatMap { pooled -> EventLoopFuture<Result> in
                 let sqlConnection = self.makeConnection(from: pooled)
                 // Run a quick health probe, but do not block the operation on its success.
-                let op: EventLoopFuture<Result> = self.healthProbe(sqlConnection, on: loop)
-                    .flatMap {
-                        self.stateLock.withLock { self.inFlightOperations += 1 }
-                        let userFuture = operation(sqlConnection)
-                        let bridge = loop.makePromise(of: Result.self)
-                        userFuture.whenComplete { result in
-                            var toComplete: [EventLoopPromise<Void>] = []
-                            self.stateLock.withLock {
-                                self.inFlightOperations = max(0, self.inFlightOperations - 1)
-                                if self.inFlightOperations == 0 && self.isShutdown {
-                                    toComplete = self.drainWaiters; self.drainWaiters.removeAll(keepingCapacity: false)
-                                }
-                            }
-                            toComplete.forEach { $0.succeed(()) }
-                            bridge.completeWith(result)
-                        }
-                        return bridge.futureResult
+                let probe = self.healthProbe(sqlConnection, on: loop).flatMapError { hpError in
+                    let normalized = SQLServerError.normalize(hpError)
+                    let retryError: SQLServerError
+                    if case .timeout = normalized {
+                        retryError = .connectionClosed
+                    } else {
+                        retryError = normalized
                     }
-                    .flatMapError { hpError in
-                        // If the probe fails (e.g., transient timeout), proceed with the user operation anyway.
-                        self.logger.debug("Connection health probe failed: \(hpError); proceeding with operation")
-                        self.stateLock.withLock { self.inFlightOperations += 1 }
-                        let userFuture = operation(sqlConnection)
-                        let bridge = loop.makePromise(of: Result.self)
-                        userFuture.whenComplete { result in
-                            var toComplete: [EventLoopPromise<Void>] = []
-                            self.stateLock.withLock {
-                                self.inFlightOperations = max(0, self.inFlightOperations - 1)
-                                if self.inFlightOperations == 0 && self.isShutdown {
-                                    toComplete = self.drainWaiters; self.drainWaiters.removeAll(keepingCapacity: false)
-                                }
-                            }
-                            toComplete.forEach { $0.succeed(()) }
-                            bridge.completeWith(result)
-                        }
-                        return bridge.futureResult
+                    self.logger.debug("Connection health probe failed: \(normalized); invalidating connection")
+                    return sqlConnection.invalidate().recover { _ in () }.flatMap { _ in
+                        loop.makeFailedFuture(retryError)
                     }
+                }
+                let op: EventLoopFuture<Result> = probe.flatMap {
+                    self.stateLock.withLock { self.inFlightOperations += 1 }
+                    let userFuture = operation(sqlConnection)
+                    let bridge = loop.makePromise(of: Result.self)
+                    userFuture.whenComplete { result in
+                        var toComplete: [EventLoopPromise<Void>] = []
+                        self.stateLock.withLock {
+                            self.inFlightOperations = max(0, self.inFlightOperations - 1)
+                            if self.inFlightOperations == 0 && self.isShutdown {
+                                toComplete = self.drainWaiters; self.drainWaiters.removeAll(keepingCapacity: false)
+                            }
+                        }
+                        toComplete.forEach { $0.succeed(()) }
+                        bridge.completeWith(result)
+                    }
+                    return bridge.futureResult
+                }
                 return op.flatMap { value in
                     sqlConnection.close().map { value }
                 }.flatMapError { error in
@@ -265,7 +258,12 @@ public final class SQLServerClient {
 
     private func healthProbe(_ connection: SQLServerConnection, on loop: EventLoop) -> EventLoopFuture<Void> {
         // Keep the probe lightweight and avoid per-call event-loop timers that can trip shutdown races in tests.
-        connection.query("SELECT 1 AS __ping__;").map { _ in () }
+        // Health probe should always use AutoCommit state to avoid transaction descriptor issues
+        // We override the connection's current state with AutoCommit values
+        let request = RawSqlRequest(
+            sql: "SELECT 1 AS __ping__;"
+        )
+        return connection.underlying.send(request, logger: connection.logger).map { _ in () }
     }
 
     @available(macOS 12.0, *)
@@ -373,7 +371,7 @@ public final class SQLServerClient {
     ) -> EventLoopFuture<SQLServerExecutionResult> {
         let loop = eventLoop ?? eventLoopGroup.next()
         return self.withConnection(on: loop) { conn in
-            conn.execute(sql).withTimeout(on: loop, seconds: seconds)
+            conn.execute(sql, timeout: seconds)
         }
     }
 
@@ -384,7 +382,7 @@ public final class SQLServerClient {
     ) -> EventLoopFuture<[TDSRow]> {
         let loop = eventLoop ?? eventLoopGroup.next()
         return self.withConnection(on: loop) { conn in
-            conn.execute(sql).withTimeout(on: loop, seconds: seconds).map(\.rows)
+            conn.execute(sql, timeout: seconds).map(\.rows)
         }
     }
 
@@ -445,6 +443,28 @@ public final class SQLServerClient {
         on eventLoop: EventLoop? = nil
     ) async throws -> T? {
         try await queryScalar(sql, as: type, on: eventLoop).get()
+    }
+
+    // MARK: - RPC stored procedure calls
+
+    public func call(
+        procedure name: String,
+        parameters: [SQLServerConnection.ProcedureParameter] = [],
+        on eventLoop: EventLoop? = nil
+    ) -> EventLoopFuture<SQLServerExecutionResult> {
+        let loop = eventLoop ?? eventLoopGroup.next()
+        return withConnection(on: loop) { connection in
+            connection.call(procedure: name, parameters: parameters)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func call(
+        procedure name: String,
+        parameters: [SQLServerConnection.ProcedureParameter] = [],
+        on eventLoop: EventLoop? = nil
+    ) async throws -> SQLServerExecutionResult {
+        try await call(procedure: name, parameters: parameters, on: eventLoop).get()
     }
 
     public func fetchObjectDefinitions(
@@ -622,6 +642,62 @@ public final class SQLServerClient {
         ).get()
     }
 
+    public func listColumnsForSchema(
+        database: String? = nil,
+        schema: String,
+        includeComments: Bool = false,
+        on eventLoop: EventLoop? = nil
+    ) -> EventLoopFuture<[ColumnMetadata]> {
+        withConnection(on: eventLoop) { connection in
+            connection.listColumnsForSchema(
+                database: database,
+                schema: schema,
+                includeComments: includeComments
+            )
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listColumnsForSchema(
+        database: String? = nil,
+        schema: String,
+        includeComments: Bool = false,
+        on eventLoop: EventLoop? = nil
+    ) async throws -> [ColumnMetadata] {
+        try await listColumnsForSchema(
+            database: database,
+            schema: schema,
+            includeComments: includeComments,
+            on: eventLoop
+        ).get()
+    }
+
+    public func listColumnsForDatabase(
+        database: String? = nil,
+        includeComments: Bool = false,
+        on eventLoop: EventLoop? = nil
+    ) -> EventLoopFuture<[ColumnMetadata]> {
+        withConnection(on: eventLoop) { connection in
+            connection.listColumnsForDatabase(
+                database: database,
+                includeComments: includeComments
+            )
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listColumnsForDatabase(
+        database: String? = nil,
+        includeComments: Bool = false,
+        on eventLoop: EventLoop? = nil
+    ) async throws -> [ColumnMetadata] {
+        try await listColumnsForDatabase(
+            database: database,
+            includeComments: includeComments,
+            on: eventLoop
+        ).get()
+    }
+
     public func listParameters(
         database: String? = nil,
         schema: String,
@@ -662,6 +738,27 @@ public final class SQLServerClient {
         on eventLoop: EventLoop? = nil
     ) async throws -> [KeyConstraintMetadata] {
         try await listPrimaryKeys(database: database, schema: schema, table: table, on: eventLoop).get()
+    }
+
+    public func listPrimaryKeysFromCatalog(
+        database: String? = nil,
+        schema: String? = nil,
+        table: String? = nil,
+        on eventLoop: EventLoop? = nil
+    ) -> EventLoopFuture<[KeyConstraintMetadata]> {
+        withConnection(on: eventLoop) { connection in
+            connection.listPrimaryKeysFromCatalog(database: database, schema: schema, table: table)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listPrimaryKeysFromCatalog(
+        database: String? = nil,
+        schema: String? = nil,
+        table: String? = nil,
+        on eventLoop: EventLoop? = nil
+    ) async throws -> [KeyConstraintMetadata] {
+        try await listPrimaryKeysFromCatalog(database: database, schema: schema, table: table, on: eventLoop).get()
     }
 
     public func listUniqueConstraints(
@@ -811,6 +908,78 @@ public final class SQLServerClient {
         on eventLoop: EventLoop? = nil
     ) async throws -> [RoutineMetadata] {
         try await listFunctions(database: database, schema: schema, includeComments: includeComments, on: eventLoop).get()
+    }
+
+    public func loadSchemaStructure(
+        database: String? = nil,
+        schema: String,
+        includeComments: Bool = false,
+        on eventLoop: EventLoop? = nil
+    ) -> EventLoopFuture<SQLServerSchemaStructure> {
+        let loop = eventLoop ?? eventLoopGroup.next()
+        func attempt(_ index: Int) -> EventLoopFuture<SQLServerSchemaStructure> {
+            withConnection(on: loop) { connection in
+                connection.loadSchemaStructure(database: database, schema: schema, includeComments: includeComments)
+            }.flatMapError { error in
+                let normalized = SQLServerError.normalize(error)
+                if case .timeout = normalized, index < 2 {
+                    self.logger.warning("loadSchemaStructure timed out; retrying once", metadata: [
+                        "database": .string(database ?? "<default>"),
+                        "schema": .string(schema)
+                    ])
+                    return attempt(index + 1)
+                }
+                return loop.makeFailedFuture(normalized)
+            }
+        }
+        return attempt(1)
+    }
+
+    @available(macOS 12.0, *)
+    public func loadSchemaStructure(
+        database: String? = nil,
+        schema: String,
+        includeComments: Bool = false,
+        on eventLoop: EventLoop? = nil
+    ) async throws -> SQLServerSchemaStructure {
+        try await loadSchemaStructure(
+            database: database,
+            schema: schema,
+            includeComments: includeComments,
+            on: eventLoop
+        ).get()
+    }
+
+    public func loadDatabaseStructure(
+        database: String? = nil,
+        includeComments: Bool = false,
+        on eventLoop: EventLoop? = nil
+    ) -> EventLoopFuture<SQLServerDatabaseStructure> {
+        let loop = eventLoop ?? eventLoopGroup.next()
+        func attempt(_ index: Int) -> EventLoopFuture<SQLServerDatabaseStructure> {
+            withConnection(on: loop) { connection in
+                connection.loadDatabaseStructure(database: database, includeComments: includeComments)
+            }.flatMapError { error in
+                let normalized = SQLServerError.normalize(error)
+                if case .timeout = normalized, index < 2 {
+                    self.logger.warning("loadDatabaseStructure timed out; retrying once", metadata: [
+                        "database": .string(database ?? "<default>")
+                    ])
+                    return attempt(index + 1)
+                }
+                return loop.makeFailedFuture(normalized)
+            }
+        }
+        return attempt(1)
+    }
+
+    @available(macOS 12.0, *)
+    public func loadDatabaseStructure(
+        database: String? = nil,
+        includeComments: Bool = false,
+        on eventLoop: EventLoop? = nil
+    ) async throws -> SQLServerDatabaseStructure {
+        try await loadDatabaseStructure(database: database, includeComments: includeComments, on: eventLoop).get()
     }
 
     /// Returns the SQL Server product version in the form `major.minor.build.revision`.

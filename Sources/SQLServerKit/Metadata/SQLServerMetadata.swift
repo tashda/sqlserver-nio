@@ -22,6 +22,37 @@ public struct TableMetadata: Sendable {
     public let isSystemObject: Bool
     /// Optional MS_Description extended property for this table/view/type
     public let comment: String?
+
+    public enum Kind: String, Sendable {
+        case table
+        case view
+        case systemTable
+        case tableType
+        case other
+    }
+
+    public var kind: Kind {
+        let normalized = type
+            .trimmingCharacters(in: .whitespacesAndNewlines.union(.controlCharacters))
+            .uppercased()
+        if normalized.contains("VIEW") {
+            return .view
+        }
+        if normalized.contains("TABLE TYPE") {
+            return .tableType
+        }
+        if normalized.contains("SYSTEM") {
+            return .systemTable
+        }
+        if normalized.contains("TABLE") {
+            return .table
+        }
+        return .other
+    }
+
+    public var isView: Bool {
+        kind == .view
+    }
 }
 
 public struct ColumnMetadata: Sendable {
@@ -86,6 +117,26 @@ public struct KeyConstraintMetadata: Sendable {
     public let type: ConstraintType
     public let isClustered: Bool
     public let columns: [KeyColumnMetadata]
+}
+
+public struct SQLServerTableStructure: Sendable {
+    public let table: TableMetadata
+    public let columns: [ColumnMetadata]
+    public let primaryKey: KeyConstraintMetadata?
+}
+
+public struct SQLServerSchemaStructure: Sendable {
+    public let name: String
+    public let tables: [SQLServerTableStructure]
+    public let views: [SQLServerTableStructure]
+    public let functions: [RoutineMetadata]
+    public let procedures: [RoutineMetadata]
+    public let triggers: [TriggerMetadata]
+}
+
+public struct SQLServerDatabaseStructure: Sendable {
+    public let database: String?
+    public let schemas: [SQLServerSchemaStructure]
 }
 
 public struct IndexColumnMetadata: Sendable {
@@ -338,6 +389,12 @@ public final class SQLServerMetadataClient {
         public var enableColumnCache: Bool
         public var includeRoutineDefinitions: Bool
         public var includeTriggerDefinitions: Bool
+        /// Optional timeout (in seconds) for catalog queries. When set, metadata calls will
+        /// fail fast instead of hanging indefinitely on blocked system views.
+        public var commandTimeout: TimeInterval?
+        /// When true, attempts to parse default values for procedure/function parameters
+        /// by reading the module definition text. This can be expensive on large databases.
+        public var extractParameterDefaults: Bool
         /// Prefer using sp_columns_100 for table column metadata. When false, uses catalog queries for tables too.
         public var preferStoredProcedureColumns: Bool
 
@@ -346,12 +403,16 @@ public final class SQLServerMetadataClient {
             enableColumnCache: Bool = true,
             includeRoutineDefinitions: Bool = false,
             includeTriggerDefinitions: Bool = true,
-            preferStoredProcedureColumns: Bool = true
+            commandTimeout: TimeInterval? = nil,
+            extractParameterDefaults: Bool = true,
+            preferStoredProcedureColumns: Bool = false
         ) {
             self.includeSystemSchemas = includeSystemSchemas
             self.enableColumnCache = enableColumnCache
             self.includeRoutineDefinitions = includeRoutineDefinitions
             self.includeTriggerDefinitions = includeTriggerDefinitions
+            self.commandTimeout = commandTimeout
+            self.extractParameterDefaults = extractParameterDefaults
             self.preferStoredProcedureColumns = preferStoredProcedureColumns
         }
     }
@@ -360,6 +421,23 @@ public final class SQLServerMetadataClient {
     private let logger: Logger
     private let queryExecutor: @Sendable (String) -> EventLoopFuture<[TDSRow]>
     private let cache: MetadataCache<[ColumnMetadata]>?
+
+    private func timed<T>(_ label: String, _ operation: () -> EventLoopFuture<T>) -> EventLoopFuture<T> {
+        let start = NIODeadline.now()
+        return operation().map { value in
+            let elapsedMs = (NIODeadline.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000
+            if elapsedMs >= 1_000 {
+                self.logger.info("[Metadata] \(label) completed elapsedMs=\(elapsedMs)")
+            } else {
+                self.logger.trace("[Metadata] \(label) completed elapsedMs=\(elapsedMs)")
+            }
+            return value
+        }.flatMapError { error in
+            let elapsedMs = (NIODeadline.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000
+            self.logger.warning("[Metadata] \(label) failed elapsedMs=\(elapsedMs) error=\(error)")
+            return self.connection.eventLoop.makeFailedFuture(error)
+        }
+    }
     private let configuration: Configuration
     private let defaultDatabaseLock = NIOLock()
     private var defaultDatabase: String?
@@ -369,9 +447,13 @@ public final class SQLServerMetadataClient {
         configuration: Configuration = Configuration()
     ) {
         let eventLoop = connection.eventLoop
+        let timeout = configuration.commandTimeout
         let executor: @Sendable (String) -> EventLoopFuture<[TDSRow]> = { [weak connection] sql in
             guard let connection else {
                 return eventLoop.makeFailedFuture(SQLServerError.connectionClosed)
+            }
+            if let timeout {
+                return connection.execute(sql, timeout: timeout, invalidateOnTimeout: false).map(\.rows)
             }
             return connection.execute(sql).map(\.rows)
         }
@@ -413,8 +495,14 @@ public final class SQLServerMetadataClient {
         if let executor = queryExecutor {
             self.queryExecutor = executor
         } else {
-            self.queryExecutor = { sql in
-                connection.query(sql)
+            if let timeout = configuration.commandTimeout {
+                self.queryExecutor = { sql in
+                    connection.query(sql, timeout: timeout)
+                }
+            } else {
+                self.queryExecutor = { sql in
+                    connection.query(sql)
+                }
             }
         }
     }
@@ -694,7 +782,7 @@ public final class SQLServerMetadataClient {
     private func listCheckConstraints(database: String?, schema: String, table: String) -> EventLoopFuture<[CheckConstraintInfo]> {
         let dbPrefix = effectiveDatabase(database).map { "[\(SQLServerMetadataClient.escapeIdentifier($0))]." } ?? ""
         let sql = """
-        SELECT ck.name, ck.definition
+        SELECT ck.name, CAST(ck.definition AS NVARCHAR(4000)) AS definition
         FROM \(dbPrefix)sys.check_constraints AS ck
         JOIN \(dbPrefix)sys.tables AS t ON ck.parent_object_id = t.object_id
         JOIN \(dbPrefix)sys.schemas AS s ON t.schema_id = s.schema_id
@@ -789,10 +877,10 @@ public final class SQLServerMetadataClient {
             c.is_rowguidcol,
             c.is_sparse,
             c.generated_always_type,
-            cc.definition AS computed_definition,
+            CAST(cc.definition AS NVARCHAR(4000)) AS computed_definition,
             cc.is_persisted,
             dc.name AS default_name,
-            dc.definition AS default_definition,
+            CAST(dc.definition AS NVARCHAR(4000)) AS default_definition,
             c.collation_name
         FROM \(dbPrefix)sys.columns AS c
         JOIN \(dbPrefix)sys.tables AS t ON t.object_id = c.object_id
@@ -962,9 +1050,10 @@ public final class SQLServerMetadataClient {
             i.allow_row_locks,
             i.allow_page_locks,
             i.ignore_dup_key,
-            i.filter_definition,
+            CAST(i.filter_definition AS NVARCHAR(4000)) AS filter_definition,
             ds.name AS data_space_name,
             ps.name AS partition_scheme_name,
+            st.no_recompute,
             ic.key_ordinal,
             ic.is_descending_key,
             ic.is_included_column,
@@ -975,6 +1064,7 @@ public final class SQLServerMetadataClient {
         JOIN \(dbPrefix)sys.objects AS o ON i.object_id = o.object_id AND o.type IN ('U','V')
         JOIN \(dbPrefix)sys.schemas AS s ON o.schema_id = s.schema_id
         JOIN \(dbPrefix)sys.data_spaces AS ds ON ds.data_space_id = i.data_space_id
+        JOIN \(dbPrefix)sys.stats AS st ON st.object_id = i.object_id AND st.stats_id = i.index_id
         LEFT JOIN \(dbPrefix)sys.partition_schemes AS ps ON ps.data_space_id = i.data_space_id
         JOIN \(dbPrefix)sys.index_columns AS ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
         JOIN \(dbPrefix)sys.columns AS c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
@@ -991,7 +1081,7 @@ public final class SQLServerMetadataClient {
         ORDER BY s.name, o.name, i.name, ic.is_included_column, ic.key_ordinal, ic.index_column_id;
         """
 
-        struct Partial { var isUnique: Bool; var isClustered: Bool; var idxType: Int; var filter: String?; var storage: String?; var opts: String?; var cols: [IndexColumnMetadata]; var partitionCols: [String]; var dsName: String?; var psName: String?; var isPadded: Bool; var fillFactor: Int; var allowRow: Bool; var allowPage: Bool; var ignoreDup: Bool; var compression: String? }
+        struct Partial { var isUnique: Bool; var isClustered: Bool; var idxType: Int; var filter: String?; var storage: String?; var opts: String?; var cols: [IndexColumnMetadata]; var partitionCols: [String]; var dsName: String?; var psName: String?; var isPadded: Bool; var fillFactor: Int; var allowRow: Bool; var allowPage: Bool; var ignoreDup: Bool; var compression: String?; var noRecompute: Bool }
         return queryExecutor(sql).map { rows in
             var grouped: [String: Partial] = [:]
             for row in rows {
@@ -1012,7 +1102,8 @@ public final class SQLServerMetadataClient {
                     allowRow: (row.column("allow_row_locks")?.int ?? 1) != 0,
                     allowPage: (row.column("allow_page_locks")?.int ?? 1) != 0,
                     ignoreDup: (row.column("ignore_dup_key")?.int ?? 0) != 0,
-                    compression: row.column("compression_desc")?.string
+                    compression: row.column("compression_desc")?.string,
+                    noRecompute: (row.column("no_recompute")?.int ?? 0) != 0
                 )
                 if let colName = row.column("column_name")?.string {
                     let ord = row.column("key_ordinal")?.int ?? 0
@@ -1033,6 +1124,7 @@ public final class SQLServerMetadataClient {
                 parts.append("ALLOW_ROW_LOCKS = \(p.allowRow ? "ON" : "OFF")")
                 parts.append("ALLOW_PAGE_LOCKS = \(p.allowPage ? "ON" : "OFF")")
                 if p.ignoreDup { parts.append("IGNORE_DUP_KEY = ON") }
+                if p.noRecompute { parts.append("STATISTICS_NORECOMPUTE = ON") }
                 if let comp = p.compression, comp != "NONE" {
                     parts.append("DATA_COMPRESSION = \(comp)")
                 }
@@ -1108,7 +1200,7 @@ public final class SQLServerMetadataClient {
         }
         let sql = """
         SELECT s.name
-        FROM \(qualifiedSchemas) AS s
+        FROM \(qualifiedSchemas) AS s WITH (NOLOCK)
         \(predicates.isEmpty ? "" : "WHERE " + predicates.joined(separator: " AND "))
         ORDER BY s.name;
         """
@@ -1142,23 +1234,23 @@ public final class SQLServerMetadataClient {
 
         let whereClause = predicates.isEmpty ? "" : "WHERE " + predicates.joined(separator: " AND ")
 
-        let commentSelect = includeComments ? ", ISNULL(CAST(ep.value AS NVARCHAR(4000)), '') AS comment" : ""
-        let commentJoin = includeComments ? "LEFT JOIN \(qualifiedExtended) AS ep ON ep.major_id = o.object_id AND ep.minor_id = 0 AND ep.class = 1 AND ep.name = N'MS_Description'" : ""
+        let commentSelect = includeComments ? ", CAST(ep.value AS NVARCHAR(4000)) AS comment" : ""
+        let commentJoin = includeComments ? "LEFT JOIN \(qualifiedExtended) AS ep WITH (NOLOCK) ON ep.major_id = o.object_id AND ep.minor_id = 0 AND ep.class = 1 AND ep.name = N'MS_Description'" : ""
 
         let sql = """
         SELECT
             s.name AS schema_name,
             o.name AS object_name,
             CASE
-                WHEN o.type = 'S' OR o.is_ms_shipped = 1 THEN 'SYSTEM TABLE'
-                WHEN o.type = 'U' THEN 'TABLE'
                 WHEN o.type = 'V' THEN 'VIEW'
                 WHEN o.type = 'TT' THEN 'TABLE TYPE'
+                WHEN o.type = 'U' THEN 'TABLE'
+                WHEN o.type = 'S' OR o.is_ms_shipped = 1 THEN 'SYSTEM TABLE'
                 ELSE o.type_desc
             END AS table_type,
             o.is_ms_shipped\(commentSelect)
-        FROM \(qualifiedObjects) AS o
-        INNER JOIN \(qualifiedSchemas) AS s
+        FROM \(qualifiedObjects) AS o WITH (NOLOCK)
+        INNER JOIN \(qualifiedSchemas) AS s WITH (NOLOCK)
             ON s.schema_id = o.schema_id
         \(commentJoin)
         \(whereClause)
@@ -1230,8 +1322,15 @@ public final class SQLServerMetadataClient {
             return connection.eventLoop.makeSucceededFuture(cached)
         }
 
+        // When preferStoredProcedureColumns=false and !includeComments, useSchemaBulk will be
+        // true regardless of isView — skip the isViewObject round-trip in that case.
+        let willUseSchemaBulk = !includeComments && !self.configuration.preferStoredProcedureColumns
+
         let isViewFuture: EventLoopFuture<Bool>
-        if let objectTypeHint {
+        if willUseSchemaBulk {
+            // isView value doesn't affect schema_catalog path; skip the extra query
+            isViewFuture = connection.eventLoop.makeSucceededFuture(false)
+        } else if let objectTypeHint {
             let normalized = objectTypeHint.uppercased()
             let isView = normalized.contains("VIEW") || normalized == "V"
             isViewFuture = connection.eventLoop.makeSucceededFuture(isView)
@@ -1239,15 +1338,33 @@ public final class SQLServerMetadataClient {
             isViewFuture = isViewObject(database: resolvedDatabase, schema: schema, table: table)
         }
 
+        var lastResolvedIsView = false
+
         return isViewFuture.flatMap { isView -> EventLoopFuture<[ColumnMetadata]> in
+            lastResolvedIsView = isView
             let useStoredProc = !isView && self.configuration.preferStoredProcedureColumns
-            let mode = (isView || !useStoredProc) ? "catalog" : "stored_procedure"
+            let useSchemaBulk = !includeComments && !self.configuration.preferStoredProcedureColumns
+            let mode = useSchemaBulk ? "schema_catalog" : ((isView || !useStoredProc) ? "catalog" : "stored_procedure")
             let contextDescription = "database=\(resolvedDatabase ?? "<default>") schema=\(schema) table=\(table)"
             self.logger.trace("[Metadata] listColumns start \(contextDescription) hint=\(objectTypeHint ?? "<nil>") mode=\(mode)")
             let startTime = DispatchTime.now()
             let baseSource: EventLoopFuture<[ColumnMetadata]>
-            if isView || !useStoredProc {
-                baseSource = self.loadColumnsFromCatalog(database: resolvedDatabase, schema: schema, table: table, includeDefaultMetadata: false, includeComments: includeComments)
+            if useSchemaBulk {
+                // Per-table catalog query includes default/computed definitions.
+                // Calling loadColumnsFromCatalog directly (not the full-schema bulk query)
+                // avoids N concurrent full-schema queries when N tables are checked concurrently.
+                // isView=false is safe for both tables and views: view columns have no
+                // default/computed constraints, so those LEFT JOINs return NULL naturally.
+                baseSource = self.loadColumnsFromCatalog(
+                    database: resolvedDatabase,
+                    schema: schema,
+                    table: table,
+                    isView: false,
+                    includeDefaultMetadata: true,
+                    includeComments: includeComments
+                )
+            } else if isView || !useStoredProc {
+                baseSource = self.loadColumnsFromCatalog(database: resolvedDatabase, schema: schema, table: table, isView: isView, includeDefaultMetadata: false, includeComments: includeComments)
             } else {
                 baseSource = self.loadColumnsUsingStoredProcedure(database: resolvedDatabase, schema: schema, table: table).flatMap { cols in
                     guard includeComments else { return self.connection.eventLoop.makeSucceededFuture(cols) }
@@ -1289,9 +1406,45 @@ public final class SQLServerMetadataClient {
                 return columns
             }
         }.flatMapError { _ in
-            self.logger.warning("[Metadata] listColumns falling back to stored procedure for database=\(resolvedDatabase ?? "<default>") schema=\(schema) table=\(table)")
-            // Fallback to stored procedure if we cannot resolve the object type or catalog lookup failed.
-            return self.loadColumnsUsingStoredProcedure(database: resolvedDatabase, schema: schema, table: table).flatMap { base in
+            self.logger.warning("[Metadata] listColumns falling back after error for database=\(resolvedDatabase ?? "<default>") schema=\(schema) table=\(table)")
+            func filterTable(_ columns: [ColumnMetadata]) -> [ColumnMetadata] {
+                columns
+                    .filter { $0.table.caseInsensitiveCompare(table) == .orderedSame }
+                    .sorted { $0.ordinalPosition < $1.ordinalPosition }
+            }
+            // Fallback strategy: flip to the alternate source for tables; always keep catalog for views.
+            let fallbackSource: EventLoopFuture<[ColumnMetadata]>
+            if lastResolvedIsView {
+                fallbackSource = self.listColumnsForSchema(
+                    database: resolvedDatabase,
+                    schema: schema,
+                    includeComments: includeComments
+                ).map(filterTable)
+            } else if self.configuration.preferStoredProcedureColumns {
+                fallbackSource = self.listColumnsForSchema(
+                    database: resolvedDatabase,
+                    schema: schema,
+                    includeComments: includeComments
+                ).map(filterTable).flatMapError { _ in
+                    self.loadColumnsFromCatalog(
+                        database: resolvedDatabase,
+                        schema: schema,
+                        table: table,
+                        isView: false,
+                        includeDefaultMetadata: false,
+                        includeComments: includeComments
+                    )
+                }
+            } else {
+                fallbackSource = self.listColumnsForSchema(
+                    database: resolvedDatabase,
+                    schema: schema,
+                    includeComments: includeComments
+                ).map(filterTable).flatMapError { _ in
+                    self.loadColumnsUsingStoredProcedure(database: resolvedDatabase, schema: schema, table: table)
+                }
+            }
+            return fallbackSource.flatMap { base in
                 let final: EventLoopFuture<[ColumnMetadata]>
                 if includeComments {
                     final = self.fetchColumnComments(database: resolvedDatabase, schema: schema, table: table).map { comments in
@@ -1333,16 +1486,75 @@ public final class SQLServerMetadataClient {
         }
     }
 
+    public func listColumnsForSchema(
+        database: String? = nil,
+        schema: String,
+        includeComments: Bool = false
+    ) -> EventLoopFuture<[ColumnMetadata]> {
+        let resolvedDatabase = effectiveDatabase(database)
+        return loadColumnsFromCatalogForDatabase(
+            database: resolvedDatabase,
+            schema: schema,
+            includeComments: includeComments
+        ).map { columns in
+            let sorted = columns.sorted {
+                if $0.schema != $1.schema { return $0.schema < $1.schema }
+                if $0.table != $1.table { return $0.table < $1.table }
+                return $0.ordinalPosition < $1.ordinalPosition
+            }
+            if !includeComments, let cache = self.cache {
+                var grouped: [String: [ColumnMetadata]] = [:]
+                for column in sorted {
+                    let key = "\(resolvedDatabase ?? "").\(column.schema).\(column.table)"
+                    grouped[key, default: []].append(column)
+                }
+                for (key, cols) in grouped {
+                    cache.setValue(cols.sorted { $0.ordinalPosition < $1.ordinalPosition }, forKey: key)
+                }
+            }
+            return sorted
+        }
+    }
+
+    public func listColumnsForDatabase(
+        database: String? = nil,
+        includeComments: Bool = false
+    ) -> EventLoopFuture<[ColumnMetadata]> {
+        let resolvedDatabase = effectiveDatabase(database)
+        return loadColumnsFromCatalogForDatabase(
+            database: resolvedDatabase,
+            schema: nil,
+            includeComments: includeComments
+        ).map { columns in
+            let sorted = columns.sorted {
+                if $0.schema != $1.schema { return $0.schema < $1.schema }
+                if $0.table != $1.table { return $0.table < $1.table }
+                return $0.ordinalPosition < $1.ordinalPosition
+            }
+            if !includeComments, let cache = self.cache {
+                var grouped: [String: [ColumnMetadata]] = [:]
+                for column in sorted {
+                    let key = "\(resolvedDatabase ?? "").\(column.schema).\(column.table)"
+                    grouped[key, default: []].append(column)
+                }
+                for (key, cols) in grouped {
+                    cache.setValue(cols.sorted { $0.ordinalPosition < $1.ordinalPosition }, forKey: key)
+                }
+            }
+            return sorted
+        }
+    }
+
     private func fetchColumnComments(database: String?, schema: String, table: String) -> EventLoopFuture<[String: String]> {
         let dbPrefix = effectiveDatabase(database).map { "[\(SQLServerMetadataClient.escapeIdentifier($0))]." } ?? ""
         let escapedSchema = SQLServerMetadataClient.escapeLiteral(schema)
         let escapedTable = SQLServerMetadataClient.escapeLiteral(table)
         let sql = """
         SELECT c.name AS column_name, comment = ISNULL(CAST(ep.value AS NVARCHAR(4000)), '')
-        FROM \(dbPrefix)sys.columns AS c
-        JOIN \(dbPrefix)sys.objects AS o ON c.object_id = o.object_id
-        JOIN \(dbPrefix)sys.schemas AS s ON o.schema_id = s.schema_id
-        LEFT JOIN \(dbPrefix)sys.extended_properties AS ep
+        FROM \(dbPrefix)sys.columns AS c WITH (NOLOCK)
+        JOIN \(dbPrefix)sys.objects AS o WITH (NOLOCK) ON c.object_id = o.object_id
+        JOIN \(dbPrefix)sys.schemas AS s WITH (NOLOCK) ON o.schema_id = s.schema_id
+        LEFT JOIN \(dbPrefix)sys.extended_properties AS ep WITH (NOLOCK)
             ON ep.class = 1 AND ep.major_id = o.object_id AND ep.minor_id = c.column_id AND ep.name = N'MS_Description'
         WHERE s.name = N'\(escapedSchema)' AND o.name = N'\(escapedTable)';
         """
@@ -1449,50 +1661,70 @@ public final class SQLServerMetadataClient {
         database: String?,
         schema: String,
         table: String,
+        isView: Bool,
         includeDefaultMetadata: Bool,
         includeComments: Bool
     ) -> EventLoopFuture<[ColumnMetadata]> {
         let escapedSchema = SQLServerMetadataClient.escapeLiteral(schema)
         let escapedTable = SQLServerMetadataClient.escapeLiteral(table)
-        let defaultSelect = includeDefaultMetadata
-            ? "dc.definition AS default_definition"
-            : "ISNULL(dc.definition, '') AS default_definition"
-        let computedSelect = includeDefaultMetadata
-            ? "cc.definition AS computed_definition"
-            : "ISNULL(cc.definition, '') AS computed_definition"
-        let identitySelect = includeDefaultMetadata
-            ? "ic.seed_value AS identity_seed, ic.increment_value AS identity_increment"
-            : "ISNULL(ic.seed_value, 0) AS identity_seed, ISNULL(ic.increment_value, 0) AS identity_increment"
-        let checkSelect = includeDefaultMetadata
-            ? "ck.definition AS check_definition"
-            : "ISNULL(ck.definition, '') AS check_definition"
+        // Use NVARCHAR(4000) for metadata-only definitions to avoid
+        // NVARCHAR(MAX)/PLP edge cases that can stall metadata loading.
+        let defaultSelect: String
+        let computedSelect: String
+        let identitySelect: String
+        let checkSelect: String
+        let defaultIdSelect: String
+
+        if isView {
+            defaultSelect = "NULL AS default_definition"
+            computedSelect = "NULL AS computed_definition"
+            identitySelect = "NULL AS identity_seed, NULL AS identity_increment"
+            checkSelect = "NULL AS check_definition"
+            defaultIdSelect = ""
+        } else {
+            if includeDefaultMetadata {
+                defaultSelect = "CAST(dc.definition AS NVARCHAR(4000)) AS default_definition"
+                computedSelect = "CAST(cc.definition AS NVARCHAR(4000)) AS computed_definition"
+                identitySelect = "TRY_CONVERT(BIGINT, ic.seed_value) AS identity_seed, TRY_CONVERT(BIGINT, ic.increment_value) AS identity_increment"
+                checkSelect = "CAST(ck.definition AS NVARCHAR(4000)) AS check_definition"
+                defaultIdSelect = ""
+            } else {
+                defaultSelect = "NULL AS default_definition"
+                computedSelect = "NULL AS computed_definition"
+                identitySelect = "NULL AS identity_seed, NULL AS identity_increment"
+                checkSelect = "NULL AS check_definition"
+                defaultIdSelect = ", default_object_id = c.default_object_id"
+            }
+        }
 
         var fromClause = """
-        FROM \(qualified(database, object: "sys.columns")) AS c
-        JOIN \(qualified(database, object: "sys.objects")) AS o ON c.object_id = o.object_id
-        JOIN \(qualified(database, object: "sys.schemas")) AS s ON o.schema_id = s.schema_id
-        JOIN \(qualified(database, object: "sys.types")) AS ut ON c.user_type_id = ut.user_type_id
-        JOIN \(qualified(database, object: "sys.types")) AS st ON c.system_type_id = st.user_type_id AND st.user_type_id = st.system_type_id 
+        FROM \(qualified(database, object: "sys.columns")) AS c WITH (NOLOCK)
+        JOIN \(qualified(database, object: "sys.objects")) AS o WITH (NOLOCK) ON c.object_id = o.object_id
+        JOIN \(qualified(database, object: "sys.schemas")) AS s WITH (NOLOCK) ON o.schema_id = s.schema_id
+        JOIN \(qualified(database, object: "sys.types")) AS ut WITH (NOLOCK) ON c.user_type_id = ut.user_type_id
+        JOIN \(qualified(database, object: "sys.types")) AS st WITH (NOLOCK) ON c.system_type_id = st.user_type_id AND st.user_type_id = st.system_type_id 
         """
 
-        // Ensure there's a space before the LEFT JOIN
-        // Always add LEFT JOINs for tables referenced in SELECT clause
-        // The SELECT clause always references dc, cc, ic, ck regardless of includeDefaultMetadata setting
-        fromClause += """
-        LEFT JOIN \(qualified(database, object: "sys.default_constraints")) AS dc ON c.default_object_id = dc.object_id
-        LEFT JOIN \(qualified(database, object: "sys.computed_columns")) AS cc ON c.object_id = cc.object_id AND c.column_id = cc.column_id
-        LEFT JOIN \(qualified(database, object: "sys.identity_columns")) AS ic ON c.object_id = ic.object_id AND c.column_id = ic.column_id
-        LEFT JOIN \(qualified(database, object: "sys.check_constraints")) AS ck ON c.default_object_id = ck.object_id AND ck.parent_column_id = c.column_id
+        if !isView && includeDefaultMetadata {
+            // Ensure there's a space before the LEFT JOIN
+            fromClause += """
+
+        LEFT JOIN \(qualified(database, object: "sys.default_constraints")) AS dc WITH (NOLOCK) ON c.default_object_id = dc.object_id
+        LEFT JOIN \(qualified(database, object: "sys.computed_columns")) AS cc WITH (NOLOCK) ON c.object_id = cc.object_id AND c.column_id = cc.column_id
+        LEFT JOIN \(qualified(database, object: "sys.identity_columns")) AS ic WITH (NOLOCK) ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+        LEFT JOIN \(qualified(database, object: "sys.check_constraints")) AS ck WITH (NOLOCK) ON c.default_object_id = ck.object_id AND ck.parent_column_id = c.column_id
         """
+        }
 
         if includeComments {
             fromClause += """
-        LEFT JOIN \(qualified(database, object: "sys.extended_properties")) AS epc
+
+        LEFT JOIN \(qualified(database, object: "sys.extended_properties")) AS epc WITH (NOLOCK)
             ON epc.class = 1 AND epc.major_id = o.object_id AND epc.minor_id = c.column_id AND epc.name = N'MS_Description'
         """
         }
 
-        let commentSelect = includeComments ? ", ISNULL(CAST(epc.value AS NVARCHAR(4000)), '') AS column_comment" : ""
+        let commentSelect = includeComments ? ", CAST(epc.value AS NVARCHAR(4000)) AS column_comment" : ""
         let sql = """
         SELECT
             schema_name = s.name,
@@ -1506,7 +1738,7 @@ public final class SQLServerMetadataClient {
             collation_name = c.collation_name,
             is_nullable = c.is_nullable,
             is_identity = c.is_identity,
-            is_computed = c.is_computed,
+            is_computed = c.is_computed\(defaultIdSelect),
             \(defaultSelect),
             \(computedSelect),
             \(identitySelect),
@@ -1547,10 +1779,123 @@ public final class SQLServerMetadataClient {
                 let isNullable = (row.column("is_nullable")?.int ?? 1) != 0
                 let isIdentity = (row.column("is_identity")?.int ?? 0) != 0
                 let isComputed = (row.column("is_computed")?.int ?? 0) != 0
-                let hasDefaultValue = (defaultDefinition?.isEmpty == false)
-                let identitySeed = row.column("identity_seed")?.int
-                let identityIncrement = row.column("identity_increment")?.int
-                let checkDefinition = row.column("check_definition")?.string
+                let defaultObjectId = includeDefaultMetadata ? nil : row.column("default_object_id")?.int
+                let hasDefaultValue: Bool
+                if includeDefaultMetadata {
+                    hasDefaultValue = (defaultDefinition?.isEmpty == false)
+                } else {
+                    hasDefaultValue = (defaultObjectId ?? 0) != 0
+                }
+                let identitySeed = includeDefaultMetadata ? row.column("identity_seed")?.int : nil
+                let identityIncrement = includeDefaultMetadata ? row.column("identity_increment")?.int : nil
+                let checkDefinition = includeDefaultMetadata ? row.column("check_definition")?.string : nil
+
+                return ColumnMetadata(
+                    schema: schemaName,
+                    table: tableName,
+                    name: columnName,
+                    typeName: typeName,
+                    systemTypeName: systemTypeName,
+                    maxLength: normalizedLength,
+                    precision: precision,
+                    scale: scale,
+                    collationName: collationName,
+                    isNullable: isNullable,
+                    isIdentity: isIdentity,
+                    isComputed: isComputed,
+                    hasDefaultValue: hasDefaultValue,
+                    defaultDefinition: includeDefaultMetadata ? defaultDefinition : nil,
+                    computedDefinition: includeDefaultMetadata ? computedDefinition : nil,
+                    ordinalPosition: ordinal,
+                    identitySeed: identitySeed,
+                    identityIncrement: identityIncrement,
+                    checkDefinition: checkDefinition,
+                    comment: row.column("column_comment")?.string
+                )
+            }
+        }
+    }
+
+    private func loadColumnsFromCatalogForDatabase(
+        database: String?,
+        schema: String?,
+        includeComments: Bool
+    ) -> EventLoopFuture<[ColumnMetadata]> {
+        let commentSelect = includeComments ? ", CAST(epc.value AS NVARCHAR(4000)) AS column_comment" : ""
+        let commentJoin = includeComments
+            ? """
+            LEFT JOIN \(qualified(database, object: "sys.extended_properties")) AS epc WITH (NOLOCK)
+                ON epc.class = 1 AND epc.major_id = o.object_id AND epc.minor_id = c.column_id AND epc.name = N'MS_Description'
+            """
+            : ""
+
+        var predicates: [String] = ["o.type IN ('U', 'V')"]
+        if let schema {
+            predicates.append("s.name = N'\(SQLServerMetadataClient.escapeLiteral(schema))'")
+        }
+        if !self.configuration.includeSystemSchemas {
+            predicates.append("s.name NOT IN ('sys', 'INFORMATION_SCHEMA')")
+        }
+
+        let whereClause = predicates.isEmpty ? "" : "WHERE " + predicates.joined(separator: " AND ")
+
+        let sql = """
+        SELECT
+            schema_name = s.name,
+            table_name = o.name,
+            column_name = c.name,
+            user_type_name = ut.name,
+            system_type_name = st.name,
+            max_length = c.max_length,
+            precision = c.precision,
+            scale = c.scale,
+            collation_name = c.collation_name,
+            is_nullable = c.is_nullable,
+            is_identity = c.is_identity,
+            is_computed = c.is_computed,
+            default_object_id = c.default_object_id,
+            CAST(dc.definition AS NVARCHAR(4000)) AS default_definition,
+            ordinal_position = c.column_id\(commentSelect)
+        FROM \(qualified(database, object: "sys.columns")) AS c WITH (NOLOCK)
+        JOIN \(qualified(database, object: "sys.objects")) AS o WITH (NOLOCK) ON c.object_id = o.object_id
+        JOIN \(qualified(database, object: "sys.schemas")) AS s WITH (NOLOCK) ON o.schema_id = s.schema_id
+        JOIN \(qualified(database, object: "sys.types")) AS ut WITH (NOLOCK) ON c.user_type_id = ut.user_type_id
+        JOIN \(qualified(database, object: "sys.types")) AS st WITH (NOLOCK) ON c.system_type_id = st.user_type_id AND st.user_type_id = st.system_type_id
+        LEFT JOIN \(qualified(database, object: "sys.default_constraints")) AS dc WITH (NOLOCK) ON c.default_object_id = dc.object_id AND o.type = 'U'
+        \(commentJoin)
+        \(whereClause);
+        """
+
+        logger.trace("[Metadata] loadColumnsFromCatalogForDatabase SQL: \(sql)")
+        return queryExecutor(sql).map { rows in
+            rows.compactMap { row -> ColumnMetadata? in
+                guard
+                    let schemaName = row.column("schema_name")?.string,
+                    let tableName = row.column("table_name")?.string,
+                    let columnName = row.column("column_name")?.string,
+                    let typeName = row.column("user_type_name")?.string,
+                    let ordinal = row.column("ordinal_position")?.int
+                else {
+                    return nil
+                }
+
+                let systemTypeName = row.column("system_type_name")?.string
+                let rawLength = row.column("max_length")?.int
+                let normalizedLength: Int?
+                if let rawLength, let system = systemTypeName?.lowercased(), ["nchar", "nvarchar", "ntext"].contains(system), rawLength > 0 {
+                    normalizedLength = rawLength / 2
+                } else {
+                    normalizedLength = rawLength
+                }
+                let precision = row.column("precision")?.int
+                let scale = row.column("scale")?.int
+                let collationName = row.column("collation_name")?.string
+                let defaultObjectId = row.column("default_object_id")?.int ?? 0
+                let isNullable = (row.column("is_nullable")?.int ?? 1) != 0
+                let isIdentity = (row.column("is_identity")?.int ?? 0) != 0
+                let isComputed = (row.column("is_computed")?.int ?? 0) != 0
+                let defaultDefinition = row.column("default_definition")?.string
+                let hasDefaultValue = defaultObjectId != 0
 
                 return ColumnMetadata(
                     schema: schemaName,
@@ -1567,11 +1912,11 @@ public final class SQLServerMetadataClient {
                     isComputed: isComputed,
                     hasDefaultValue: hasDefaultValue,
                     defaultDefinition: defaultDefinition,
-                    computedDefinition: computedDefinition,
+                    computedDefinition: nil,
                     ordinalPosition: ordinal,
-                    identitySeed: identitySeed,
-                    identityIncrement: identityIncrement,
-                    checkDefinition: checkDefinition,
+                    identitySeed: nil,
+                    identityIncrement: nil,
+                    checkDefinition: nil,
                     comment: row.column("column_comment")?.string
                 )
             }
@@ -1605,11 +1950,11 @@ public final class SQLServerMetadataClient {
             is_output = p.is_output,
             is_readonly = ISNULL(p.is_readonly, 0),
             has_default_value = p.has_default_value
-        FROM \(dbPrefix)sys.objects AS o
-        JOIN \(dbPrefix)sys.schemas AS s ON s.schema_id = o.schema_id
-        LEFT JOIN \(dbPrefix)sys.parameters AS p ON p.object_id = o.object_id
-        LEFT JOIN \(dbPrefix)sys.types AS ut ON ut.user_type_id = p.user_type_id AND ut.system_type_id = ut.user_type_id
-        LEFT JOIN \(dbPrefix)sys.types AS st ON st.system_type_id = p.system_type_id AND st.user_type_id = st.system_type_id 
+        FROM \(dbPrefix)sys.objects AS o WITH (NOLOCK)
+        JOIN \(dbPrefix)sys.schemas AS s WITH (NOLOCK) ON s.schema_id = o.schema_id
+        LEFT JOIN \(dbPrefix)sys.parameters AS p WITH (NOLOCK) ON p.object_id = o.object_id
+        LEFT JOIN \(dbPrefix)sys.types AS ut WITH (NOLOCK) ON ut.user_type_id = p.user_type_id AND ut.system_type_id = ut.user_type_id
+        LEFT JOIN \(dbPrefix)sys.types AS st WITH (NOLOCK) ON st.system_type_id = p.system_type_id AND st.user_type_id = st.system_type_id 
         WHERE s.name = N'\(escapedSchema)'
           AND o.name = N'\(escapedObject)'
           AND o.type IN ('P','PC','RF','AF','FN','TF','IF')
@@ -1740,6 +2085,18 @@ public final class SQLServerMetadataClient {
 
     // MARK: - Key Constraints
 
+    public func listPrimaryKeysFromCatalog(
+        database: String? = nil,
+        schema: String? = nil,
+        table: String? = nil
+    ) -> EventLoopFuture<[KeyConstraintMetadata]> {
+        fetchKeyConstraints(
+            type: .primaryKey,
+            database: database,
+            schema: schema,
+            table: table
+        )
+    }
 
 public func listPrimaryKeys(
     database: String? = nil,
@@ -1749,10 +2106,7 @@ public func listPrimaryKeys(
     if table == nil {
         return listTables(database: database, schema: schema).flatMap { tables in
             let candidates = tables.filter { tableMetadata in
-                let normalizedType = tableMetadata.type.uppercased()
-                if normalizedType.contains("SYSTEM") { return false }
-                if normalizedType.contains("VIEW") { return false }
-                return normalizedType.contains("TABLE")
+                tableMetadata.kind == .table
             }
 
             guard !candidates.isEmpty else {
@@ -2235,21 +2589,29 @@ private func listPrimaryKeysForSingleTable(
         includeComments: Bool = false
     ) -> EventLoopFuture<[TriggerMetadata]> {
         logger.trace("[Metadata] listTriggers start database=\(database ?? "<default>") schema=\(schema ?? "<all>") table=\(table ?? "<all>") includeComments=\(includeComments)")
-        let includeDefs = self.configuration.includeTriggerDefinitions
-        let definitionSelect = includeDefs ? "m.definition" : "ISNULL(m.definition, '')"
+        let eventLoop = self.connection.eventLoop
+        let definitionSelect: String
+        let moduleJoin: String
+        if self.configuration.includeTriggerDefinitions && table != nil {
+            definitionSelect = "CAST(m.definition AS NVARCHAR(4000))"
+            moduleJoin = "LEFT JOIN \(qualified(database, object: "sys.sql_modules")) AS m WITH (NOLOCK) ON tr.object_id = m.object_id"
+        } else {
+            definitionSelect = "NULL"
+            moduleJoin = ""
+        }
         var sql = """
         SELECT
             schema_name = s.name,
-            table_name = t.name,
+            table_name = o.name,
             trigger_name = tr.name,
             tr.is_instead_of_trigger,
             tr.is_disabled,
             definition = \(definitionSelect)\(includeComments ? ", ISNULL(CAST(ep.value AS NVARCHAR(4000)), '') AS comment" : "")
-        FROM \(qualified(database, object: "sys.triggers")) AS tr
-        JOIN \(qualified(database, object: "sys.tables")) AS t ON tr.parent_id = t.object_id
-        JOIN \(qualified(database, object: "sys.schemas")) AS s ON t.schema_id = s.schema_id
-        \(includeDefs ? "LEFT JOIN \(qualified(database, object: "sys.sql_modules")) AS m ON tr.object_id = m.object_id" : "")
-        \(includeComments ? "LEFT JOIN \(qualified(database, object: "sys.extended_properties")) AS ep ON ep.class = 1 AND ep.major_id = tr.object_id AND ep.minor_id = 0 AND ep.name = N'MS_Description'" : "")
+        FROM \(qualified(database, object: "sys.triggers")) AS tr WITH (NOLOCK)
+        JOIN \(qualified(database, object: "sys.objects")) AS o WITH (NOLOCK) ON tr.parent_id = o.object_id AND o.type IN ('U','V')
+        JOIN \(qualified(database, object: "sys.schemas")) AS s WITH (NOLOCK) ON o.schema_id = s.schema_id
+        \(moduleJoin)
+        \(includeComments ? "LEFT JOIN \(qualified(database, object: "sys.extended_properties")) AS ep WITH (NOLOCK) ON ep.class = 1 AND ep.major_id = tr.object_id AND ep.minor_id = 0 AND ep.name = N'MS_Description'" : "")
         WHERE tr.parent_class = 1
         """
 
@@ -2260,23 +2622,38 @@ private func listPrimaryKeysForSingleTable(
             predicates.append("s.name NOT IN ('sys', 'INFORMATION_SCHEMA')")
         }
         if let table {
-            predicates.append("t.name = N'\(SQLServerMetadataClient.escapeLiteral(table))'")
+            predicates.append("o.name = N'\(SQLServerMetadataClient.escapeLiteral(table))'")
         }
         if !predicates.isEmpty {
             sql += " AND " + predicates.joined(separator: " AND ")
         }
-        sql += " ORDER BY s.name, t.name, tr.name;"
+        sql += " ORDER BY s.name, o.name, tr.name;"
+        let start = NIODeadline.now()
 
-        return queryExecutor(sql).map { rows in
-            self.logger.trace("[Metadata] listTriggers completed database=\(database ?? "<default>") schema=\(schema ?? "<all>") table=\(table ?? "<all>") rows=\(rows.count)")
-            return rows.compactMap { row in
+        func run() -> EventLoopFuture<[TDSRow]> {
+            let attemptStart = NIODeadline.now()
+            return queryExecutor(sql).flatMapError { error in
+                let elapsedMs = (NIODeadline.now().uptimeNanoseconds - attemptStart.uptimeNanoseconds) / 1_000_000
+                self.logger.warning("[Metadata] listTriggers failed database=\(database ?? "<default>") schema=\(schema ?? "<all>") table=\(table ?? "<all>") elapsedMs=\(elapsedMs) error=\(error)")
+                return eventLoop.makeFailedFuture(error)
+            }
+        }
+
+        return run().map { rows in
+            let elapsedMs = (NIODeadline.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000
+            self.logger.trace("[Metadata] listTriggers completed database=\(database ?? "<default>") schema=\(schema ?? "<all>") table=\(table ?? "<all>") rows=\(rows.count) elapsedMs=\(elapsedMs)")
+            return rows.enumerated().compactMap { (index, row) in
                 guard
                     let schemaName = row.column("schema_name")?.string,
                     let tableName = row.column("table_name")?.string,
                     let triggerName = row.column("trigger_name")?.string
                 else {
+                    self.logger.warning("[Metadata] listTriggers row missing columns index=\(index) row=\(row)")
                     return nil
                 }
+
+                let definition = row.column("definition")?.string
+                self.logger.trace("[Metadata] listTriggers row index=\(index) schema=\(schemaName) table=\(tableName) trigger=\(triggerName) definitionLength=\(definition?.count ?? 0)")
 
                 return TriggerMetadata(
                     schema: schemaName,
@@ -2284,7 +2661,7 @@ private func listPrimaryKeysForSingleTable(
                     name: triggerName,
                     isInsteadOf: row.column("is_instead_of_trigger")?.bool ?? false,
                     isDisabled: row.column("is_disabled")?.bool ?? false,
-                    definition: row.column("definition")?.string,
+                    definition: definition,
                     comment: row.column("comment")?.string
                 )
             }
@@ -2426,18 +2803,18 @@ private func listPrimaryKeysForSingleTable(
         predicates.append("p.name NOT LIKE 'meta_client_%'")
         let whereClause = predicates.joined(separator: " AND ")
 
-        let definitionSelect = self.configuration.includeRoutineDefinitions ? ", m.definition" : ""
+        let definitionSelect = self.configuration.includeRoutineDefinitions ? ", CAST(m.definition AS NVARCHAR(4000)) AS definition" : ""
         let commentSelect = includeComments ? ", ISNULL(CAST(ep.value AS NVARCHAR(4000)), '') AS comment" : ""
         // Only join module definitions for recently modified procedures to avoid heavy I/O on large schemas.
-        let joinModules = self.configuration.includeRoutineDefinitions ? "LEFT JOIN \(dbPrefix)sys.sql_modules AS m ON m.object_id = p.object_id AND p.modify_date >= DATEADD(MINUTE, -5, SYSDATETIME())" : ""
-        let joinComments = includeComments ? "LEFT JOIN \(dbPrefix)sys.extended_properties AS ep ON ep.class = 1 AND ep.major_id = p.object_id AND ep.minor_id = 0 AND ep.name = N'MS_Description'" : ""
+        let joinModules = self.configuration.includeRoutineDefinitions ? "LEFT JOIN \(dbPrefix)sys.sql_modules AS m WITH (NOLOCK) ON m.object_id = p.object_id AND p.modify_date >= DATEADD(MINUTE, -5, SYSDATETIME())" : ""
+        let joinComments = includeComments ? "LEFT JOIN \(dbPrefix)sys.extended_properties AS ep WITH (NOLOCK) ON ep.class = 1 AND ep.major_id = p.object_id AND ep.minor_id = 0 AND ep.name = N'MS_Description'" : ""
 
         let sql = """
         SELECT
             schema_name = s.name,
             object_name = p.name\(definitionSelect)\(commentSelect)
-        FROM \(dbPrefix)sys.procedures AS p
-        JOIN \(dbPrefix)sys.schemas AS s ON s.schema_id = p.schema_id
+        FROM \(dbPrefix)sys.procedures AS p WITH (NOLOCK)
+        JOIN \(dbPrefix)sys.schemas AS s WITH (NOLOCK) ON s.schema_id = p.schema_id
         \(joinModules)
         \(joinComments)
         WHERE \(whereClause)
@@ -2470,11 +2847,11 @@ private func listPrimaryKeysForSingleTable(
         predicates.append("o.name NOT LIKE 'meta_client_%'")
         let whereClause = predicates.joined(separator: " AND ")
 
-        let definitionSelect = self.configuration.includeRoutineDefinitions ? ", m.definition" : ""
+        let definitionSelect = self.configuration.includeRoutineDefinitions ? ", CAST(m.definition AS NVARCHAR(4000)) AS definition" : ""
         let commentSelect = includeComments ? ", ISNULL(CAST(ep.value AS NVARCHAR(4000)), '') AS comment" : ""
         // Only join module definitions for recently modified functions to avoid heavy I/O on large schemas.
-        let joinModules = self.configuration.includeRoutineDefinitions ? "LEFT JOIN \(dbPrefix)sys.sql_modules AS m ON m.object_id = o.object_id AND o.modify_date >= DATEADD(MINUTE, -5, SYSDATETIME())" : ""
-        let joinComments = includeComments ? "LEFT JOIN \(dbPrefix)sys.extended_properties AS ep ON ep.class = 1 AND ep.major_id = o.object_id AND ep.minor_id = 0 AND ep.name = N'MS_Description'" : ""
+        let joinModules = self.configuration.includeRoutineDefinitions ? "LEFT JOIN \(dbPrefix)sys.sql_modules AS m WITH (NOLOCK) ON m.object_id = o.object_id AND o.modify_date >= DATEADD(MINUTE, -5, SYSDATETIME())" : ""
+        let joinComments = includeComments ? "LEFT JOIN \(dbPrefix)sys.extended_properties AS ep WITH (NOLOCK) ON ep.class = 1 AND ep.major_id = o.object_id AND ep.minor_id = 0 AND ep.name = N'MS_Description'" : ""
 
         let sql = """
         SELECT
@@ -2482,8 +2859,8 @@ private func listPrimaryKeysForSingleTable(
             object_name = o.name,
             type_desc = o.type_desc,
             is_ms_shipped = o.is_ms_shipped\(definitionSelect)\(commentSelect)
-        FROM \(dbPrefix)sys.objects AS o
-        JOIN \(dbPrefix)sys.schemas AS s ON o.schema_id = s.schema_id
+        FROM \(dbPrefix)sys.objects AS o WITH (NOLOCK)
+        JOIN \(dbPrefix)sys.schemas AS s WITH (NOLOCK) ON o.schema_id = s.schema_id
         \(joinModules)
         \(joinComments)
         WHERE \(whereClause)
@@ -2512,6 +2889,354 @@ private func listPrimaryKeysForSingleTable(
             }
         }
     }
+    // MARK: - Database Structure
+
+    public func loadSchemaStructure(
+        database: String? = nil,
+        schema: String,
+        includeComments: Bool = false
+    ) -> EventLoopFuture<SQLServerSchemaStructure> {
+        let resolvedDatabase = effectiveDatabase(database)
+        return timed("loadSchemaStructure.listTables schema=\(schema)") {
+            listTables(database: resolvedDatabase, schema: schema, includeComments: includeComments)
+        }.flatMap { tables in
+            let tableCandidates = tables.filter { table in
+                table.kind == .table || table.kind == .view
+            }
+            let columnsFuture: EventLoopFuture<[ColumnMetadata]> = {
+                if !includeComments, let cache = self.cache {
+                    var cached: [ColumnMetadata] = []
+                    cached.reserveCapacity(tableCandidates.count * 8)
+                    var missing = false
+                    for table in tableCandidates {
+                        let key = "\(resolvedDatabase ?? "").\(table.schema).\(table.name)"
+                        if let cols = cache.value(forKey: key) {
+                            cached.append(contentsOf: cols)
+                        } else {
+                            missing = true
+                            break
+                        }
+                    }
+                    if !missing {
+                        return self.connection.eventLoop.makeSucceededFuture(cached)
+                    }
+                }
+
+                func fetchColumnsByTable() -> EventLoopFuture<[ColumnMetadata]> {
+                    let initial = self.connection.eventLoop.makeSucceededFuture([ColumnMetadata]())
+                    return tableCandidates.reduce(initial) { partial, table in
+                        partial.flatMap { collected in
+                            self.listColumns(
+                                database: resolvedDatabase,
+                                schema: table.schema,
+                                table: table.name,
+                                objectTypeHint: table.type,
+                                includeComments: includeComments
+                            ).map { collected + $0 }
+                            .flatMapError { error in
+                                self.logger.warning("[Metadata] loadSchemaStructure columns table failed schema=\(schema) table=\(table.name) error=\(error)")
+                                return self.connection.eventLoop.makeSucceededFuture(collected)
+                            }
+                        }
+                    }
+                }
+
+                return self.timed("loadSchemaStructure.listColumnsForSchema schema=\(schema)") {
+                    self.listColumnsForSchema(database: resolvedDatabase, schema: schema, includeComments: includeComments)
+                }
+                    .flatMapError { error in
+                        self.logger.warning("[Metadata] loadSchemaStructure columns fallback schema=\(schema) error=\(error)")
+                        return fetchColumnsByTable()
+                    }
+            }()
+
+            return columnsFuture.flatMap { columns in
+                return self.timed("loadSchemaStructure.listPrimaryKeys schema=\(schema)") {
+                    self.listPrimaryKeysFromCatalog(database: resolvedDatabase, schema: schema, table: nil)
+                }.flatMapError { error in
+                    self.logger.warning("[Metadata] loadSchemaStructure primary keys failed schema=\(schema) error=\(error)")
+                    return self.connection.eventLoop.makeSucceededFuture([])
+                }.flatMap { primaryKeys in
+                    self.timed("loadSchemaStructure.listFunctions schema=\(schema)") {
+                        self.listFunctions(database: resolvedDatabase, schema: schema, includeComments: includeComments)
+                    }.flatMapError { error in
+                        self.logger.warning("[Metadata] loadSchemaStructure functions failed schema=\(schema) error=\(error)")
+                        return self.connection.eventLoop.makeSucceededFuture([])
+                    }.flatMap { functions in
+                        self.timed("loadSchemaStructure.listProcedures schema=\(schema)") {
+                            self.listProcedures(database: resolvedDatabase, schema: schema, includeComments: includeComments)
+                        }.flatMapError { error in
+                            self.logger.warning("[Metadata] loadSchemaStructure procedures failed schema=\(schema) error=\(error)")
+                            return self.connection.eventLoop.makeSucceededFuture([])
+                        }.flatMap { procedures in
+                            self.timed("loadSchemaStructure.listTriggers schema=\(schema)") {
+                                self.listTriggers(
+                                    database: resolvedDatabase,
+                                    schema: schema,
+                                    table: nil,
+                                    includeComments: includeComments
+                                )
+                            }.flatMapError { error in
+                                self.logger.warning("[Metadata] loadSchemaStructure triggers failed schema=\(schema) error=\(error)")
+                                return self.connection.eventLoop.makeSucceededFuture([])
+                            }.map { triggers in
+                                func objectKey(schema: String, table: String) -> String {
+                                    "\(schema.lowercased())|\(table.lowercased())"
+                                }
+
+                                var columnsByTable: [String: [ColumnMetadata]] = [:]
+                                columnsByTable.reserveCapacity(tableCandidates.count)
+                                for column in columns {
+                                    let key = objectKey(schema: column.schema, table: column.table)
+                                    columnsByTable[key, default: []].append(column)
+                                }
+
+                                var primaryKeyByTable: [String: KeyConstraintMetadata] = [:]
+                                for pk in primaryKeys {
+                                    let key = objectKey(schema: pk.schema, table: pk.table)
+                                    if primaryKeyByTable[key] == nil {
+                                        primaryKeyByTable[key] = pk
+                                    }
+                                }
+
+                                var tableStructures: [SQLServerTableStructure] = []
+                                var viewStructures: [SQLServerTableStructure] = []
+
+                                for table in tableCandidates {
+                                    let key = objectKey(schema: table.schema, table: table.name)
+                                    let tableColumns = (columnsByTable[key] ?? []).sorted { $0.ordinalPosition < $1.ordinalPosition }
+                                    let structure = SQLServerTableStructure(
+                                        table: table,
+                                        columns: tableColumns,
+                                        primaryKey: primaryKeyByTable[key]
+                                    )
+                                    if table.isView {
+                                        viewStructures.append(structure)
+                                    } else {
+                                        tableStructures.append(structure)
+                                    }
+                                }
+
+                                return SQLServerSchemaStructure(
+                                    name: schema,
+                                    tables: tableStructures,
+                                    views: viewStructures,
+                                    functions: functions,
+                                    procedures: procedures,
+                                    triggers: triggers
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    public func loadDatabaseStructure(
+        database: String? = nil,
+        includeComments: Bool = false
+    ) -> EventLoopFuture<SQLServerDatabaseStructure> {
+        let resolvedDatabase = effectiveDatabase(database)
+        return timed("loadDatabaseStructure.listSchemas") {
+            listSchemas(in: resolvedDatabase)
+        }.flatMap { schemas in
+            self.timed("loadDatabaseStructure.listTables") {
+                self.listTables(database: resolvedDatabase, schema: nil, includeComments: includeComments)
+            }.flatMap { tables in
+                let tableCandidates = tables.filter { table in
+                    table.kind == .table || table.kind == .view
+                }
+                func fetchColumnsByTable() -> EventLoopFuture<[ColumnMetadata]> {
+                    let initial = self.connection.eventLoop.makeSucceededFuture([ColumnMetadata]())
+                    return tableCandidates.reduce(initial) { partial, table in
+                        partial.flatMap { collected in
+                            self.listColumns(
+                                database: resolvedDatabase,
+                                schema: table.schema,
+                                table: table.name,
+                                objectTypeHint: table.type,
+                                includeComments: includeComments
+                            ).map { collected + $0 }
+                            .flatMapError { error in
+                                self.logger.warning("[Metadata] loadDatabaseStructure columns table failed schema=\(table.schema) table=\(table.name) error=\(error)")
+                                return self.connection.eventLoop.makeSucceededFuture(collected)
+                            }
+                        }
+                    }
+                }
+
+                func fetchColumnsBySchema() -> EventLoopFuture<[ColumnMetadata]> {
+                    let initial = self.connection.eventLoop.makeSucceededFuture([ColumnMetadata]())
+                    return schemas.reduce(initial) { partial, schema in
+                        partial.flatMap { collected in
+                            self.listColumnsForSchema(database: resolvedDatabase, schema: schema.name, includeComments: includeComments)
+                                .map { collected + $0 }
+                                .flatMapError { error in
+                                    self.logger.warning("[Metadata] loadDatabaseStructure columns schema failed schema=\(schema.name) error=\(error)")
+                                    return self.connection.eventLoop.makeSucceededFuture(collected)
+                                }
+                        }
+                    }
+                }
+
+                let columnsFuture = self.timed("loadDatabaseStructure.listColumnsForDatabase") {
+                    self.listColumnsForDatabase(database: resolvedDatabase, includeComments: includeComments)
+                }
+                    .flatMapError { error in
+                        self.logger.warning("[Metadata] loadDatabaseStructure columns fallback error=\(error)")
+                        return fetchColumnsBySchema().flatMap { columns in
+                            if !columns.isEmpty {
+                                return self.connection.eventLoop.makeSucceededFuture(columns)
+                            }
+                            return fetchColumnsByTable()
+                        }
+                    }
+
+                return columnsFuture.flatMap { columns in
+                    return self.timed("loadDatabaseStructure.listPrimaryKeys") {
+                        self.listPrimaryKeysFromCatalog(database: resolvedDatabase, schema: nil, table: nil)
+                    }.flatMapError { error in
+                        self.logger.warning("[Metadata] loadDatabaseStructure primary keys failed error=\(error)")
+                        return self.connection.eventLoop.makeSucceededFuture([])
+                    }.flatMap { primaryKeys in
+                        self.timed("loadDatabaseStructure.listFunctions") {
+                            self.listFunctions(database: resolvedDatabase, schema: nil, includeComments: includeComments)
+                        }.flatMapError { error in
+                            self.logger.warning("[Metadata] loadDatabaseStructure functions failed error=\(error)")
+                            return self.connection.eventLoop.makeSucceededFuture([])
+                        }.flatMap { functions in
+                            self.timed("loadDatabaseStructure.listProcedures") {
+                                self.listProcedures(database: resolvedDatabase, schema: nil, includeComments: includeComments)
+                            }.flatMapError { error in
+                                self.logger.warning("[Metadata] loadDatabaseStructure procedures failed error=\(error)")
+                                return self.connection.eventLoop.makeSucceededFuture([])
+                            }.flatMap { procedures in
+                                self.timed("loadDatabaseStructure.listTriggers") {
+                                    self.listTriggers(
+                                        database: resolvedDatabase,
+                                        schema: nil,
+                                        table: nil,
+                                        includeComments: includeComments
+                                    )
+                                }.flatMapError { error in
+                                    self.logger.warning("[Metadata] loadDatabaseStructure triggers failed error=\(error)")
+                                    return self.connection.eventLoop.makeSucceededFuture([])
+                                }.map { triggers in
+                                    func objectKey(schema: String, table: String) -> String {
+                                        "\(schema.lowercased())|\(table.lowercased())"
+                                    }
+
+                                    var columnsByTable: [String: [ColumnMetadata]] = [:]
+                                    columnsByTable.reserveCapacity(tableCandidates.count)
+                                    for column in columns {
+                                        let key = objectKey(schema: column.schema, table: column.table)
+                                        columnsByTable[key, default: []].append(column)
+                                    }
+
+                                    var primaryKeyByTable: [String: KeyConstraintMetadata] = [:]
+                                    for pk in primaryKeys {
+                                        let key = objectKey(schema: pk.schema, table: pk.table)
+                                        if primaryKeyByTable[key] == nil {
+                                            primaryKeyByTable[key] = pk
+                                        }
+                                    }
+
+                                    var tablesBySchema: [String: [SQLServerTableStructure]] = [:]
+                                    var viewsBySchema: [String: [SQLServerTableStructure]] = [:]
+
+                                    for table in tableCandidates {
+                                        let key = objectKey(schema: table.schema, table: table.name)
+                                        let tableColumns = (columnsByTable[key] ?? []).sorted { $0.ordinalPosition < $1.ordinalPosition }
+                                        let structure = SQLServerTableStructure(
+                                            table: table,
+                                            columns: tableColumns,
+                                            primaryKey: primaryKeyByTable[key]
+                                        )
+                                        let schemaKey = table.schema.lowercased()
+                                        if table.isView {
+                                            viewsBySchema[schemaKey, default: []].append(structure)
+                                        } else {
+                                            tablesBySchema[schemaKey, default: []].append(structure)
+                                        }
+                                    }
+
+                                    func groupBySchema<T>(items: [T], schema: (T) -> String) -> [String: [T]] {
+                                        var grouped: [String: [T]] = [:]
+                                        for item in items {
+                                            let key = schema(item).lowercased()
+                                            grouped[key, default: []].append(item)
+                                        }
+                                        return grouped
+                                    }
+
+                                    let functionsBySchema = groupBySchema(items: functions) { $0.schema }
+                                    let proceduresBySchema = groupBySchema(items: procedures) { $0.schema }
+                                    let triggersBySchema = groupBySchema(items: triggers) { $0.schema }
+
+                                    var orderedSchemas: [String] = []
+                                    orderedSchemas.reserveCapacity(schemas.count)
+                                    var seenSchemas: Set<String> = []
+                                    for schema in schemas {
+                                        let name = schema.name
+                                        let key = name.lowercased()
+                                        if seenSchemas.insert(key).inserted {
+                                            orderedSchemas.append(name)
+                                        }
+                                    }
+
+                                    let allSchemaKeys = Set(tablesBySchema.keys)
+                                        .union(viewsBySchema.keys)
+                                        .union(functionsBySchema.keys)
+                                        .union(proceduresBySchema.keys)
+                                        .union(triggersBySchema.keys)
+                                    for key in allSchemaKeys.sorted() where !seenSchemas.contains(key) {
+                                        orderedSchemas.append(key)
+                                        seenSchemas.insert(key)
+                                    }
+
+                                    let schemaStructures: [SQLServerSchemaStructure] = orderedSchemas.map { schemaName in
+                                        let key = schemaName.lowercased()
+                                        return SQLServerSchemaStructure(
+                                            name: schemaName,
+                                            tables: tablesBySchema[key] ?? [],
+                                            views: viewsBySchema[key] ?? [],
+                                            functions: functionsBySchema[key] ?? [],
+                                            procedures: proceduresBySchema[key] ?? [],
+                                            triggers: triggersBySchema[key] ?? []
+                                        )
+                                    }
+
+                                    return SQLServerDatabaseStructure(
+                                        database: resolvedDatabase,
+                                        schemas: schemaStructures
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func loadSchemaStructure(
+        database: String? = nil,
+        schema: String,
+        includeComments: Bool = false
+    ) async throws -> SQLServerSchemaStructure {
+        try await loadSchemaStructure(database: database, schema: schema, includeComments: includeComments).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func loadDatabaseStructure(
+        database: String? = nil,
+        includeComments: Bool = false
+    ) async throws -> SQLServerDatabaseStructure {
+        try await loadDatabaseStructure(database: database, includeComments: includeComments).get()
+    }
+
     // MARK: - Search
 
     public func searchMetadata(
@@ -2577,7 +3302,7 @@ private func listPrimaryKeysForSingleTable(
             ])
             selects.append(
                 """
-                SELECT s.name AS schema_name, o.name AS object_name, o.type_desc, 'definition' AS match_kind, m.definition AS detail
+                SELECT s.name AS schema_name, o.name AS object_name, o.type_desc, 'definition' AS match_kind, CAST(m.definition AS NVARCHAR(4000)) AS detail
                 FROM \(dbPrefix)sys.objects AS o
                 JOIN \(dbPrefix)sys.schemas AS s ON o.schema_id = s.schema_id
                 JOIN \(dbPrefix)sys.sql_modules AS m ON o.object_id = m.object_id
@@ -2700,6 +3425,11 @@ private func listPrimaryKeysForSingleTable(
         schema: String,
         object: String
     ) -> EventLoopFuture<[String: (hasDefault: Bool, defaultValue: String?)]> {
+        // Honor configuration knob to avoid expensive definition parsing when not needed.
+        guard configuration.extractParameterDefaults else {
+            return connection.eventLoop.makeSucceededFuture([:])
+        }
+
         let candidates: [SQLServerMetadataObjectIdentifier] = [
             .init(database: database, schema: schema, name: object, kind: .procedure),
             .init(database: database, schema: schema, name: object, kind: .function)
@@ -2709,7 +3439,8 @@ private func listPrimaryKeysForSingleTable(
             guard let definition = definitions.first(where: { $0.definition?.isEmpty == false })?.definition else {
                 return [:]
             }
-            return SQLServerMetadataClient.extractParameterDefaults(from: definition)
+            let parsed = SQLServerMetadataClient.extractParameterDefaults(from: definition)
+            return parsed
         }
     }
 
@@ -2722,7 +3453,7 @@ private func listPrimaryKeysForSingleTable(
         dbPrefix: String
     ) -> EventLoopFuture<String?> {
         let defSql = """
-        SELECT m.definition
+        SELECT CAST(m.definition AS NVARCHAR(4000)) AS definition
         FROM \(dbPrefix)sys.objects AS o
         JOIN \(dbPrefix)sys.schemas AS s ON s.schema_id = o.schema_id
         JOIN \(dbPrefix)sys.sql_modules AS m ON m.object_id = o.object_id
@@ -2797,6 +3528,11 @@ private func listPrimaryKeysForSingleTable(
         // - PROCEDURE: parameters appear after the object name up to the AS keyword (no enclosing parens)
         let text = definition
         let lower = text.lowercased()
+
+        func convertIndex(_ idx: String.Index) -> String.Index {
+            let distance = lower.distance(from: lower.startIndex, to: idx)
+            return text.index(text.startIndex, offsetBy: distance)
+        }
 
         func indexAfterObjectName(startOfKeyword kw: String) -> String.Index? {
             guard let kRange = lower.range(of: kw) else { return nil }
@@ -2874,16 +3610,23 @@ private func listPrimaryKeysForSingleTable(
                 else if ch == ")" { depth -= 1 }
                 j = lower.index(after: j)
             } while j <= lower.endIndex && depth > 0
-            paramBlock = text[lower.index(after: i)..<lower.index(before: j)] // exclude both '(' and ')'
+            let start = convertIndex(lower.index(after: i))
+            let end = convertIndex(lower.index(before: j))
+            paramBlock = text[start..<end] // exclude both '(' and ')'
         } else if let pRange = lower.range(of: "create procedure") ?? lower.range(of: "create proc") {
-            // Parameters run from after the name up to the AS keyword (not within quotes)
-            var i = pRange.upperBound
-            // Find first '@' after the object name; if not found, assume no parameters
-            while i < lower.endIndex, lower[i] != "@" && lower[i] != "a" { i = lower.index(after: i) }
-            guard i < lower.endIndex else { return [:] }
+            let searchStart = pRange.upperBound
+            // Locate the first '@' after the object name, stopping if we hit the AS keyword first.
+            guard let atIndex = lower[searchStart...].firstIndex(of: "@") else {
+                // No parameters declared.
+                return [:]
+            }
+            if let asRange = lower[searchStart...].range(of: "as"), asRange.lowerBound < atIndex {
+                // "AS" appears before any '@' - no parameters present.
+                return [:]
+            }
             // Find AS boundary not in quotes/brackets/paren
             var inSingle = false, inBracket = false, depth = 0
-            var j = i
+            var j = atIndex
             while j < lower.endIndex {
                 let ch = lower[j]
                 if inSingle { if ch == "'" { inSingle = false } }
@@ -2905,7 +3648,9 @@ private func listPrimaryKeysForSingleTable(
                 }
                 j = lower.index(after: j)
             }
-            paramBlock = text[i..<j]
+            let start = convertIndex(atIndex)
+            let end = convertIndex(j)
+            paramBlock = text[start..<end]
         } else {
             return [:]
         }

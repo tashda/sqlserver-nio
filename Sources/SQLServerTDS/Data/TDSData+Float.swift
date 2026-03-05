@@ -13,9 +13,9 @@ extension TDSData {
 
         switch self.metadata.dataType {
         case .real:
-            return value.readFloat()
+            return value.readFloat(endianness: .little)
         case .float:
-            return value.readDouble()
+            return value.readDouble(endianness: .little)
                 .flatMap { Float($0) }
         default:
             return nil

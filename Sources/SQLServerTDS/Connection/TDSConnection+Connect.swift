@@ -54,6 +54,10 @@ extension TDSConnection {
                 }
             }
             let connection = TDSConnection(channel: channel, logger: logger)
+
+            // Set the connection reference in the request handler for ENVCHANGE token processing
+            requestHandler.setConnection(connection)
+
             // Start reading immediately to handle multi-packet responses
             channel.read()
             return channel.eventLoop.makeSucceededFuture(connection)

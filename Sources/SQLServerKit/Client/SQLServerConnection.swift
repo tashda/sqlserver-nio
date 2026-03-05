@@ -178,7 +178,9 @@ public final class SQLServerConnection {
         }
         let fut = executeWithRetry(operationName: "changeDatabase") {
             let sql = "USE \(Self.escapeIdentifier(database));"
-            return self.base.rawSql(sql).map { _ in
+            // Use runBatch so SQL Server errors (e.g. "database does not exist") are
+            // properly propagated instead of being silently swallowed by rawSql.
+            return self.runBatch(sql).map { _ in
                 self.setCurrentDatabase(database)
             }
         }
@@ -302,9 +304,26 @@ public final class SQLServerConnection {
     }
 
     // MARK: - Per-call timeout variants
-    public func execute(_ sql: String, timeout seconds: TimeInterval) -> EventLoopFuture<SQLServerExecutionResult> {
+    internal func execute(
+        _ sql: String,
+        timeout seconds: TimeInterval,
+        invalidateOnTimeout: Bool
+    ) -> EventLoopFuture<SQLServerExecutionResult> {
         let fut: EventLoopFuture<SQLServerExecutionResult> = execute(sql)
-        return fut.withTimeout(on: self.eventLoop, seconds: seconds)
+        let timed = fut.withTimeout(on: self.eventLoop, seconds: seconds)
+        timed.whenFailure { error in
+            if case .timeout = SQLServerError.normalize(error) {
+                self.base.sendAttention()
+                if invalidateOnTimeout {
+                    _ = self.invalidate()
+                }
+            }
+        }
+        return timed
+    }
+
+    public func execute(_ sql: String, timeout seconds: TimeInterval) -> EventLoopFuture<SQLServerExecutionResult> {
+        execute(sql, timeout: seconds, invalidateOnTimeout: true)
     }
 
     public func query(_ sql: String, timeout seconds: TimeInterval) -> EventLoopFuture<[TDSRow]> {
@@ -348,10 +367,10 @@ public final class SQLServerConnection {
     }
 
     public func call(procedure name: String, parameters: [ProcedureParameter] = []) -> EventLoopFuture<SQLServerExecutionResult> {
-        let rows: [TDSRow] = []
-        let dones: [SQLServerStreamDone] = []
-        let messages: [SQLServerStreamMessage] = []
-        let returnValues: [SQLServerReturnValue] = []
+        var rows: [TDSRow] = []
+        var dones: [SQLServerStreamDone] = []
+        var messages: [SQLServerStreamMessage] = []
+        var returnValues: [SQLServerReturnValue] = []
 
         let tdsParams = parameters.map { p in
             TDSMessages.RpcParameter(name: p.name, data: p.value, direction: {
@@ -359,14 +378,32 @@ public final class SQLServerConnection {
             }())
         }
 
-        // Build a single RPC request and send it; do not send twice
         let request = RpcRequest(
             rpcMessage: TDSMessages.RpcRequestMessage(
                 procedureName: name,
                 parameters: tdsParams,
                 transactionDescriptor: base.transactionDescriptor,
                 outstandingRequestCount: base.requestCount
-            )
+            ),
+            onRow: { row in
+                rows.append(row)
+            },
+            onDone: { token in
+                dones.append(SQLServerStreamDone(status: token.status, rowCount: token.doneRowCount))
+            },
+            onMessage: { token, isError in
+                messages.append(SQLServerStreamMessage(
+                    kind: isError ? .error : .info,
+                    number: Int32(token.number),
+                    message: token.messageText,
+                    state: token.state,
+                    severity: token.classValue
+                ))
+            },
+            onReturnValue: { token in
+                let tdsValue: TDSData? = token.value.map { TDSData(metadata: token.metadata, value: $0) }
+                returnValues.append(SQLServerReturnValue(name: token.name, status: token.status, value: tdsValue))
+            }
         )
 
         return self.base.send(request, logger: self.logger).flatMapThrowing { _ in
@@ -382,6 +419,11 @@ public final class SQLServerConnection {
 
             return result
         }
+    }
+
+    @available(macOS 12.0, *)
+    public func call(procedure name: String, parameters: [ProcedureParameter] = []) async throws -> SQLServerExecutionResult {
+        try await call(procedure: name, parameters: parameters).get()
     }
 
     @available(macOS 12.0, *)
@@ -533,6 +575,49 @@ public final class SQLServerConnection {
         ).get()
     }
 
+    public func listColumnsForSchema(
+        database: String? = nil,
+        schema: String,
+        includeComments: Bool = false
+    ) -> EventLoopFuture<[ColumnMetadata]> {
+        executeWithRetry(operationName: "listColumnsForSchema") {
+            self.metadataClient.listColumnsForSchema(
+                database: database,
+                schema: schema,
+                includeComments: includeComments
+            )
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listColumnsForSchema(
+        database: String? = nil,
+        schema: String,
+        includeComments: Bool = false
+    ) async throws -> [ColumnMetadata] {
+        try await listColumnsForSchema(database: database, schema: schema, includeComments: includeComments).get()
+    }
+
+    public func listColumnsForDatabase(
+        database: String? = nil,
+        includeComments: Bool = false
+    ) -> EventLoopFuture<[ColumnMetadata]> {
+        executeWithRetry(operationName: "listColumnsForDatabase") {
+            self.metadataClient.listColumnsForDatabase(
+                database: database,
+                includeComments: includeComments
+            )
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listColumnsForDatabase(
+        database: String? = nil,
+        includeComments: Bool = false
+    ) async throws -> [ColumnMetadata] {
+        try await listColumnsForDatabase(database: database, includeComments: includeComments).get()
+    }
+
     public func listParameters(
         database: String? = nil,
         schema: String,
@@ -569,6 +654,25 @@ public final class SQLServerConnection {
         table: String? = nil
     ) async throws -> [KeyConstraintMetadata] {
         try await listPrimaryKeys(database: database, schema: schema, table: table).get()
+    }
+
+    public func listPrimaryKeysFromCatalog(
+        database: String? = nil,
+        schema: String? = nil,
+        table: String? = nil
+    ) -> EventLoopFuture<[KeyConstraintMetadata]> {
+        executeWithRetry(operationName: "listPrimaryKeysFromCatalog") {
+            self.metadataClient.listPrimaryKeysFromCatalog(database: database, schema: schema, table: table)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listPrimaryKeysFromCatalog(
+        database: String? = nil,
+        schema: String? = nil,
+        table: String? = nil
+    ) async throws -> [KeyConstraintMetadata] {
+        try await listPrimaryKeysFromCatalog(database: database, schema: schema, table: table).get()
     }
 
     public func listUniqueConstraints(
@@ -704,6 +808,42 @@ public final class SQLServerConnection {
         includeComments: Bool = false
     ) async throws -> [RoutineMetadata] {
         try await listFunctions(database: database, schema: schema, includeComments: includeComments).get()
+    }
+
+    public func loadSchemaStructure(
+        database: String? = nil,
+        schema: String,
+        includeComments: Bool = false
+    ) -> EventLoopFuture<SQLServerSchemaStructure> {
+        executeWithRetry(operationName: "loadSchemaStructure") {
+            self.metadataClient.loadSchemaStructure(database: database, schema: schema, includeComments: includeComments)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func loadSchemaStructure(
+        database: String? = nil,
+        schema: String,
+        includeComments: Bool = false
+    ) async throws -> SQLServerSchemaStructure {
+        try await loadSchemaStructure(database: database, schema: schema, includeComments: includeComments).get()
+    }
+
+    public func loadDatabaseStructure(
+        database: String? = nil,
+        includeComments: Bool = false
+    ) -> EventLoopFuture<SQLServerDatabaseStructure> {
+        executeWithRetry(operationName: "loadDatabaseStructure") {
+            self.metadataClient.loadDatabaseStructure(database: database, includeComments: includeComments)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func loadDatabaseStructure(
+        database: String? = nil,
+        includeComments: Bool = false
+    ) async throws -> SQLServerDatabaseStructure {
+        try await loadDatabaseStructure(database: database, includeComments: includeComments).get()
     }
 
     public func fetchObjectDefinitions(
@@ -845,11 +985,15 @@ public final class SQLServerConnection {
     private let sharedMetadataCache: MetadataCache<[ColumnMetadata]>?
     private lazy var metadataClient: SQLServerMetadataClient = {
         let baseLoop = base.eventLoop
+        let metadataTimeout = configuration.metadataConfiguration.commandTimeout
         let executor: @Sendable (String) -> EventLoopFuture<[TDSRow]> = { [weak self] sql in
             guard let self else {
                 return baseLoop.makeFailedFuture(SQLServerError.connectionClosed)
             }
-            return self.runBatch(sql).map(\.rows)
+            if let metadataTimeout {
+                return self.execute(sql, timeout: metadataTimeout, invalidateOnTimeout: false).map(\.rows)
+            }
+            return self.execute(sql).map(\.rows)
         }
         return SQLServerMetadataClient(
             connection: self,

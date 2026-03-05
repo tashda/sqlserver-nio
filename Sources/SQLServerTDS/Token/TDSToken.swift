@@ -94,6 +94,8 @@ public enum TDSTokens {
         case tabName = 0xA4
         /// TVP_ROW
         case tvpRow = 0x01
+        /// SQL_RESULT_COLUMN_SOURCES
+        case sqlResultColumnSources = 0xA1
     }
 
     public struct LoginAckToken: TDSToken {
@@ -221,6 +223,10 @@ public enum TDSTokens {
         public var type: TokenType = .dataClassification
         public var payload: ByteBuffer
     }
+    public struct SQLResultColumnSourcesToken: TDSToken {
+        public var type: TokenType = .sqlResultColumnSources
+        public var payload: ByteBuffer
+    }
 
     public struct Unknown0x61Token: TDSToken {
         public var type: TokenType = .unknown0x61
@@ -230,9 +236,14 @@ public enum TDSTokens {
         public var type: TokenType = .unknown0x74
         public var payload: ByteBuffer
     }
+    public struct Unknown0xC1Token: TDSToken {
+        public var type: TokenType = .unknown0xc1
+        public var payload: ByteBuffer
+    }
 
     public struct ReturnValueToken: TDSToken {
         public var type: TokenType = .returnValue
+        public var paramOrdinal: UInt16
         public var name: String
         public var status: Byte
         public var userType: ULong
@@ -278,9 +289,9 @@ public enum TDSTokens {
 
     public struct EnvchangeToken<T>: TDSToken {
         public var type: TokenType = .envchange
-        var envchangeType: EnvchangeType
-        var newValue: T
-        var oldValue: T
+        public var envchangeType: EnvchangeType
+        public var newValue: T
+        public var oldValue: T
     }
 
     public struct RoutingEnvchangeToken: TDSToken {
@@ -296,7 +307,7 @@ public enum TDSTokens {
         var oldValue: [Byte]
     }
 
-    enum EnvchangeType: Byte {
+    public enum EnvchangeType: Byte {
         case database = 1
         case language = 2
         case characterSet = 3 // TDS 7.0 or ealier
