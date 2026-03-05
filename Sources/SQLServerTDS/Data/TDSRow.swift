@@ -15,18 +15,15 @@ public struct TDSRow: Sendable {
         guard index < columnData.count else {
             return nil
         }
-        guard let data = columnData[index].data else {
-            return nil
-        }
-        return TDSData(metadata: columnMetadata[index], value: data)
+        return TDSData(metadata: columnMetadata[index], value: columnData[index].data)
     }
 
     public var data: [TDSData] {
         var result: [TDSData] = []
+        result.reserveCapacity(columnMetadata.count)
         for i in 0..<columnMetadata.count {
-            if let data = columnData[i].data {
-                result.append(TDSData(metadata: columnMetadata[i], value: data))
-            }
+            let value = i < columnData.count ? columnData[i].data : nil
+            result.append(TDSData(metadata: columnMetadata[i], value: value))
         }
         return result
     }

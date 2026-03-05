@@ -1,5 +1,14 @@
 extension TDSTokenParser {
     public static func parseColMetadataToken(from buffer: inout ByteBuffer) throws -> TDSTokens.ColMetadataToken {
+        // Some callers (the streaming parser) present the buffer positioned at the COUNT
+        // field, while others include the COLMETADATA token type byte. If the first byte
+        // matches the COLMETADATA token, consume it; otherwise assume the caller has
+        // already advanced past the token type.
+        if let first = buffer.getInteger(at: buffer.readerIndex, as: UInt8.self),
+           first == TDSTokens.TokenType.colMetadata.rawValue {
+            _ = buffer.readByte()
+        }
+
         guard let countRaw = buffer.readUShort() else {
             throw TDSError.needMoreData
         }
@@ -98,6 +107,10 @@ extension TDSTokenParser {
                 length = Int(len)
             case .date:
                 length = 3
+            case .time, .datetime2, .datetimeOffset:
+                // These BYTELEN_TYPEs have only a Scale byte in their TYPE_INFO,
+                // which is consumed by the isScaleType() path below. No separate length field.
+                length = 0
             case .tinyInt, .bit:
                 length = 1
             case .smallInt:

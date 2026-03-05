@@ -23,9 +23,13 @@ public struct TDSPacket {
             return nil
         }
 
+        // Read the packet header using readerIndex-relative offsets so that
+        // this works correctly in a while loop where readerIndex > 0 after
+        // previous packets have been consumed via readSlice().
+        let ri = buffer.readerIndex
         guard
-            let typeByte: UInt8 = buffer.getInteger(at: 0),
-            let length: UInt16 = buffer.getInteger(at: 2)
+            let typeByte: UInt8 = buffer.getInteger(at: ri),
+            let length: UInt16 = buffer.getInteger(at: ri + 2)
         else {
             return nil
         }

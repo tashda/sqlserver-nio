@@ -38,32 +38,15 @@ extension TDSMessages {
         public func serialize(into buffer: inout ByteBuffer) throws {
             // Write ALL_HEADERS (MARS/Transaction) like Microsoft JDBC
             TDSMessage.serializeAllHeaders(&buffer, transactionDescriptor: transactionDescriptor, outstandingRequestCount: outstandingRequestCount)
-            // RPC target selector and procedure name encoding
-            // Per MS-TDS, for RPCRequest the procedure identifier is either:
-            //  - US_VARCHAR name: 2-byte byte length followed by UTF-16LE characters
-            //  - or a ProcID indicated by a length of 0xFFFF, followed by a 2-byte ProcID.
-            // We are calling user procedures by name, so encode US_VARCHAR and DO NOT prefix 0xFFFF.
-            // Option flags (2 bytes) immediately follow the name/ProcID.
+            // RPC target selector and procedure name encoding.
+            // Per MS-TDS, US_VARCHAR = USHORT(char_count) + UTF-16LE chars.
+            // The USHORT is the CHARACTER count, not the byte count.
+            // For named user procedures, write US_VARCHAR directly (no 0xFFFF prefix).
+            // 0xFFFF prefix is reserved for well-known built-in ProcIDs only.
             let procChars = Array(procedureName.utf16)
-            let procMode = ProcessInfo.processInfo.environment["TDS_RPC_PROCNAME_MODE"].flatMap { Int($0) } ?? 1
-            switch procMode {
-            case 2:
-                // 0xFFFF selector + B_VARCHAR (1-byte char count + UTF-16LE)
-                buffer.writeInteger(UInt16(0xFFFF), endianness: .little)
-                guard procChars.count <= 0xFF else { throw TDSError.protocolError("RPC procedure name too long") }
-                buffer.writeInteger(UInt8(procChars.count))
-                for ch in procChars { buffer.writeInteger(ch, endianness: .little) }
-            case 3:
-                // 0xFFFF selector + US_VARCHAR (2-byte byte length + UTF-16LE)
-                buffer.writeInteger(UInt16(0xFFFF), endianness: .little)
-                fallthrough
-            default:
-                // US_VARCHAR name
-                let byteLen = procChars.count &* 2
-                guard byteLen <= 0xFFFF else { throw TDSError.protocolError("RPC procedure name too long") }
-                buffer.writeInteger(UInt16(byteLen), endianness: .little)
-                for ch in procChars { buffer.writeInteger(ch, endianness: .little) }
-            }
+            guard procChars.count <= 0xFFFF else { throw TDSError.protocolError("RPC procedure name too long") }
+            buffer.writeInteger(UInt16(procChars.count), endianness: .little)
+            for ch in procChars { buffer.writeInteger(ch, endianness: .little) }
             // RPC option flags (2 bytes): both zero for default behavior
             buffer.writeInteger(UInt16(0), endianness: .little)
 
@@ -105,10 +88,13 @@ extension TDSMessages {
                     buf.writeInteger(TDSDataType.intn.rawValue)
                     buf.writeInteger(UInt8(0)) // ByteLen = 0 indicates NULL
                 case .varchar, .char, .nchar, .nvarchar, .binary, .varbinary:
-                    // TYPE_INFO w/ max length (use 0 for safety), then UShortCharBinLen=0xFFFF for NULL
+                    // TYPE_INFO w/ valid max length, then UShortCharBinLen=0xFFFF for NULL
                     buf.writeInteger(type.rawValue)
-                    buf.writeInteger(UInt16(0), endianness: .little)
-                    if type == .varchar || type == .char { /* collation */ buf.writeBytes([0,0,0,0,0]) }
+                    let nullMaxLen: UInt16 = (type == .binary || type == .varbinary) ? 8000 : 8000
+                    buf.writeInteger(nullMaxLen, endianness: .little)
+                    if type == .varchar || type == .char || type == .nchar || type == .nvarchar {
+                        buf.writeBytes([0,0,0,0,0]) // collation
+                    }
                     buf.writeInteger(UInt16(0xFFFF), endianness: .little)
                 default:
                     // Fallback to intn null
@@ -118,7 +104,12 @@ extension TDSMessages {
             }
 
             guard let data = param.data else {
-                writeNull(for: .intn, into: &buffer)
+                // No type info: send NVARCHAR(8000) NULL as a universal placeholder.
+                // The server uses the declared parameter type regardless of the hint.
+                buffer.writeInteger(TDSDataType.nvarchar.rawValue)
+                buffer.writeInteger(UInt16(8000), endianness: .little)
+                buffer.writeBytes([0, 0, 0, 0, 0]) // default collation
+                buffer.writeInteger(UInt16(0xFFFF), endianness: .little) // NULL sentinel
                 return
             }
 
@@ -192,22 +183,38 @@ extension TDSMessages {
                     buffer.writeInteger(UInt8(0))
                 }
             case .varchar, .char:
-                // TYPE_INFO: type + max length + collation(5)
-                buffer.writeInteger(data.metadata.dataType.rawValue)
-                let payloadLen = UInt16(min(data.value?.readableBytes ?? 0, 8000))
-                buffer.writeInteger(payloadLen, endianness: .little)
-                buffer.writeBytes(collationBytes(from: data.metadata.collation))
-                // Value: UShortCharBinLen (0xFFFF for NULL; here we send exact length)
-                if let val = data.value, let bytes = val.getBytes(at: val.readerIndex, length: val.readableBytes) {
-                    buffer.writeInteger(UInt16(bytes.count), endianness: .little)
-                    buffer.writeBytes(bytes)
+                // TYPE_INFO: type + max length (in bytes, use 8000 = VARCHAR(8000)) + collation(5)
+                // Note: TDSData(string:) stores UTF-16LE bytes with .varchar metadata; re-encode as
+                // NVARCHAR so the server receives valid unicode data. This handles the common case
+                // where callers use TDSData(string:) for procedure string parameters.
+                let valueBytes = data.value.flatMap { v in v.getBytes(at: v.readerIndex, length: v.readableBytes) }
+                let looksLikeUTF16 = (valueBytes?.count ?? 0) % 2 == 0
+                if looksLikeUTF16 {
+                    // Re-emit as NVARCHAR so UTF-16LE bytes land as unicode on the server
+                    buffer.writeInteger(TDSDataType.nvarchar.rawValue)
+                    buffer.writeInteger(UInt16(8000), endianness: .little)
+                    buffer.writeBytes(collationBytes(from: data.metadata.collation))
+                    if let bytes = valueBytes {
+                        buffer.writeInteger(UInt16(bytes.count), endianness: .little)
+                        buffer.writeBytes(bytes)
+                    } else {
+                        buffer.writeInteger(UInt16(0), endianness: .little)
+                    }
                 } else {
-                    buffer.writeInteger(UInt16(0), endianness: .little)
+                    buffer.writeInteger(data.metadata.dataType.rawValue)
+                    buffer.writeInteger(UInt16(8000), endianness: .little)
+                    buffer.writeBytes(collationBytes(from: data.metadata.collation))
+                    if let bytes = valueBytes {
+                        buffer.writeInteger(UInt16(bytes.count), endianness: .little)
+                        buffer.writeBytes(bytes)
+                    } else {
+                        buffer.writeInteger(UInt16(0), endianness: .little)
+                    }
                 }
             case .nvarchar, .nchar:
+                // TYPE_INFO maxLen = 8000 bytes (= NVARCHAR(4000)). Value length is actual byte count.
                 buffer.writeInteger(data.metadata.dataType.rawValue)
-                let payloadLen = UInt16(min(data.value?.readableBytes ?? 0, 4000 * 2))
-                buffer.writeInteger(payloadLen, endianness: .little)
+                buffer.writeInteger(UInt16(8000), endianness: .little)
                 buffer.writeBytes(collationBytes(from: data.metadata.collation))
                 if let val = data.value, let bytes = val.getBytes(at: val.readerIndex, length: val.readableBytes) {
                     buffer.writeInteger(UInt16(bytes.count), endianness: .little)

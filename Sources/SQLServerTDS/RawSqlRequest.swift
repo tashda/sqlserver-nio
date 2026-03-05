@@ -13,6 +13,12 @@ public class RawSqlRequest: TDSRequest {
     public let stream: Bool
     public let onData: ((TDSData) -> Void)?
 
+    /// Optional overrides for the MARS Transaction Descriptor header.
+    /// When nil, the request will be sent with an AutoCommit descriptor (all zeros, requestCount = 1).
+    /// When set by the connection pipeline, these values are propagated into the ALL_HEADERS block.
+    public var transactionDescriptorOverride: [UInt8]?
+    public var outstandingRequestCountOverride: UInt32?
+
     public init(
         sql: String,
         stream: Bool = false,
@@ -36,7 +42,16 @@ public class RawSqlRequest: TDSRequest {
     }
 
     public func start(allocator: ByteBufferAllocator) throws -> [TDSPacket] {
-        let message = TDSMessages.RawSqlBatchMessage(sqlText: sql)
+        // Resolve the transaction descriptor for this batch. If the pipeline has injected
+        // an explicit descriptor (for an active transaction), use it; otherwise default
+        // to AutoCommit semantics (descriptor = 0, requestCount = 1) per MS‑TDS.
+        let descriptor = transactionDescriptorOverride ?? [UInt8](repeating: 0, count: 8)
+        let requestCount = outstandingRequestCountOverride ?? 1
+        let message = TDSMessages.RawSqlBatchMessage(
+            sqlText: sql,
+            transactionDescriptor: descriptor,
+            outstandingRequestCount: requestCount
+        )
         let tdsMessage = try TDSMessage(payload: message, allocator: allocator)
         return tdsMessage.packets
     }
