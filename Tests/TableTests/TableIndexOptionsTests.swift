@@ -70,7 +70,7 @@ final class SQLServerTableIndexOptionsTests: XCTestCase {
         try await withDbClient(for: db, using: self.group) { dbClient in
             guard let def = try await withRetry(attempts: 5, operation: {
                 try await withTimeout(60, operation: {
-                    try await withReliableConnection(client: dbClient, operation: { conn in
+                    try await dbClient.withConnection { conn in
                         do {
                             return try await conn.fetchObjectDefinition(schema: "dbo", name: table, kind: .table).get()
                         } catch {
@@ -80,7 +80,7 @@ final class SQLServerTableIndexOptionsTests: XCTestCase {
                                 throw error
                             }
                         }
-                    })
+                    }
                 })
             }), let ddl = def.definition else {
                 XCTFail("No definition returned")

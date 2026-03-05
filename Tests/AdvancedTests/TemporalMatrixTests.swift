@@ -38,10 +38,9 @@ final class SQLServerTemporalMatrixTests: XCTestCase {
                     ) WITH (SYSTEM_VERSIONING = ON);
                 """)
             }
-            let def = try await withReliableConnection(client: self.client, operation: { conn in
-                _ = try await conn.changeDatabase(db).get()
-                return try await conn.fetchObjectDefinition(schema: "dbo", name: table, kind: .table).get()
-            })
+            let def = try await withDbConnection(client: self.client, database: db) { conn in
+                try await conn.fetchObjectDefinition(schema: "dbo", name: table, kind: .table).get()
+            }
             guard let def, let ddl = def.definition else { XCTFail("No DDL returned"); return }
             XCTAssertTrue(ddl.contains("PERIOD FOR SYSTEM_TIME"))
             XCTAssertTrue(ddl.contains("SYSTEM_VERSIONING = ON"))
@@ -70,10 +69,9 @@ final class SQLServerTemporalMatrixTests: XCTestCase {
                     ) WITH (SYSTEM_VERSIONING = ON (HISTORY_TABLE = [dbo].[\(hist)]));
                 """)
             }
-            let def = try await withReliableConnection(client: self.client, operation: { conn in
-                _ = try await conn.changeDatabase(db).get()
-                return try await conn.fetchObjectDefinition(schema: "dbo", name: table, kind: .table).get()
-            })
+            let def = try await withDbConnection(client: self.client, database: db) { conn in
+                try await conn.fetchObjectDefinition(schema: "dbo", name: table, kind: .table).get()
+            }
             guard let def, let ddl = def.definition else { XCTFail("No DDL returned"); return }
             XCTAssertTrue(ddl.contains("PERIOD FOR SYSTEM_TIME"))
             XCTAssertTrue(ddl.contains("HISTORY_TABLE = [dbo].[\(hist)]"))

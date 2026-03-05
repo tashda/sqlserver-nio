@@ -46,11 +46,11 @@ final class SQLServerMetadataCommentsTests: XCTestCase {
             ]
             let tableName = "t_\(UUID().uuidString.prefix(8))"
             // Use admin client helper which persists comments via extended properties
-            let admin = SQLServerAdministrationClient(client: self.client)
             try await withDbConnection(client: self.client, database: db) { conn in
                 _ = try await conn.execute("IF OBJECT_ID(N'dbo.\(tableName)', 'U') IS NOT NULL DROP TABLE [dbo].[\(tableName)]").get()
             }
-            try await withDbConnection(client: self.client, database: db) { _ in
+            try await withDbClient(for: db, using: self.group) { dbClient in
+                let admin = SQLServerAdministrationClient(client: dbClient)
                 try await admin.createTable(name: tableName, columns: cols)
                 try await admin.addTableComment(tableName: tableName, comment: "Table comment for \(tableName)")
             }

@@ -32,29 +32,33 @@ final class SQLServerViewIndexMatrixTests: XCTestCase {
                 let viewClient = SQLServerViewClient(client: dbClient)
 
                 // Base table using SQLServerKit APIs
+                let tableName = "view_test_table_\(UUID().uuidString.prefix(6))"
+                let viewName = "test_view_\(UUID().uuidString.prefix(6))"
+                let indexName = "ix_\(UUID().uuidString.prefix(6))"
+
                 let tableColumns = [
                     SQLServerColumnDefinition(name: "id", definition: .standard(.init(dataType: .int))),
                     SQLServerColumnDefinition(name: "amount", definition: .standard(.init(dataType: .int)))
                 ]
-                try await dbAdminClient.createTable(name: "T", columns: tableColumns)
+                try await dbAdminClient.createTable(name: tableName, columns: tableColumns)
 
                 // Schema-bound view with unique clustered index using SQLServerKit APIs
                 try await viewClient.createIndexedView(
-                    name: "V",
+                    name: viewName,
                     query: """
                         SELECT id, SUM(amount) AS total, COUNT_BIG(*) AS cnt
-                        FROM [dbo].[T]
+                        FROM [dbo].[\(tableName)]
                         GROUP BY id
                     """,
-                    indexName: "IXV",
+                    indexName: indexName,
                     indexColumns: ["id"]
                 )
 
                 // Fetch view scripting and assert index appears
                 guard let def = try await withDbConnection(client: self.client, database: db, operation: { conn in
-                    try await conn.fetchObjectDefinition(schema: "dbo", name: "V", kind: .view).get()
+                    try await conn.fetchObjectDefinition(schema: "dbo", name: viewName, kind: .view).get()
                 }), let ddl = def.definition else { XCTFail("No view DDL returned"); return }
-                XCTAssertTrue(ddl.contains("CREATE UNIQUE CLUSTERED INDEX [IXV]"), "Scripted view should include clustered index DDL")
+                XCTAssertTrue(ddl.contains("CREATE UNIQUE CLUSTERED INDEX [\(indexName)]"), "Scripted view should include clustered index DDL")
             }
         }
     }

@@ -89,13 +89,13 @@ final class SimpleTDSTests: StandardTestBase {
     func testErrorHandling() async throws {
         logTestStart("Error Handling Test")
 
-        // Test SQL syntax error
-        try await expectErrorContaining("syntax") {
+        // Test SQL syntax error - SQL Server interprets unknown keywords as stored procedure names
+        try await expectErrorContaining("stored procedure") {
             _ = try await executeQuery("SELCT 1") // Intentional syntax error
         }
 
         // Test invalid object reference
-        try await expectErrorContaining("not found") {
+        try await expectErrorContaining("invalid object") {
             _ = try await executeQuery("SELECT * FROM nonexistent_table_xyz")
         }
 

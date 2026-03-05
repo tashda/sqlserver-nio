@@ -66,11 +66,10 @@ final class SQLServerTemporalPartitionedTests: XCTestCase {
                 """)
             }
 
-            // Fetch definition using a reliable, DB-scoped connection
-            let def = try await withReliableConnection(client: self.client, operation: { conn in
-                _ = try await conn.changeDatabase(db).get()
-                return try await conn.fetchObjectDefinition(schema: "dbo", name: table, kind: .table).get()
-            })
+            // Fetch definition using a DB-scoped connection
+            let def = try await withDbConnection(client: self.client, database: db) { conn in
+                try await conn.fetchObjectDefinition(schema: "dbo", name: table, kind: .table).get()
+            }
             guard let def, let ddl = def.definition else { XCTFail("No definition returned"); return }
             XCTAssertTrue(ddl.contains("PERIOD FOR SYSTEM_TIME"))
             XCTAssertTrue(ddl.contains("SYSTEM_VERSIONING = ON"))
@@ -95,7 +94,7 @@ final class SQLServerTemporalPartitionedTests: XCTestCase {
     func testPartitionedTableScripting() async throws {
         if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         do {
-            try await withReliableConnection(client: self.client, operation: { conn in
+            try await self.client.withConnection { conn in
                     let pf = "pfInt_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8))"
                     let ps = "psInt_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8))"
                     _ = try await conn.query("SELECT 1").get()
@@ -120,7 +119,7 @@ final class SQLServerTemporalPartitionedTests: XCTestCase {
                     XCTAssertTrue(ddl.contains("ON [\(ps)]([Id])"))
                     _ = try? await conn.execute("DROP TABLE [dbo].[\(table)]").get()
                     _ = try? await conn.execute("DROP PARTITION SCHEME [\(ps)]; DROP PARTITION FUNCTION [\(pf)]").get()
-            })
+            }
         } catch {
             let norm = SQLServerError.normalize(error)
             switch norm {

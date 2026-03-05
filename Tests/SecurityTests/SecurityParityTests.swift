@@ -73,10 +73,13 @@ final class SQLServerSecurityParityTests: XCTestCase {
         do {
             _ = try await dbSec.transferObjectToSchema(objectSchema: "dbo", objectName: table.nameOnly, newSchema: schema).get()
             _ = try await dbSec.alterAuthorizationOnSchema(schema: schema, principal: "dbo").get()
+            // Must drop the table first before dropping the schema
+            _ = try await client.execute("DROP TABLE [\(schema)].[\(table.nameOnly)];").get()
             _ = try await dbSec.dropSchema(name: schema).get()
         } catch {
-            // Best effort cleanup
+            // Best effort cleanup - drop table first, then schema
             _ = try? await client.execute("DROP TABLE [\(schema)].[\(table.nameOnly)];").get()
+            _ = try? await dbSec.dropSchema(name: schema).get()
             throw error
         }
     }

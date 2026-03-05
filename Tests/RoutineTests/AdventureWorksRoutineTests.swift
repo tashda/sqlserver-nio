@@ -45,7 +45,7 @@ final class SQLServerAdventureWorksRoutineTests: XCTestCase {
                 ("HumanResources", "vJobCandidate"),
                 ("Sales", "vSalesPerson"),
                 ("HumanResources", "vEmployee"),
-                ("Person", "vPersonDemographics"),
+                ("Sales", "vPersonDemographics"),
                 ("Sales", "vIndividualCustomer")
             ]
 
@@ -92,7 +92,7 @@ final class SQLServerAdventureWorksRoutineTests: XCTestCase {
             // Test security metadata loading (previously caused null byte issues)
             do {
                 let securityClient = SQLServerSecurityClient(client: self.client)
-                let permissions = try await securityClient.listPermissionsDetailed()
+                let permissions = try await securityClient.listPermissionsDetailed(principal: "dbo")
                 // Query should succeed without TDS protocol parsing errors
                 XCTAssertFalse(permissions.isEmpty, "Should load security permissions")
             } catch {
@@ -132,7 +132,7 @@ final class SQLServerAdventureWorksRoutineTests: XCTestCase {
                 ("dbo", "uspGetEmployeeManagers"),
                 ("dbo", "ufnGetAccountingEndDate"),
                 ("dbo", "ufnGetContactInformation"),
-                ("Sales", "ufnLeadingZeros")
+                ("dbo", "ufnLeadingZeros")
             ]
 
             for (schema, routine) in criticalRoutines {

@@ -65,24 +65,24 @@ final class SQLServerColumnstoreIndexTests: XCTestCase {
                     remaining -= 1
                     do {
                         // Keep attempts modest; combine with RawSql stall-strike cap to fail fast.
-                        def = try await withReliableConnection(client: self.client, operation: { conn in
+                        def = try await self.client.withConnection { conn in
                             _ = try await conn.changeDatabase(db).get()
                             // Bound each metadata fetch to avoid long hangs if the server stops responding.
                             return try await conn
                                 .fetchObjectDefinition(schema: "dbo", name: table, kind: .table)
                                 .withTimeout(on: conn.eventLoop, seconds: 8, reason: "fetchObjectDefinition(columnstore)")
                                 .get()
-                        })
+                        }
                     } catch {
                         // spin a fresh client bound to DB and retry once
                         if let se = error as? SQLServerError, case .connectionClosed = se, remaining > 0 {
                             let dbClient = try await makeClient(forDatabase: db, using: self.group)
-                            def = try? await withReliableConnection(client: dbClient, operation: { conn in
+                            def = try? await dbClient.withConnection { conn in
                                 try await conn
                                     .fetchObjectDefinition(schema: "dbo", name: table, kind: .table)
                                     .withTimeout(on: conn.eventLoop, seconds: 8, reason: "fetchObjectDefinition(columnstore,alt)")
                                     .get()
-                            })
+                            }
                             _ = try? await dbClient.shutdownGracefully().get()
                         } else {
                             throw error
