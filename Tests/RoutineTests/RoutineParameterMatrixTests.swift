@@ -23,11 +23,6 @@ final class SQLServerRoutineParameterMatrixTests: XCTestCase {
         group = nil
     }
 
-    // Enable the deep matrix only when explicitly requested to keep CI fast
-    private func deepTestsEnabled() -> Bool {
-        return env("TDS_ENABLE_DEEP_SCENARIO_TESTS") == "1"
-    }
-
     // A representative set of SQL types to exercise parameter metadata
     private struct ParamSpec { let sql: String; let expectType: String }
     private let baseTypes: [ParamSpec] = [
@@ -53,7 +48,6 @@ final class SQLServerRoutineParameterMatrixTests: XCTestCase {
     @available(macOS 12.0, *)
     func testProcedureParameterMatrix() async throws {
         if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
-        guard deepTestsEnabled() else { throw XCTSkip("Enable TDS_ENABLE_DEEP_SCENARIO_TESTS=1 to run deep matrix") }
         try await withTemporaryDatabase(client: self.client, prefix: "pmx") { db in
             try await withDbClient(for: db, using: self.group) { dbClient in
                 let routineClient = SQLServerRoutineClient(client: dbClient)
@@ -103,14 +97,23 @@ final class SQLServerRoutineParameterMatrixTests: XCTestCase {
                         body: body
                     )
 
-                    let ps = try await withDbConnection(client: self.client, database: db) { conn in
+                    let ps = try await withDbConnection(client: dbClient, database: db) { conn in
                         try await conn.listParameters(schema: "dbo", object: procName).get()
                     }
                     // We expect exactly 3 parameters, no return value for procedures
                     XCTAssertEqual(ps.filter { !$0.isReturnValue }.count, 3, "Expected 3 parameters for \(procName)")
-                    XCTAssertTrue(ps.contains(where: { $0.name.caseInsensitiveCompare("@In") == .orderedSame && $0.typeName.lowercased() == spec.expectType }))
-                    XCTAssertTrue(ps.contains(where: { $0.name.caseInsensitiveCompare("@Out") == .orderedSame && $0.isOutput }))
-                    XCTAssertTrue(ps.contains(where: { $0.name.caseInsensitiveCompare("@Def") == .orderedSame && $0.hasDefaultValue }))
+                    XCTAssertTrue(
+                        ps.contains(where: { $0.name.caseInsensitiveCompare("@In") == .orderedSame && $0.typeName.lowercased() == spec.expectType }),
+                        "Expected @In to be \(spec.expectType). Parameters: \(Self.debugDescription(for: ps))"
+                    )
+                    XCTAssertTrue(
+                        ps.contains(where: { $0.name.caseInsensitiveCompare("@Out") == .orderedSame && $0.isOutput }),
+                        "Parameters: \(Self.debugDescription(for: ps))"
+                    )
+                    XCTAssertTrue(
+                        ps.contains(where: { $0.name.caseInsensitiveCompare("@Def") == .orderedSame && $0.hasDefaultValue }),
+                        "Parameters: \(Self.debugDescription(for: ps))"
+                    )
                 }
 
                 // TVP case: READONLY parameter must be surfaced as readOnly
@@ -119,7 +122,7 @@ final class SQLServerRoutineParameterMatrixTests: XCTestCase {
                 _ = try await executeInDb(client: self.client, database: db, """
                     CREATE PROCEDURE [dbo].[\(tvpProc)] @T dbo.ParamTableType_\(uniqueId) READONLY AS BEGIN SELECT COUNT(*) FROM @T; END
                 """)
-                let tvpParams = try await withDbConnection(client: self.client, database: db) { conn in
+                let tvpParams = try await withDbConnection(client: dbClient, database: db) { conn in
                     try await conn.listParameters(schema: "dbo", object: tvpProc).get()
                 }
                 guard let tvp = tvpParams.first(where: { $0.name.caseInsensitiveCompare("@T") == .orderedSame }) else {
@@ -152,9 +155,9 @@ final class SQLServerRoutineParameterMatrixTests: XCTestCase {
                let match = regex.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)) {
                 let precision = Int((s as NSString).substring(with: match.range(at: 1))) ?? 12
                 let scale = Int((s as NSString).substring(with: match.range(at: 2))) ?? 3
-                return .decimal(precision: UInt8(precision), scale: UInt8(scale))
+                return .numeric(precision: UInt8(precision), scale: UInt8(scale))
             }
-            return .decimal(precision: 12, scale: 3)
+            return .numeric(precision: 12, scale: 3)
         case "BIT": return .bit
         case let s where s.starts(with: "FLOAT"):
             if let regex = try? NSRegularExpression(pattern: #"FLOAT\((\d+)\)"#),
@@ -213,7 +216,6 @@ final class SQLServerRoutineParameterMatrixTests: XCTestCase {
     @available(macOS 12.0, *)
     func testFunctionParameterMatrix() async throws {
         if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
-        guard deepTestsEnabled() else { throw XCTSkip("Enable TDS_ENABLE_DEEP_SCENARIO_TESTS=1 to run deep matrix") }
         try await withTemporaryDatabase(client: self.client, prefix: "fmx") { db in
             try await withDbClient(for: db, using: self.group) { dbClient in
                 let routineClient = SQLServerRoutineClient(client: dbClient)
@@ -235,7 +237,7 @@ final class SQLServerRoutineParameterMatrixTests: XCTestCase {
                     body: scalarBody
                 )
 
-                let sParams = try await withDbConnection(client: self.client, database: db) { conn in
+                let sParams = try await withDbConnection(client: dbClient, database: db) { conn in
                     try await conn.listParameters(schema: "dbo", object: scalar).get()
                 }
                 // Expect a return value plus two inputs
@@ -264,12 +266,21 @@ final class SQLServerRoutineParameterMatrixTests: XCTestCase {
                     body: tvfBody
                 )
 
-                let tParams = try await withDbConnection(client: self.client, database: db) { conn in
+                let tParams = try await withDbConnection(client: dbClient, database: db) { conn in
                     try await conn.listParameters(schema: "dbo", object: tvf).get()
                 }
                 XCTAssertEqual(tParams.filter { !$0.isReturnValue }.count, 2)
-                XCTAssertTrue(tParams.contains(where: { $0.name.caseInsensitiveCompare("@Finish") == .orderedSame && $0.hasDefaultValue }))
+                XCTAssertTrue(
+                    tParams.contains(where: { $0.name.caseInsensitiveCompare("@Finish") == .orderedSame && $0.hasDefaultValue }),
+                    "Parameters: \(Self.debugDescription(for: tParams))"
+                )
             }
         }
+    }
+
+    private static func debugDescription(for parameters: [ParameterMetadata]) -> String {
+        return parameters.map {
+            "\($0.name): type=\($0.typeName) default=\($0.defaultValue ?? "nil") hasDefault=\($0.hasDefaultValue) isOutput=\($0.isOutput)"
+        }.joined(separator: "; ")
     }
 }

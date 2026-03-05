@@ -10,11 +10,9 @@ final class TDSTokenParserColMetadataNoColumnsTests: XCTestCase {
         buffer.writeInteger(UInt16(0xFFFF), endianness: .little)
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        _ = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
-        var bufferCopy = buffer
+        var bufferCopy = stream.buffer
         let token = try TDSTokenParser.parseColMetadataToken(from: &bufferCopy)
         XCTAssertEqual(token.count, 0)
         XCTAssertTrue(token.colData.isEmpty)
     }
 }
-

@@ -76,6 +76,37 @@ final class QueryTests: StandardTestBase {
         logTestSuccess("Basic data types test successful!")
     }
 
+    func testRowDataPreservesNullColumns() async throws {
+        logTestStart("Row Data Preserves Null Columns Test")
+
+        let result = try await executeQuery("""
+            SELECT
+                CAST(1 as int) as col_a,
+                CAST(NULL as varchar(10)) as col_b,
+                CAST('x' as varchar(10)) as col_c,
+                CAST(NULL as datetime) as col_d
+        """, expectedRows: 1)
+
+        guard let row = result.first else {
+            return XCTFail("Expected one row for null alignment test")
+        }
+
+        XCTAssertEqual(row.columnMetadata.count, 4)
+        XCTAssertEqual(row.data.count, 4)
+
+        XCTAssertEqual(row.data[0].string, "1")
+        XCTAssertNil(row.data[1].string)
+        XCTAssertEqual(row.data[2].string, "x")
+        XCTAssertNil(row.data[3].string)
+
+        XCTAssertNotNil(row.column("col_b"))
+        XCTAssertNil(row.column("col_b")?.string)
+        XCTAssertNotNil(row.column("col_d"))
+        XCTAssertNil(row.column("col_d")?.string)
+
+        logTestSuccess("Row data preserves null columns test successful!")
+    }
+
     // MARK: - Error Handling Tests
 
     func testInvalidSQLQuery() async throws {

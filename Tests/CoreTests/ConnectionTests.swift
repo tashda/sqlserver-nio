@@ -70,6 +70,27 @@ final class ConnectionTests: StandardTestBase {
         logTestSuccess("withConnection basic query successful!")
     }
 
+    func testTimeoutCancelsActiveRequest() async throws {
+        logTestStart("Timeout Cancels Active Request Test")
+
+        do {
+            _ = try await client
+                .execute("WAITFOR DELAY '00:00:02'; SELECT 1 as ok", timeout: 0.5)
+                .get()
+            XCTFail("Expected timeout for delayed query")
+        } catch {
+            let normalized = SQLServerError.normalize(error)
+            guard case .timeout = normalized else {
+                return XCTFail("Expected timeout, got: \(normalized)")
+            }
+        }
+
+        let result = try await client.query("SELECT 1 as ok")
+        XCTAssertEqual(result.first?.column("ok")?.string, "1")
+
+        logTestSuccess("Timeout cancels active request test completed")
+    }
+
     // MARK: - Connection Pool Tests
 
     func testConnectionReuse() async throws {

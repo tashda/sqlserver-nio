@@ -18,19 +18,30 @@ final class SQLServerDeadlockRetryTests: XCTestCase {
     }
 
     func testDeadlockRetry() async throws {
-          try await withTemporaryDatabase(client: self.client, prefix: "dlck") { db in
-            let table = "DL_T_\(UUID().uuidString.prefix(6))"
-            _ = try await executeInDb(client: self.client, database: db, "CREATE TABLE [dbo].[\(table)] (id INT PRIMARY KEY, v INT);")
-            _ = try await executeInDb(client: self.client, database: db, "INSERT INTO [dbo].[\(table)] (id, v) VALUES (1, 0), (2, 0);")
+        let dbName = "dlckdb_\(UUID().uuidString.prefix(8))"
+        let table = "DL_T_\(UUID().uuidString.prefix(6))"
+        let qualifiedTable = "[\(dbName)].[dbo].[\(table)]"
 
-            // Use reliable connections that retry transient closures under stress
-            async let a: Void = withReliableConnection(client: self.client) { conn in
-                _ = try await conn.changeDatabase(db).get()
+        let dropSql = """
+        IF DB_ID(N'\(dbName)') IS NOT NULL
+        BEGIN
+            ALTER DATABASE [\(dbName)] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+            DROP DATABASE [\(dbName)];
+        END
+        """
+
+        _ = try await self.client.execute("CREATE DATABASE [\(dbName)];")
+        _ = try await self.client.execute("CREATE TABLE \(qualifiedTable) (id INT PRIMARY KEY, v INT);")
+        _ = try await self.client.execute("INSERT INTO \(qualifiedTable) (id, v) VALUES (1, 0), (2, 0);")
+
+        do {
+            // Use two independent connections that may deadlock and recover
+            async let a: Void = self.client.withConnection { conn in
                 _ = try await conn.execute("BEGIN TRANSACTION").get()
-                _ = try await conn.execute("UPDATE [dbo].[\(table)] SET v = v + 1 WHERE id = 1").get()
+                _ = try await conn.execute("UPDATE \(qualifiedTable) SET v = v + 1 WHERE id = 1").get()
                 try await Task.sleep(nanoseconds: 200_000_000)
                 do {
-                    _ = try await conn.execute("UPDATE [dbo].[\(table)] SET v = v + 1 WHERE id = 2").get()
+                    _ = try await conn.execute("UPDATE \(qualifiedTable) SET v = v + 1 WHERE id = 2").get()
                     _ = try await conn.execute("COMMIT").get()
                 } catch {
                     // After a deadlock, SQL Server may have closed the connection
@@ -43,13 +54,12 @@ final class SQLServerDeadlockRetryTests: XCTestCase {
                 }
             }
 
-            async let b: Void = withReliableConnection(client: self.client) { conn in
-                _ = try await conn.changeDatabase(db).get()
+            async let b: Void = self.client.withConnection { conn in
                 _ = try await conn.execute("BEGIN TRANSACTION").get()
-                _ = try await conn.execute("UPDATE [dbo].[\(table)] SET v = v + 1 WHERE id = 2").get()
+                _ = try await conn.execute("UPDATE \(qualifiedTable) SET v = v + 1 WHERE id = 2").get()
                 try await Task.sleep(nanoseconds: 200_000_000)
                 do {
-                    _ = try await conn.execute("UPDATE [dbo].[\(table)] SET v = v + 1 WHERE id = 1").get()
+                    _ = try await conn.execute("UPDATE \(qualifiedTable) SET v = v + 1 WHERE id = 1").get()
                     _ = try await conn.execute("COMMIT").get()
                 } catch {
                     // After a deadlock, SQL Server may have closed the connection
@@ -64,8 +74,13 @@ final class SQLServerDeadlockRetryTests: XCTestCase {
 
             // One of the tasks should deadlock; ensure the client can still execute after
             _ = try? await (a, b)
-            let rows = try await queryInDb(client: self.client, database: db, "SELECT SUM(v) AS s FROM [dbo].[\(table)]")
+            let rows = try await self.client.query("SELECT SUM(v) AS s FROM \(qualifiedTable)")
             XCTAssertNotNil(rows.first?.column("s")?.int)
+        } catch {
+            _ = try? await self.client.execute(dropSql)
+            throw error
         }
+
+        _ = try? await self.client.execute(dropSql)
     }
 }

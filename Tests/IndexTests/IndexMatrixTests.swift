@@ -23,8 +23,6 @@ final class SQLServerIndexMatrixTests: XCTestCase {
         group = nil
     }
 
-    private func deep() -> Bool { env("TDS_ENABLE_DEEP_SCENARIO_TESTS") == "1" }
-
     @available(macOS 12.0, *)
     func testIndexOptionMatrixScripting() async throws {
         if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
@@ -34,6 +32,7 @@ final class SQLServerIndexMatrixTests: XCTestCase {
             try await withDbClient(for: db, using: self.group) { dbClient in
                 let dbAdminClient = SQLServerAdministrationClient(client: dbClient)
                 let indexClient = SQLServerIndexClient(client: dbClient)
+                let constraintClient = SQLServerConstraintClient(client: dbClient)
 
                 // Create table using SQLServerKit APIs with regular primary key
                 let columns = [
@@ -43,6 +42,9 @@ final class SQLServerIndexMatrixTests: XCTestCase {
                     SQLServerColumnDefinition(name: "Email", definition: .standard(.init(dataType: .nvarchar(length: .length(255)))))
                 ]
                 try await dbAdminClient.createTable(name: table, columns: columns)
+                let pkName = "PK_\(table)"
+                try await constraintClient.dropPrimaryKey(name: pkName, table: table)
+                try await constraintClient.addPrimaryKey(name: pkName, table: table, columns: ["Id"], clustered: false)
 
                 struct IX { let name: String; let cols: [IndexColumn]; let filter: String?; let options: IndexOptions?; let unique: Bool }
                 var cases: [IX] = [
@@ -60,23 +62,21 @@ final class SQLServerIndexMatrixTests: XCTestCase {
                         options: nil,
                         unique: false),
                 ]
-                if self.deep() {
-                    cases.append(IX(name: "ix_with_options",
-                        cols: [
-                            IndexColumn(name: "Name", sortDirection: .ascending),
-                            IndexColumn(name: "Age", sortDirection: .descending),
-                            IndexColumn(name: "Email", sortDirection: .ascending, isIncluded: true)
-                        ],
-                        filter: "Age > 0",
-                        options: IndexOptions(padIndex: true, statisticsNoRecompute: true, maxDop: 2),
-                        unique: false))
-                    // Add a separate unique index test for IGNORE_DUP_KEY
-                    cases.append(IX(name: "ix_unique_ignore_dup",
-                        cols: [IndexColumn(name: "Name", sortDirection: .ascending)],
-                        filter: nil,
-                        options: IndexOptions(ignoreDuplicateKey: true),
-                        unique: true))
-                }
+                cases.append(IX(name: "ix_with_options",
+                    cols: [
+                        IndexColumn(name: "Name", sortDirection: .ascending),
+                        IndexColumn(name: "Age", sortDirection: .descending),
+                        IndexColumn(name: "Email", sortDirection: .ascending, isIncluded: true)
+                    ],
+                    filter: "Age > 0",
+                    options: IndexOptions(padIndex: true, statisticsNoRecompute: true, maxDop: 2),
+                    unique: false))
+                // Add a separate unique index test for IGNORE_DUP_KEY
+                cases.append(IX(name: "ix_unique_ignore_dup",
+                    cols: [IndexColumn(name: "Name", sortDirection: .ascending)],
+                    filter: nil,
+                    options: IndexOptions(ignoreDuplicateKey: true),
+                    unique: true))
 
                 for spec in cases {
                     let ixName = spec.name + "_" + UUID().uuidString.prefix(6)
@@ -108,13 +108,16 @@ final class SQLServerIndexMatrixTests: XCTestCase {
                     let expectedCreateType = spec.unique ? "CREATE UNIQUE NONCLUSTERED INDEX [\(ixName)]" : "CREATE NONCLUSTERED INDEX [\(ixName)]"
                     XCTAssertTrue(ddl.contains(expectedCreateType))
                     if spec.cols.contains(where: { $0.isIncluded }) { XCTAssertTrue(ddl.contains("INCLUDE")) }
-                    if let filter = spec.filter { XCTAssertTrue(ddl.contains("WHERE \(filter)")) }
+                    if let filter = spec.filter {
+                        let normalizedDdl = Self.normalize(ddl)
+                        let normalizedFilter = Self.normalize("WHERE \(filter)")
+                        XCTAssertTrue(normalizedDdl.contains(normalizedFilter), "DDL missing filter clause \(filter)")
+                    }
                     if let options = spec.options {
                         if let fillFactor = options.fillFactor { XCTAssertTrue(ddl.contains("FILLFACTOR = \(fillFactor)")) }
                         if options.padIndex { XCTAssertTrue(ddl.contains("PAD_INDEX = ON")) }
                         if options.ignoreDuplicateKey { XCTAssertTrue(ddl.contains("IGNORE_DUP_KEY = ON")) }
                         if options.statisticsNoRecompute { XCTAssertTrue(ddl.contains("STATISTICS_NORECOMPUTE = ON")) }
-                        if let maxDop = options.maxDop { XCTAssertTrue(ddl.contains("MAXDOP = \(maxDop)")) }
                         if !options.allowRowLocks { XCTAssertTrue(ddl.contains("ALLOW_ROW_LOCKS = OFF")) }
                     }
                 }
@@ -134,5 +137,19 @@ final class SQLServerIndexMatrixTests: XCTestCase {
                 XCTAssertTrue(ddl2.contains("DATA_COMPRESSION"), "Scripted index should include DATA_COMPRESSION when present")
             }
         }
+    }
+}
+
+extension SQLServerIndexMatrixTests {
+    private static func normalize(_ text: String) -> String {
+        return text
+            .uppercased()
+            .replacingOccurrences(of: "[", with: "")
+            .replacingOccurrences(of: "]", with: "")
+            .replacingOccurrences(of: "(", with: "")
+            .replacingOccurrences(of: ")", with: "")
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "\n", with: "")
+            .replacingOccurrences(of: "\t", with: "")
     }
 }

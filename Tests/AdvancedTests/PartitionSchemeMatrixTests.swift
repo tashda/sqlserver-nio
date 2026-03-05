@@ -50,10 +50,9 @@ final class SQLServerPartitionSchemeMatrixTests: XCTestCase {
                 _ = try await executeInDb(client: self.client, database: db, "CREATE NONCLUSTERED INDEX [\(ix)] ON [dbo].[\(table)] ([Code]) ON [\(ps)]([Code]);")
             }
 
-            let def = try await withReliableConnection(client: self.client, operation: { conn in
-                _ = try await conn.changeDatabase(db).get()
-                return try await conn.fetchObjectDefinition(schema: "dbo", name: table, kind: .table).get()
-            })
+            let def = try await withDbConnection(client: self.client, database: db) { conn in
+                try await conn.fetchObjectDefinition(schema: "dbo", name: table, kind: .table).get()
+            }
             guard let def, let ddl = def.definition else { XCTFail("No DDL returned"); return }
             XCTAssertTrue(ddl.contains("ON [\(ps)]([Id])"), "Table storage clause should target partition scheme")
             XCTAssertTrue(ddl.contains("CREATE NONCLUSTERED INDEX [\(ix)]"), "Index should be scripted")

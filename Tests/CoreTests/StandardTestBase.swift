@@ -47,7 +47,7 @@ open class StandardTestBase: XCTestCase {
     override open func tearDown() async throws {
         // Shutdown client first
         if let client = client {
-            _ = client.shutdownGracefully()
+            try await client.shutdownGracefully().get()
             self.client = nil
         }
 

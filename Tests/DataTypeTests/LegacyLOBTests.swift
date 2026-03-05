@@ -33,9 +33,9 @@ final class SQLServerLegacyLobRoundTripTests: XCTestCase {
                     do {
                         // Create table using SQLServerKit APIs with legacy LOB data types
                         let columns = [
-                            SQLServerColumnDefinition(name: "t", definition: .standard(.init(dataType: .text))),
-                            SQLServerColumnDefinition(name: "n", definition: .standard(.init(dataType: .ntext))),
-                            SQLServerColumnDefinition(name: "i", definition: .standard(.init(dataType: .image)))
+                            SQLServerColumnDefinition(name: "t", definition: .standard(.init(dataType: .text, isNullable: true))),
+                            SQLServerColumnDefinition(name: "n", definition: .standard(.init(dataType: .ntext, isNullable: true))),
+                            SQLServerColumnDefinition(name: "i", definition: .standard(.init(dataType: .image, isNullable: true)))
                         ]
                         try await dbAdminClient.createTable(name: table, columns: columns)
                     } catch {

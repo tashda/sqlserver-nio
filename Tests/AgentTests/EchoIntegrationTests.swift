@@ -11,6 +11,9 @@ final class EchoIntegrationTests: XCTestCase {
     let TIMEOUT: TimeInterval = Double(env("TDS_TEST_OPERATION_TIMEOUT_SECONDS") ?? "30") ?? 30
 
     override func setUp() async throws {
+        guard envFlagEnabled("TDS_ENABLE_AGENT_TESTS") else {
+            throw XCTSkip("Skipping agent tests. Set TDS_ENABLE_AGENT_TESTS=1 to enable.")
+        }
         XCTAssertTrue(isLoggingConfigured)
         TestEnvironmentManager.loadEnvironmentVariables()
 
@@ -18,7 +21,6 @@ final class EchoIntegrationTests: XCTestCase {
         let config = makeSQLServerClientConfiguration()
         self.client = try await SQLServerClient.connect(configuration: config, eventLoopGroupProvider: .shared(group)).get()
 
-    
         // Ensure Agent XPs are enabled for these tests
         let metadata = try await withTimeout(TIMEOUT) {
             try await self.client.withConnection { connection in

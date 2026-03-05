@@ -31,7 +31,7 @@ final class SQLServerNbcRowBitmapTests: XCTestCase {
                     // Create table using SQLServerKit APIs with 20 nullable columns to ensure the null bitmap spans multiple bytes
                     var columns: [SQLServerColumnDefinition] = []
                     for i in 1...20 {
-                        columns.append(SQLServerColumnDefinition(name: "c\(i)", definition: .standard(.init(dataType: .int))))
+                        columns.append(SQLServerColumnDefinition(name: "c\(i)", definition: .standard(.init(dataType: .int, isNullable: true))))
                     }
                     try await dbAdminClient.createTable(name: table, columns: columns)
 

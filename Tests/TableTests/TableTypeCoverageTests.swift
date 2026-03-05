@@ -87,9 +87,9 @@ final class SQLServerTableDefinitionCoverageTests: XCTestCase {
 
             guard let def = try await withRetry(attempts: 5, operation: {
                 try await withTimeout(60, operation: {
-                    try await withReliableConnection(client: dbClient, operation: { conn in
+                    try await dbClient.withConnection { conn in
                         try await conn.fetchObjectDefinition(schema: "dbo", name: child, kind: .table).get()
-                    })
+                    }
                 })
             }), let ddl = def.definition else {
                 XCTFail("No definition returned")
