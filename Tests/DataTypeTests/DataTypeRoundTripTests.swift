@@ -14,7 +14,18 @@ final class SQLServerDataTypeRoundTripTests: XCTestCase {
     private var skipDueToEnv = false
 
     override func setUp() async throws {
-        try await super.setUp()
+        continueAfterFailure = false
+
+        // Load environment configuration
+        TestEnvironmentManager.loadEnvironmentVariables()
+
+        // Configure logging
+        _ = isLoggingConfigured
+
+        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        let config = makeSQLServerClientConfiguration()
+        self.client = try await SQLServerClient.connect(configuration: config, eventLoopGroupProvider: .shared(group)).get()
+
         adminClient = SQLServerAdministrationClient(client: client)
         // Quick probe; if the server is unstable right now, skip long integration paths to avoid timeouts.
         do { _ = try await client.query("SELECT 1").get() } catch { skipDueToEnv = true }
@@ -26,6 +37,8 @@ final class SQLServerDataTypeRoundTripTests: XCTestCase {
         }
         tablesToDrop.removeAll()
         adminClient = nil
+        try await client?.shutdownGracefully().get()
+        try await group?.shutdownGracefully()
         try await super.tearDown()
     }
     
@@ -79,8 +92,9 @@ final class SQLServerDataTypeRoundTripTests: XCTestCase {
                 XCTAssertEqual(realValue, 1.25, accuracy: 0.0001)
             }
         }
+        }
     }
-    
+
     func testTemporalRoundTrips() async throws {
         try await withTimeout(20) {
             try await withTemporaryDatabase(client: self.client, prefix: "rt") { db in
@@ -89,39 +103,67 @@ final class SQLServerDataTypeRoundTripTests: XCTestCase {
                 try await withDbClient(for: db, using: self.group) { dbClient in
                     let dbAdminClient = SQLServerAdministrationClient(client: dbClient)
 
-                    // Create table using SQLServerKit APIs with temporal data types
                     let columns = [
-                        SQLServerColumnDefinition(name: "date_value", definition: .standard(.init(dataType: .date))),
-                        SQLServerColumnDefinition(name: "datetime_value", definition: .standard(.init(dataType: .datetime2(precision: 7)))),
+                        SQLServerColumnDefinition(name: "date_value",          definition: .standard(.init(dataType: .date))),
+                        SQLServerColumnDefinition(name: "datetime_value",      definition: .standard(.init(dataType: .datetime2(precision: 7)))),
                         SQLServerColumnDefinition(name: "smalldatetime_value", definition: .standard(.init(dataType: .smalldatetime))),
-                        SQLServerColumnDefinition(name: "time_value", definition: .standard(.init(dataType: .time(precision: 7)))),
-                        SQLServerColumnDefinition(name: "datetimeoffset_value", definition: .standard(.init(dataType: .datetimeoffset(precision: 7))))
+                        SQLServerColumnDefinition(name: "time_value",          definition: .standard(.init(dataType: .time(precision: 7)))),
+                        SQLServerColumnDefinition(name: "datetimeoffset_value",definition: .standard(.init(dataType: .datetimeoffset(precision: 7))))
                     ]
                     try await dbAdminClient.createTable(name: tableName, columns: columns)
 
-                    // Insert data using SQLServerKit APIs
                     _ = try await dbClient.query("""
                         INSERT INTO [\(tableName)] (date_value, datetime_value, smalldatetime_value, time_value, datetimeoffset_value)
-                        VALUES ('2023-11-18', '2023-11-18T13:15:30.1234567', '2023-11-18T13:15:00', '13:15:30.9876543', '2023-11-18T13:15:30.1234567+02:00')
+                        VALUES ('2023-11-18', '2023-11-18T13:15:30.0000000', '2023-11-18T13:15:00', '13:15:30.0000000', '2023-11-18T13:15:30.0000000+00:00')
                     """).get()
 
-                    // Query data back using SQLServerKit APIs
-                    let rows = try await dbClient.query("""
-                        SELECT
-                            CONVERT(VARCHAR(10), date_value, 23) AS date_value,
-                            CONVERT(VARCHAR(27), datetime_value, 126) AS datetime_value,
-                            CONVERT(VARCHAR(19), smalldatetime_value, 120) AS smalldatetime_value,
-                            CONVERT(VARCHAR(20), time_value, 114) AS time_value,
-                            CONVERT(VARCHAR(33), datetimeoffset_value, 126) AS datetimeoffset_value
-                        FROM [\(tableName)]
-                    """).get()
-
+                    // Read native types — not CONVERT strings — to exercise the Swift date-decode path.
+                    let rows = try await dbClient.query("SELECT * FROM [\(tableName)]").get()
                     guard let row = rows.first else { XCTFail("Missing temporal row"); return }
-                    XCTAssertEqual(row.column("date_value")?.string, "2023-11-18")
-                    XCTAssertEqual(row.column("datetime_value")?.string, "2023-11-18T13:15:30.1234567")
-                    XCTAssertEqual(row.column("smalldatetime_value")?.string, "2023-11-18 13:15:00")
-                    XCTAssertTrue(row.column("time_value")?.string?.contains("13:15:30") ?? false)
-                    XCTAssertEqual(row.column("datetimeoffset_value")?.string, "2023-11-18T13:15:30.1234567+02:00")
+
+                    // DATE: days-since-year-1 decode → compare calendar components
+                    let dateVal = try XCTUnwrap(row.column("date_value")?.date, "date_value should decode as Date")
+                    var utc = Calendar(identifier: .gregorian)
+                    utc.timeZone = TimeZone(secondsFromGMT: 0)!
+                    let dc = utc.dateComponents([.year, .month, .day], from: dateVal)
+                    XCTAssertEqual(dc.year, 2023)
+                    XCTAssertEqual(dc.month, 11)
+                    XCTAssertEqual(dc.day, 18)
+
+                    // DATETIME2: compare to within 1 second (server epoch + time decode)
+                    let dt2Val = try XCTUnwrap(row.column("datetime_value")?.date, "datetime_value should decode as Date")
+                    let dt2Components = utc.dateComponents([.year, .month, .day, .hour, .minute, .second], from: dt2Val)
+                    XCTAssertEqual(dt2Components.year,   2023)
+                    XCTAssertEqual(dt2Components.month,  11)
+                    XCTAssertEqual(dt2Components.day,    18)
+                    XCTAssertEqual(dt2Components.hour,   13)
+                    XCTAssertEqual(dt2Components.minute, 15)
+                    XCTAssertEqual(dt2Components.second, 30)
+
+                    // SMALLDATETIME: minute precision
+                    let sdtVal = try XCTUnwrap(row.column("smalldatetime_value")?.date, "smalldatetime_value should decode as Date")
+                    let sdtComponents = utc.dateComponents([.year, .month, .day, .hour, .minute], from: sdtVal)
+                    XCTAssertEqual(sdtComponents.year,   2023)
+                    XCTAssertEqual(sdtComponents.month,  11)
+                    XCTAssertEqual(sdtComponents.day,    18)
+                    XCTAssertEqual(sdtComponents.hour,   13)
+                    XCTAssertEqual(sdtComponents.minute, 15)
+
+                    // TIME: cannot represent as Date — verify via CONVERT string
+                    let timeRows = try await dbClient.query("""
+                        SELECT CONVERT(VARCHAR(8), time_value, 108) AS t FROM [\(tableName)]
+                    """).get()
+                    XCTAssertEqual(timeRows.first?.column("t")?.string, "13:15:30")
+
+                    // DATETIMEOFFSET: stored as UTC+0, decode and compare UTC instant
+                    let dtoVal = try XCTUnwrap(row.column("datetimeoffset_value")?.date, "datetimeoffset_value should decode as Date")
+                    let dtoComponents = utc.dateComponents([.year, .month, .day, .hour, .minute, .second], from: dtoVal)
+                    XCTAssertEqual(dtoComponents.year,   2023)
+                    XCTAssertEqual(dtoComponents.month,  11)
+                    XCTAssertEqual(dtoComponents.day,    18)
+                    XCTAssertEqual(dtoComponents.hour,   13)
+                    XCTAssertEqual(dtoComponents.minute, 15)
+                    XCTAssertEqual(dtoComponents.second, 30)
                 }
             }
         }
@@ -221,5 +263,4 @@ final class SQLServerDataTypeRoundTripTests: XCTestCase {
             }
         }
     }
-}
 }

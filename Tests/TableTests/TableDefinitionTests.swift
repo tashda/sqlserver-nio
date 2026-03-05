@@ -40,74 +40,71 @@ final class SQLServerTableDefinitionTests: XCTestCase {
         let child = "def_child_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8))"
         do {
         try await withTemporaryDatabase(client: self.client, prefix: "def") { db in
-            // Use proper API methods instead of raw SQL
-            let adminClient = SQLServerAdministrationClient(client: self.client)
-            let constraintClient = SQLServerConstraintClient(client: self.client)
-            let indexClient = SQLServerIndexClient(client: self.client)
+            try await withDbClient(for: db, using: self.group) { dbClient in
+                // Use proper API methods instead of raw SQL
+                let adminClient = SQLServerAdministrationClient(client: dbClient)
+                let constraintClient = SQLServerConstraintClient(client: dbClient)
+                let indexClient = SQLServerIndexClient(client: dbClient)
 
-            // Create parent table with primary key
-            let parentColumns: [SQLServerColumnDefinition] = [
-                .init(name: "Id", definition: .standard(.init(dataType: .int, isPrimaryKey: true)))
-            ]
-            try await adminClient.createTable(name: parent, columns: parentColumns)
+                // Create parent table with primary key
+                let parentColumns: [SQLServerColumnDefinition] = [
+                    .init(name: "Id", definition: .standard(.init(dataType: .int, isPrimaryKey: true)))
+                ]
+                try await adminClient.createTable(name: parent, columns: parentColumns)
 
-            // Create child table with primary key and default value
-            let childColumns: [SQLServerColumnDefinition] = [
-                .init(name: "Id", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
-                .init(name: "RefId", definition: .standard(.init(dataType: .int, isNullable: true))),
-                .init(name: "Name", definition: .standard(.init(dataType: .nvarchar(length: .length(50)), defaultValue: "N'X'")))
-            ]
-            try await adminClient.createTable(name: child, columns: childColumns)
+                // Create child table with primary key and default value
+                let childColumns: [SQLServerColumnDefinition] = [
+                    .init(name: "Id", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
+                    .init(name: "RefId", definition: .standard(.init(dataType: .int, isNullable: true))),
+                    .init(name: "Name", definition: .standard(.init(dataType: .nvarchar(length: .length(50)), defaultValue: "N'X'")))
+                ]
+                try await adminClient.createTable(name: child, columns: childColumns)
 
-            // Add unique constraint to child table
-            try await constraintClient.addUniqueConstraint(
-                name: "UQ_\(child)_Name",
-                table: child,
-                columns: ["Name"],
-                clustered: false
-            )
+                // Add unique constraint to child table
+                try await constraintClient.addUniqueConstraint(
+                    name: "UQ_\(child)_Name",
+                    table: child,
+                    columns: ["Name"],
+                    clustered: false
+                )
 
-            // Add foreign key constraint
-            try await constraintClient.addForeignKey(
-                name: "FK_\(child)_Ref",
-                table: child,
-                columns: ["RefId"],
-                referencedTable: parent,
-                referencedColumns: ["Id"]
-            )
+                // Add foreign key constraint
+                try await constraintClient.addForeignKey(
+                    name: "FK_\(child)_Ref",
+                    table: child,
+                    columns: ["RefId"],
+                    referencedTable: parent,
+                    referencedColumns: ["Id"]
+                )
 
-            // Create index on RefId
-            try await indexClient.createIndex(
-                name: "IX_\(child)_RefId",
-                table: child,
-                columns: [IndexColumn(name: "RefId", sortDirection: .ascending)]
-            )
+                // Create index on RefId
+                try await indexClient.createIndex(
+                    name: "IX_\(child)_RefId",
+                    table: child,
+                    columns: [IndexColumn(name: "RefId", sortDirection: .ascending)]
+                )
 
-
-        // Fetch scripted definition (use dedicated DB-scoped client + reliable connection)
-            let dbClient = try await makeClient(forDatabase: db, using: self.group)
-            let def = try await withRetry(attempts: 5) {
-                try await withTimeout(60) {
-                    try await withReliableConnection(client: dbClient) { conn in
-                        try await conn.fetchObjectDefinition(schema: "dbo", name: child, kind: .table).get()
+                // Fetch scripted definition using the same DB-scoped client
+                let def = try await withRetry(attempts: 5) {
+                    try await withTimeout(60) {
+                        try await dbClient.withConnection { conn in
+                            try await conn.fetchObjectDefinition(schema: "dbo", name: child, kind: .table).get()
+                        }
                     }
                 }
+                XCTAssertNotNil(def)
+                guard let defText = def?.definition else {
+                    XCTFail("No definition returned")
+                    return
+                }
+
+                // Basic assertions
+                XCTAssertTrue(defText.contains("CREATE TABLE [dbo].[\(child)]"))
+                XCTAssertTrue(defText.contains("PRIMARY KEY"))
+                XCTAssertTrue(defText.contains("FOREIGN KEY"))
+                XCTAssertTrue(defText.contains("UNIQUE"))
+                XCTAssertTrue(defText.contains("CREATE")) // index script appended
             }
-        XCTAssertNotNil(def)
-        guard let defText = def?.definition else {
-            XCTFail("No definition returned")
-            return
-        }
-
-        // Basic assertions
-        XCTAssertTrue(defText.contains("CREATE TABLE [dbo].[\(child)]"))
-        XCTAssertTrue(defText.contains("PRIMARY KEY"))
-        XCTAssertTrue(defText.contains("FOREIGN KEY"))
-        XCTAssertTrue(defText.contains("UNIQUE"))
-        XCTAssertTrue(defText.contains("CREATE")) // index script appended
-
-            // No explicit cleanup; database dropped by helper
-            _ = try? await dbClient.shutdownGracefully().get()
         }
         } catch {
             if let te = error as? AsyncTimeoutError {

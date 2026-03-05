@@ -8,9 +8,11 @@ final class SQLServerEchoMetadataLoadingTests: XCTestCase {
 
     private var operationTimeout: TimeInterval {
         if let value = env("TDS_TEST_OPERATION_TIMEOUT_SECONDS"), let seconds = TimeInterval(value) {
-            return max(30, seconds)
+            return max(60, seconds)
         }
-        return 60
+        // loadDatabaseStructure is a heavy multi-query operation on AdventureWorks2022.
+        // Allow up to 3 minutes for the full sequence to complete.
+        return 180
     }
 
     override func setUp() async throws {
@@ -20,7 +22,10 @@ final class SQLServerEchoMetadataLoadingTests: XCTestCase {
         group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
 
         var config = makeSQLServerClientConfiguration()
-        config.connection.metadataConfiguration.commandTimeout = 30
+        // Per-query timeout: 60s is enough for any single catalog query, while
+        // still sending an attention token to prevent infinite stalls if the
+        // TDS channel misbehaves or SQL Server becomes unresponsive.
+        config.connection.metadataConfiguration.commandTimeout = 60
         config.connection.metadataConfiguration.extractParameterDefaults = false
         config.connection.metadataConfiguration.preferStoredProcedureColumns = false
         config.connection.metadataConfiguration.includeRoutineDefinitions = false

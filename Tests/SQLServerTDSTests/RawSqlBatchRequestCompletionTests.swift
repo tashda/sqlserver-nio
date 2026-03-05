@@ -5,10 +5,12 @@ import Logging
 
 final class RawSqlBatchRequestCompletionTests: XCTestCase {
     func testRawSqlCompletesOnFinalDone() throws {
+        var closureCalled = false
         let request = RawSqlRequest(
             sql: "SELECT 1;",
             onDone: { token in
                 XCTAssertEqual(token.status, 0x00)
+                closureCalled = true
             }
         )
 
@@ -28,8 +30,7 @@ final class RawSqlBatchRequestCompletionTests: XCTestCase {
             request.onDone?(token)
         }
 
-        // The test now verifies that the onDone closure was called with the correct token.
-        // The `TDSPacketResponse` is no longer directly returned by the request.
+        XCTAssertTrue(closureCalled, "onDone closure must be called")
     }
 
     func testRawSqlCompletesAcrossPartialDoneFrames() throws {
@@ -51,9 +52,9 @@ final class RawSqlBatchRequestCompletionTests: XCTestCase {
         stream.buffer.writeBuffer(&p1)
         let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
 
-        // Attempt to parse the token - it should fail due to insufficient data
+        // Attempt to parse the token - it should signal that more data is required
         XCTAssertThrowsError(try parser.parseDoneToken()) { error in
-            XCTAssertEqual(error as? TDSError, TDSError.protocolError("Insufficient data for DONE token"))
+            XCTAssertEqual(error as? TDSError, TDSError.needMoreData)
         }
 
         // Second packet: remaining bytes for DONE token

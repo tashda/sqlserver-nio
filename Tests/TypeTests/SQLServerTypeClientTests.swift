@@ -13,7 +13,28 @@ final class SQLServerTypeClientTests: XCTestCase {
 
     override func setUp() async throws {
         try await super.setUp()
+
+        // Load environment configuration
+        TestEnvironmentManager.loadEnvironmentVariables()
+
+        // Configure logging
+        _ = isLoggingConfigured
+
+        // Create connection
+        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        self.client = try await SQLServerClient.connect(
+            configuration: makeSQLServerClientConfiguration(),
+            eventLoopGroupProvider: .shared(group)
+        ).get()
+
+        // Test connection stability
         do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1").get() } } catch { skipDueToEnv = true }
+    }
+
+    override func tearDown() async throws {
+        try await client?.shutdownGracefully().get()
+        try await group?.shutdownGracefully()
+        try await super.tearDown()
     }
 
     @available(macOS 12.0, *)
@@ -23,8 +44,12 @@ final class SQLServerTypeClientTests: XCTestCase {
             try await withDbClient(for: db, using: self.group) { dbClient in
                 let typeClient = SQLServerTypeClient(client: dbClient)
 
+                // Generate unique name to avoid collisions
+                let uniqueSuffix = UUID().uuidString.prefix(8)
+                let tableName = "TestTableType_\(uniqueSuffix)"
+
                 let tableType = UserDefinedTableTypeDefinition(
-                    name: "TestTableType",
+                    name: tableName,
                     schema: "dbo",
                     columns: [
                         UserDefinedTableTypeColumn(name: "Id", dataType: .int, isNullable: false, isIdentity: true),
@@ -39,9 +64,12 @@ final class SQLServerTypeClientTests: XCTestCase {
 
                 // Verify it was created by listing types
                 let types = try await typeClient.listUserDefinedTableTypes().get()
-                XCTAssertTrue(types.contains { $0.name == "TestTableType" && $0.schema == "dbo" })
+                XCTAssertTrue(types.contains { $0.name == tableName && $0.schema == "dbo" })
 
-                let createdType = types.first { $0.name == "TestTableType" && $0.schema == "dbo" }!
+                // Clean up the table type
+                try await typeClient.dropUserDefinedTableType(name: tableName, schema: "dbo")
+
+                let createdType = types.first { $0.name == tableName && $0.schema == "dbo" }!
                 XCTAssertEqual(createdType.columns.count, 4)
                 XCTAssertEqual(createdType.columns[0].name, "Id")
                 if case .int = createdType.columns[0].dataType {
@@ -94,20 +122,25 @@ final class SQLServerTypeClientTests: XCTestCase {
             try await withDbClient(for: db, using: self.group) { dbClient in
                 let typeClient = SQLServerTypeClient(client: dbClient)
 
+                // Generate unique names to avoid collisions
+                let uniqueSuffix = UUID().uuidString.prefix(8)
+                let dboTypeName = "DboType_\(uniqueSuffix)"
+                let customTypeName = "CustomType_\(uniqueSuffix)"
+                let schemaName = "custom_\(uniqueSuffix)"
 
                 // Create custom schema first
-                _ = try await dbClient.execute("CREATE SCHEMA [custom]").get()
+                _ = try await dbClient.execute("CREATE SCHEMA [\(schemaName)]").get()
 
                 // Create types in different schemas
                 let dboType = UserDefinedTableTypeDefinition(
-                    name: "DboType",
+                    name: dboTypeName,
                     schema: "dbo",
                     columns: [UserDefinedTableTypeColumn(name: "Id", dataType: .int, isNullable: false)]
                 )
 
                 let customType = UserDefinedTableTypeDefinition(
-                    name: "CustomType",
-                    schema: "custom",
+                    name: customTypeName,
+                    schema: schemaName,
                     columns: [UserDefinedTableTypeColumn(name: "Id", dataType: .int, isNullable: false)]
                 )
 
@@ -120,12 +153,17 @@ final class SQLServerTypeClientTests: XCTestCase {
 
                 // List types in specific schema
                 let dboTypes = try await typeClient.listUserDefinedTableTypes(schema: "dbo").get()
-                XCTAssertTrue(dboTypes.contains { $0.name == "DboType" })
-                XCTAssertFalse(dboTypes.contains { $0.name == "CustomType" })
+                XCTAssertTrue(dboTypes.contains { $0.name == dboTypeName })
+                XCTAssertFalse(dboTypes.contains { $0.name == customTypeName })
 
-                let customTypes = try await typeClient.listUserDefinedTableTypes(schema: "custom").get()
-                XCTAssertTrue(customTypes.contains { $0.name == "CustomType" })
-                XCTAssertFalse(customTypes.contains { $0.name == "DboType" })
+                let customTypes = try await typeClient.listUserDefinedTableTypes(schema: schemaName).get()
+                XCTAssertTrue(customTypes.contains { $0.name == customTypeName })
+                XCTAssertFalse(customTypes.contains { $0.name == dboTypeName })
+
+                // Clean up
+                try await typeClient.dropUserDefinedTableType(name: dboTypeName, schema: "dbo")
+                try await typeClient.dropUserDefinedTableType(name: customTypeName, schema: schemaName)
+                _ = try? await dbClient.execute("DROP SCHEMA [\(schemaName)]").get()
             }
         }
     }
@@ -137,8 +175,12 @@ final class SQLServerTypeClientTests: XCTestCase {
             try await withDbClient(for: db, using: self.group) { dbClient in
                 let typeClient = SQLServerTypeClient(client: dbClient)
 
+                // Generate unique name to avoid collisions
+                let uniqueSuffix = UUID().uuidString.prefix(8)
+                let tableName = "AllDataTypesType_\(uniqueSuffix)"
+
                 let tableType = UserDefinedTableTypeDefinition(
-                    name: "AllDataTypesType",
+                    name: tableName,
                     schema: "dbo",
                     columns: [
                         UserDefinedTableTypeColumn(name: "BigIntCol", dataType: .bigint, isNullable: false),
@@ -164,9 +206,12 @@ final class SQLServerTypeClientTests: XCTestCase {
 
                 // Verify it was created and has all columns
                 let types = try await typeClient.listUserDefinedTableTypes(schema: "dbo").get()
-                let createdType = types.first { $0.name == "AllDataTypesType" }!
+                let createdType = types.first { $0.name == tableName }!
                 XCTAssertNotNil(createdType)
                 XCTAssertEqual(createdType.columns.count, 15)
+
+                // Clean up the table type
+                try await typeClient.dropUserDefinedTableType(name: tableName, schema: "dbo")
 
                 // Verify specific columns
                 let decimalCol = createdType.columns.first { $0.name == "DecimalCol" }!

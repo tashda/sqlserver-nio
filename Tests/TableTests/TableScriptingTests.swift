@@ -24,8 +24,6 @@ final class SQLServerTableScriptingMatrixTests: XCTestCase {
         group = nil
     }
 
-    private func deep() -> Bool { env("TDS_ENABLE_DEEP_SCENARIO_TESTS") == "1" }
-
     @available(macOS 12.0, *)
     func testTableScriptGoldenRecreate() async throws {
         if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
@@ -51,15 +49,13 @@ final class SQLServerTableScriptingMatrixTests: XCTestCase {
                     Col(name: "Note", def: "NVARCHAR(MAX) NULL")
                 ], pk: "CONSTRAINT [PK_t] PRIMARY KEY CLUSTERED ([Id])", options: nil),
             ]
-            if self.deep() {
-                cases.append(contentsOf: [
-                    Combo(name: "t_temporal", cols: [
-                        Col(name: "Id", def: "INT NOT NULL"),
-                        Col(name: "ValidFrom", def: "DATETIME2(7) GENERATED ALWAYS AS ROW START NOT NULL"),
-                        Col(name: "ValidTo", def: "DATETIME2(7) GENERATED ALWAYS AS ROW END NOT NULL"),
-                    ], pk: "CONSTRAINT [PK_t] PRIMARY KEY CLUSTERED ([Id])", options: "WITH (SYSTEM_VERSIONING = ON (HISTORY_TABLE = [dbo].[t_temporal_History]))"),
-                ])
-            }
+            cases.append(contentsOf: [
+                Combo(name: "t_temporal", cols: [
+                    Col(name: "Id", def: "INT NOT NULL"),
+                    Col(name: "ValidFrom", def: "DATETIME2(7) GENERATED ALWAYS AS ROW START NOT NULL"),
+                    Col(name: "ValidTo", def: "DATETIME2(7) GENERATED ALWAYS AS ROW END NOT NULL"),
+                ], pk: "CONSTRAINT [PK_t] PRIMARY KEY CLUSTERED ([Id])", options: "WITH (SYSTEM_VERSIONING = ON (HISTORY_TABLE = [dbo].[t_temporal_History]))"),
+            ])
 
             for combo in cases {
                 let table = combo.name + "_" + UUID().uuidString.prefix(6)
@@ -80,11 +76,10 @@ final class SQLServerTableScriptingMatrixTests: XCTestCase {
                     _ = try await executeInDb(client: self.client, database: db, create)
                 })
 
-                // Fetch scripted definition
-                let def = try await withReliableConnection(client: self.client, operation: { conn in
-                    _ = try await conn.changeDatabase(db).get()
-                    return try await conn.fetchObjectDefinition(schema: "dbo", name: String(table), kind: .table).get()
-                })
+                // Fetch scripted definition using a DB-scoped connection
+                let def = try await withDbConnection(client: self.client, database: db) { conn in
+                    try await conn.fetchObjectDefinition(schema: "dbo", name: String(table), kind: .table).get()
+                }
                 guard let def, let ddl = def.definition else { XCTFail("No DDL returned for \(table)"); continue }
 
                 // Golden re-exec: disable temporal if needed, drop, then recreate from DDL
@@ -111,11 +106,10 @@ final class SQLServerTableScriptingMatrixTests: XCTestCase {
                     XCTFail("Failed to recreate \(table) from scripted DDL: \(error)\nDDL=\n\(ddl)")
                     continue
                 }
-                // Sanity: verify columns count matches original using enhanced metadata APIs
-                let metadataClient = try await self.client.withConnection { connection in
-                    SQLServerMetadataClient(connection: connection)
+                // Sanity: verify column counts using a connection scoped to the temp database
+                let columns: [ColumnMetadata] = try await withDbConnection(client: self.client, database: db) { conn in
+                    try await conn.listColumns(schema: "dbo", table: table).get()
                 }
-                let columns = try await metadataClient.listColumns(schema: "dbo", table: table).get()
                 XCTAssertEqual(columns.count, combo.cols.count, "Column count mismatch after re-exec for \(table)")
 
                 // Additional assertions for special cases

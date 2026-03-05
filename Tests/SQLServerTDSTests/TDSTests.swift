@@ -26,5 +26,14 @@ final class TDSTests: XCTestCase {
         tdsMessage.writeToByteBuffer(&out)
 
         XCTAssertGreaterThan(out.readableBytes, 0)
+        // Packet type byte must be sqlBatch (0x01)
+        XCTAssertEqual(out.getBytes(at: 0, length: 1), [0x01])
+        // Output must contain the UTF-16LE encoding of "SELECT 1"
+        let sqlUTF16: [UInt8] = "SELECT 1".utf16.flatMap { [UInt8($0 & 0xFF), UInt8($0 >> 8)] }
+        let outBytes = out.getBytes(at: 0, length: out.readableBytes)!
+        let found = (0...(outBytes.count - sqlUTF16.count)).contains { i in
+            outBytes[i..<(i + sqlUTF16.count)].elementsEqual(sqlUTF16)
+        }
+        XCTAssertTrue(found, "Serialized packet must contain UTF-16LE encoded SQL text")
     }
 }

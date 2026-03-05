@@ -18,6 +18,9 @@ Tests/*/TestConfig.local.swift
 /Docs
 Private.xctestplan
 
+# Tool and IDE generated directories
+.xcodebuildmcp/
+
 # Build artifacts and temporary files
 .build-agent/
 .build-release.log
@@ -31,6 +34,8 @@ Private.xctestplan
 .build-warning.log
 .claude/
 rpc.cap
+metadata-run.log
+*.log
 /.build-*/
 build/
 TEST.md

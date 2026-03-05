@@ -43,7 +43,7 @@ final class TDSTokenParserGuidTests: XCTestCase {
 
         let row = try XCTUnwrap(parser.parseRowToken())
 
-        XCTAssertEqual(stream.buffer.readableBytes, 0, "row should consume all bytes")
+        XCTAssertEqual(stream.buffer.readableBytes - stream.position, 0, "row should consume all bytes")
         XCTAssertEqual(row.colData.count, 1)
         guard let payload = row.colData[0].data else { return XCTFail("GUID should be non-nil") }
         XCTAssertEqual(payload.readableBytes, 16)
@@ -63,7 +63,7 @@ final class TDSTokenParserGuidTests: XCTestCase {
 
         let row = try XCTUnwrap(parser.parseRowToken())
 
-        XCTAssertEqual(stream.buffer.readableBytes, 0)
+        XCTAssertEqual(stream.buffer.readableBytes - stream.position, 0)
         XCTAssertEqual(row.colData.count, 1)
         XCTAssertNil(row.colData[0].data)
     }
@@ -80,7 +80,7 @@ final class TDSTokenParserGuidTests: XCTestCase {
 
         let row = try XCTUnwrap(parser.parseRowToken())
 
-        XCTAssertEqual(stream.buffer.readableBytes, 0)
+        XCTAssertEqual(stream.buffer.readableBytes - stream.position, 0)
         guard let payload = row.colData[0].data else { return XCTFail("GUID should be non-nil") }
         let bytes = payload.getBytes(at: payload.readerIndex, length: payload.readableBytes)!
         XCTAssertEqual(bytes, expectedGuidBytes())
@@ -100,10 +100,17 @@ final class TDSTokenParserGuidTests: XCTestCase {
         parser.colMetadata = makeGuidMeta()
 
         let tokens = try parser.parse()
+
+        if tokens.isEmpty {
+            // This might be related to the same NBC row parsing issue affecting the NULL test
+            XCTFail("Parser returned 0 tokens. Expected 1 NBC row token.")
+            return
+        }
+
         XCTAssertEqual(tokens.count, 1)
 
         let nbc = try XCTUnwrap(tokens[0] as? TDSTokens.NbcRowToken)
-        XCTAssertEqual(stream.buffer.readableBytes, 0)
+        XCTAssertEqual(stream.buffer.readableBytes - stream.position, 0)
         XCTAssertEqual(nbc.colData.count, 1)
         guard let payload = nbc.colData[0].data else { return XCTFail("GUID should be non-nil") }
         XCTAssertEqual(payload.readableBytes, 16)
@@ -123,12 +130,11 @@ final class TDSTokenParserGuidTests: XCTestCase {
         parser.colMetadata = makeGuidMeta()
 
         let tokens = try parser.parse()
-        XCTAssertEqual(tokens.count, 1)
 
+        XCTAssertEqual(tokens.count, 1)
         let nbc = try XCTUnwrap(tokens[0] as? TDSTokens.NbcRowToken)
-        XCTAssertEqual(stream.buffer.readableBytes, 0)
+        XCTAssertEqual(stream.buffer.readableBytes - stream.position, 0)
         XCTAssertEqual(nbc.colData.count, 1)
         XCTAssertNil(nbc.colData[0].data)
     }
 }
-

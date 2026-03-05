@@ -19,7 +19,6 @@ final class SQLServerRPCTests: XCTestCase {
     }
 
     func testRPCWithOutParamAndReturnCode() async throws {
-        guard env("TDS_ENABLE_RPC_TESTS") == "1" else { throw XCTSkip("Enable TDS_ENABLE_RPC_TESTS=1 to run RPC tests") }
         try await withTemporaryDatabase(client: self.client, prefix: "rpc") { db in
             let procName = "usp_rpc_test_\(UUID().uuidString.prefix(6))"
             try await withDbClient(for: db, using: self.group) { dbClient in
@@ -52,7 +51,6 @@ final class SQLServerRPCTests: XCTestCase {
     }
 
     func testRPCWithDecimalParam() async throws {
-        guard env("TDS_ENABLE_RPC_TESTS") == "1" else { throw XCTSkip("Enable TDS_ENABLE_RPC_TESTS=1 to run RPC tests") }
         try await withTemporaryDatabase(client: self.client, prefix: "rpcd") { db in
             let procName = "usp_rpc_dec_\(UUID().uuidString.prefix(6))"
             try await withDbClient(for: db, using: self.group) { dbClient in

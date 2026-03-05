@@ -29,8 +29,6 @@ final class SQLServerTransactionIsolationMatrixTests: XCTestCase {
         group = nil
     }
 
-    private func deep() -> Bool { env("TDS_ENABLE_DEEP_SCENARIO_TESTS") == "1" }
-
     @available(macOS 12.0, *)
     func testSerializableRangeLockBlocksInsert() async throws {
         if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
@@ -39,20 +37,27 @@ final class SQLServerTransactionIsolationMatrixTests: XCTestCase {
                 let adminClient = SQLServerAdministrationClient(client: dbClient)
 
                 // Create table using SQLServerAdministrationClient
+                let tableName = "isolation_test_\(UUID().uuidString.prefix(8))"
                 let columns = [
                     SQLServerColumnDefinition(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
                     SQLServerColumnDefinition(name: "category", definition: .standard(.init(dataType: .nvarchar(length: .length(5)))))
                 ]
-                try await adminClient.createTable(name: "T", columns: columns)
+                try await adminClient.createTable(name: tableName, columns: columns)
 
                 // Insert initial data
-                _ = try await dbClient.execute("INSERT INTO [dbo].[T] (id, category) VALUES (1, N'A'), (2, N'B')").get()
+                _ = try await dbClient.execute("INSERT INTO [dbo].[\(tableName)] (id, category) VALUES (1, N'A'), (2, N'B')").get()
+
+                // Pre-warm pool with 2 idle connections so the timing test is not skewed by
+                // new-connection establishment time (~200-300ms over the network).
+                async let w1 = dbClient.withConnection { conn in try await conn.query("SELECT 1") }
+                async let w2 = dbClient.withConnection { conn in try await conn.query("SELECT 1") }
+                _ = try await (w1, w2)
 
                 let holder = Task {
                     try await dbClient.withConnection { conn in
                         _ = try await conn.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE").get()
                         try await conn.beginTransaction()
-                        _ = try await conn.query("SELECT COUNT(*) FROM [dbo].[T] WHERE category = N'A'").get()
+                        _ = try await conn.query("SELECT COUNT(*) FROM [dbo].[\(tableName)] WHERE category = N'A'").get()
                         try await Task.sleep(nanoseconds: 600_000_000)
                         try await conn.commit()
                     }
@@ -61,7 +66,7 @@ final class SQLServerTransactionIsolationMatrixTests: XCTestCase {
                 try await Task.sleep(nanoseconds: 150_000_000)
                 let elapsed = try await dbClient.withConnection { conn in
                     let start = DispatchTime.now()
-                    _ = try await conn.execute("INSERT INTO [dbo].[T] (id, category) VALUES (3, N'A')").get()
+                    _ = try await conn.execute("INSERT INTO [dbo].[\(tableName)] (id, category) VALUES (3, N'A')").get()
                     return DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds
                 }
                 _ = try? await withTimeout(5) { try await holder.value }
@@ -78,19 +83,26 @@ final class SQLServerTransactionIsolationMatrixTests: XCTestCase {
                 let adminClient = SQLServerAdministrationClient(client: dbClient)
 
                 // Create table using SQLServerAdministrationClient
+                let tableName = "isolation_test_\(UUID().uuidString.prefix(8))"
                 let columns = [
                     SQLServerColumnDefinition(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
                     SQLServerColumnDefinition(name: "value", definition: .standard(.init(dataType: .nvarchar(length: .length(20)))))
                 ]
-                try await adminClient.createTable(name: "T", columns: columns)
+                try await adminClient.createTable(name: tableName, columns: columns)
 
                 // Insert initial data
-                _ = try await dbClient.execute("INSERT INTO [dbo].[T] (id, value) VALUES (1, N'Original')").get()
+                _ = try await dbClient.execute("INSERT INTO [dbo].[\(tableName)] (id, value) VALUES (1, N'Original')").get()
+
+                // Pre-warm pool with 2 idle connections so the timing test is not skewed by
+                // new-connection establishment time (~200-300ms over the network).
+                async let w1 = dbClient.withConnection { conn in try await conn.query("SELECT 1") }
+                async let w2 = dbClient.withConnection { conn in try await conn.query("SELECT 1") }
+                _ = try await (w1, w2)
 
                 let writer = Task {
                     try await dbClient.withConnection { conn in
                         try await conn.beginTransaction()
-                        _ = try await conn.execute("UPDATE [dbo].[T] SET value = N'Updated' WHERE id = 1").get()
+                        _ = try await conn.execute("UPDATE [dbo].[\(tableName)] SET value = N'Updated' WHERE id = 1").get()
                         try await Task.sleep(nanoseconds: 600_000_000)
                         try await conn.rollback()
                     }
@@ -100,7 +112,7 @@ final class SQLServerTransactionIsolationMatrixTests: XCTestCase {
                 // Under READ COMMITTED (default), the reader is blocked until writer commits/rolls back
                 let elapsed = try await dbClient.withConnection { conn in
                     let start = DispatchTime.now()
-                    _ = try await conn.query("SELECT value FROM [dbo].[T] WHERE id = 1").get()
+                    _ = try await conn.query("SELECT value FROM [dbo].[\(tableName)] WHERE id = 1").get()
                     return DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds
                 }
                 _ = try? await withTimeout(5) { try await writer.value }

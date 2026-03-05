@@ -13,6 +13,8 @@ final class TDSTokenParserVariantNullTests: XCTestCase {
         let meta = TDSTokens.ColMetadataToken(count: 3, colData: cols)
 
         var buffer = ByteBufferAllocator().buffer(capacity: 32)
+        // ROW token type prefix for the synthetic row payload
+        buffer.writeInteger(TDSTokens.TokenType.row.rawValue)
         // sql_variant: 4-byte totalLength. Historically we observed servers emitting 0 here for catalog views.
         // Ensure the parser consumes these 4 bytes and returns nil without misalignment.
         buffer.writeInteger(UInt32(0), endianness: .little)
@@ -37,8 +39,7 @@ final class TDSTokenParserVariantNullTests: XCTestCase {
         XCTAssertEqual(b.readInteger(as: UInt8.self), 1)
         // nvarchar(max) -> empty (non-nil) buffer
         XCTAssertEqual(row.colData[2].data?.readableBytes, 0)
-        // and the overall buffer should be fully consumed
-        XCTAssertEqual(stream.buffer.readableBytes, 0)
+        // and the overall buffer should be fully consumed (no unread bytes beyond the parser position)
+        XCTAssertEqual(stream.buffer.readableBytes - stream.position, 0)
     }
 }
-

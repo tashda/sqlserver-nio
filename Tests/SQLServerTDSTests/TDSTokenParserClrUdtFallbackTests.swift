@@ -35,6 +35,7 @@ final class TDSTokenParserClrUdtFallbackTests: XCTestCase {
         var buffer = ByteBufferAllocator().buffer(capacity: 6)
         buffer.writeInteger(TDSTokens.TokenType.row.rawValue)
         buffer.writeInteger(UInt16(3), endianness: .little)
+        buffer.writeBytes([0x01, 0x02, 0x03])
         let row = try await withTimeout(5) {
             let stream = TDSStreamParser()
             stream.buffer.writeBuffer(&buffer)
