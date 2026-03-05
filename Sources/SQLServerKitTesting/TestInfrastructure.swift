@@ -3,6 +3,7 @@ import Logging
 import NIO
 import NIOPosix
 import SQLServerTDS
+import SQLServerKit
 
 /// Centralized test infrastructure for all SQL Server tests
 /// This is the single source of truth for all test utilities and eliminates duplication
