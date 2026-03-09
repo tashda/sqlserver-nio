@@ -149,3 +149,14 @@ public struct LoginDatabaseMapping: Sendable {
     }
 }
 
+/// Represents a database role and whether a user is a member.
+public struct DatabaseUserRoleMembership: Sendable {
+    public let roleName: String
+    public let isMember: Bool
+
+    public init(roleName: String, isMember: Bool) {
+        self.roleName = roleName
+        self.isMember = isMember
+    }
+}
+
