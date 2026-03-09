@@ -549,12 +549,11 @@ public final class SQLServerMetadataClient {
         let lobFuture = self.fetchLobAndFilestreamStorage(database: database, schema: schema, table: table)
         let temporalFuture = self.fetchTemporalAndMemoryOptions(database: database, schema: schema, table: table)
 
-        return colsFuture.and(pkFuture).and(uqFuture).flatMap { nested1 in
-            let ((columns, pks), uqs) = nested1
-            return fkFuture.and(ixFuture).and(ckFuture).flatMap { nested2 in
-                let ((fks, ixs), checks) = nested2
-                return fgFuture.and(lobFuture).and(temporalFuture).map { nested3 in
-                    let ((fg, lob), temporal) = nested3
+        return colsFuture.and(pkFuture).flatMap { columns, pks in
+            return uqFuture.and(fkFuture).flatMap { uqs, fks in
+                return ixFuture.and(ckFuture).flatMap { ixs, checks in
+                    return fgFuture.and(lobFuture).flatMap { fg, lob in
+                        return temporalFuture.map { temporal in
             // Basic identifier helpers
             func ident(_ name: String) -> String { "[\(SQLServerMetadataClient.escapeIdentifier(name))]" }
             func qualified(_ s: String, _ n: String) -> String { "\(ident(s)).\(ident(n))" }
@@ -2976,82 +2975,91 @@ private func listPrimaryKeysForSingleTable(
             }()
 
             return columnsFuture.flatMap { columns in
-                return self.timed("loadSchemaStructure.listPrimaryKeys schema=\(schema)") {
+                let pkF = self.timed("loadSchemaStructure.listPrimaryKeys schema=\(schema)") {
                     self.listPrimaryKeysFromCatalog(database: resolvedDatabase, schema: schema, table: nil)
                 }.flatMapError { error in
                     self.logger.warning("[Metadata] loadSchemaStructure primary keys failed schema=\(schema) error=\(error)")
                     return self.connection.eventLoop.makeSucceededFuture([])
-                }.flatMap { primaryKeys in
-                    self.timed("loadSchemaStructure.listFunctions schema=\(schema)") {
-                        self.listFunctions(database: resolvedDatabase, schema: schema, includeComments: includeComments)
-                    }.flatMapError { error in
-                        self.logger.warning("[Metadata] loadSchemaStructure functions failed schema=\(schema) error=\(error)")
-                        return self.connection.eventLoop.makeSucceededFuture([])
-                    }.flatMap { functions in
-                        self.timed("loadSchemaStructure.listProcedures schema=\(schema)") {
-                            self.listProcedures(database: resolvedDatabase, schema: schema, includeComments: includeComments)
-                        }.flatMapError { error in
-                            self.logger.warning("[Metadata] loadSchemaStructure procedures failed schema=\(schema) error=\(error)")
-                            return self.connection.eventLoop.makeSucceededFuture([])
-                        }.flatMap { procedures in
-                            self.timed("loadSchemaStructure.listTriggers schema=\(schema)") {
-                                self.listTriggers(
-                                    database: resolvedDatabase,
-                                    schema: schema,
-                                    table: nil,
-                                    includeComments: includeComments
-                                )
-                            }.flatMapError { error in
-                                self.logger.warning("[Metadata] loadSchemaStructure triggers failed schema=\(schema) error=\(error)")
-                                return self.connection.eventLoop.makeSucceededFuture([])
-                            }.map { triggers in
-                                func objectKey(schema: String, table: String) -> String {
-                                    "\(schema.lowercased())|\(table.lowercased())"
-                                }
+                }
+                
+                let funcF = self.timed("loadSchemaStructure.listFunctions schema=\(schema)") {
+                    self.listFunctions(database: resolvedDatabase, schema: schema, includeComments: includeComments)
+                }.flatMapError { error in
+                    self.logger.warning("[Metadata] loadSchemaStructure functions failed schema=\(schema) error=\(error)")
+                    return self.connection.eventLoop.makeSucceededFuture([])
+                }
+                
+                let procF = self.timed("loadSchemaStructure.listProcedures schema=\(schema)") {
+                    self.listProcedures(database: resolvedDatabase, schema: schema, includeComments: includeComments)
+                }.flatMapError { error in
+                    self.logger.warning("[Metadata] loadSchemaStructure procedures failed schema=\(schema) error=\(error)")
+                    return self.connection.eventLoop.makeSucceededFuture([])
+                }
+                
+                let trigF = self.timed("loadSchemaStructure.listTriggers schema=\(schema)") {
+                    self.listTriggers(
+                        database: resolvedDatabase,
+                        schema: schema,
+                        table: nil,
+                        includeComments: includeComments
+                    )
+                }.flatMapError { error in
+                    self.logger.warning("[Metadata] loadSchemaStructure triggers failed schema=\(schema) error=\(error)")
+                    return self.connection.eventLoop.makeSucceededFuture([])
+                }
 
-                                var columnsByTable: [String: [ColumnMetadata]] = [:]
-                                columnsByTable.reserveCapacity(tableCandidates.count)
-                                for column in columns {
-                                    let key = objectKey(schema: column.schema, table: column.table)
-                                    columnsByTable[key, default: []].append(column)
-                                }
+                return pkF.and(funcF).flatMap { pks, funcs in
+                    return procF.and(trigF).map { procs, trigs in
+                        let primaryKeys = pks
+                        let functions = funcs
+                        let procedures = procs
+                        let triggers = trigs
 
-                                var primaryKeyByTable: [String: KeyConstraintMetadata] = [:]
-                                for pk in primaryKeys {
-                                    let key = objectKey(schema: pk.schema, table: pk.table)
-                                    if primaryKeyByTable[key] == nil {
-                                        primaryKeyByTable[key] = pk
-                                    }
-                                }
+                        func objectKey(schema: String, table: String) -> String {
+                            "\(schema.lowercased())|\(table.lowercased())"
+                        }
 
-                                var tableStructures: [SQLServerTableStructure] = []
-                                var viewStructures: [SQLServerTableStructure] = []
+                        var columnsByTable: [String: [ColumnMetadata]] = [:]
+                        columnsByTable.reserveCapacity(tableCandidates.count)
+                        for column in columns {
+                            let key = objectKey(schema: column.schema, table: column.table)
+                            columnsByTable[key, default: []].append(column)
+                        }
 
-                                for table in tableCandidates {
-                                    let key = objectKey(schema: table.schema, table: table.name)
-                                    let tableColumns = (columnsByTable[key] ?? []).sorted { $0.ordinalPosition < $1.ordinalPosition }
-                                    let structure = SQLServerTableStructure(
-                                        table: table,
-                                        columns: tableColumns,
-                                        primaryKey: primaryKeyByTable[key]
-                                    )
-                                    if table.isView {
-                                        viewStructures.append(structure)
-                                    } else {
-                                        tableStructures.append(structure)
-                                    }
-                                }
-
-                                return SQLServerSchemaStructure(
-                                    name: schema,
-                                    tables: tableStructures,
-                                    views: viewStructures,
-                                    functions: functions,
-                                    procedures: procedures,
-                                    triggers: triggers
-                                )
+                        var primaryKeyByTable: [String: KeyConstraintMetadata] = [:]
+                        for pk in primaryKeys {
+                            let key = objectKey(schema: pk.schema, table: pk.table)
+                            if primaryKeyByTable[key] == nil {
+                                primaryKeyByTable[key] = pk
                             }
                         }
+
+                        var tableStructures: [SQLServerTableStructure] = []
+                        var viewStructures: [SQLServerTableStructure] = []
+
+                        for table in tableCandidates {
+                            let key = objectKey(schema: table.schema, table: table.name)
+                            let tableColumns = (columnsByTable[key] ?? []).sorted { $0.ordinalPosition < $1.ordinalPosition }
+                            let structure = SQLServerTableStructure(
+                                table: table,
+                                columns: tableColumns,
+                                primaryKey: primaryKeyByTable[key]
+                            )
+                            if table.isView {
+                                viewStructures.append(structure)
+                            } else {
+                                tableStructures.append(structure)
+                            }
+                        }
+
+                        return SQLServerSchemaStructure(
+                            name: schema,
+                            tables: tableStructures,
+                            views: viewStructures,
+                            functions: functions,
+                            procedures: procedures,
+                            triggers: triggers
+                        )
                     }
                 }
             }
@@ -3119,125 +3127,134 @@ private func listPrimaryKeysForSingleTable(
                     }
 
                 return columnsFuture.flatMap { columns in
-                    return self.timed("loadDatabaseStructure.listPrimaryKeys") {
+                    let pkF = self.timed("loadDatabaseStructure.listPrimaryKeys") {
                         self.listPrimaryKeysFromCatalog(database: resolvedDatabase, schema: nil, table: nil)
                     }.flatMapError { error in
                         self.logger.warning("[Metadata] loadDatabaseStructure primary keys failed error=\(error)")
                         return self.connection.eventLoop.makeSucceededFuture([])
-                    }.flatMap { primaryKeys in
-                        self.timed("loadDatabaseStructure.listFunctions") {
-                            self.listFunctions(database: resolvedDatabase, schema: nil, includeComments: includeComments)
-                        }.flatMapError { error in
-                            self.logger.warning("[Metadata] loadDatabaseStructure functions failed error=\(error)")
-                            return self.connection.eventLoop.makeSucceededFuture([])
-                        }.flatMap { functions in
-                            self.timed("loadDatabaseStructure.listProcedures") {
-                                self.listProcedures(database: resolvedDatabase, schema: nil, includeComments: includeComments)
-                            }.flatMapError { error in
-                                self.logger.warning("[Metadata] loadDatabaseStructure procedures failed error=\(error)")
-                                return self.connection.eventLoop.makeSucceededFuture([])
-                            }.flatMap { procedures in
-                                self.timed("loadDatabaseStructure.listTriggers") {
-                                    self.listTriggers(
-                                        database: resolvedDatabase,
-                                        schema: nil,
-                                        table: nil,
-                                        includeComments: includeComments
-                                    )
-                                }.flatMapError { error in
-                                    self.logger.warning("[Metadata] loadDatabaseStructure triggers failed error=\(error)")
-                                    return self.connection.eventLoop.makeSucceededFuture([])
-                                }.map { triggers in
-                                    func objectKey(schema: String, table: String) -> String {
-                                        "\(schema.lowercased())|\(table.lowercased())"
-                                    }
+                    }
+                    
+                    let funcF = self.timed("loadDatabaseStructure.listFunctions") {
+                        self.listFunctions(database: resolvedDatabase, schema: nil, includeComments: includeComments)
+                    }.flatMapError { error in
+                        self.logger.warning("[Metadata] loadDatabaseStructure functions failed error=\(error)")
+                        return self.connection.eventLoop.makeSucceededFuture([])
+                    }
+                    
+                    let procF = self.timed("loadDatabaseStructure.listProcedures") {
+                        self.listProcedures(database: resolvedDatabase, schema: nil, includeComments: includeComments)
+                    }.flatMapError { error in
+                        self.logger.warning("[Metadata] loadDatabaseStructure procedures failed error=\(error)")
+                        return self.connection.eventLoop.makeSucceededFuture([])
+                    }
+                    
+                    let trigF = self.timed("loadDatabaseStructure.listTriggers") {
+                        self.listTriggers(
+                            database: resolvedDatabase,
+                            schema: nil,
+                            table: nil,
+                            includeComments: includeComments
+                        )
+                    }.flatMapError { error in
+                        self.logger.warning("[Metadata] loadDatabaseStructure triggers failed error=\(error)")
+                        return self.connection.eventLoop.makeSucceededFuture([])
+                    }
 
-                                    var columnsByTable: [String: [ColumnMetadata]] = [:]
-                                    columnsByTable.reserveCapacity(tableCandidates.count)
-                                    for column in columns {
-                                        let key = objectKey(schema: column.schema, table: column.table)
-                                        columnsByTable[key, default: []].append(column)
-                                    }
+                    return pkF.and(funcF).flatMap { pks, funcs in
+                        return procF.and(trigF).map { procs, trigs in
+                            let primaryKeys = pks
+                            let functions = funcs
+                            let procedures = procs
+                            let triggers = trigs
 
-                                    var primaryKeyByTable: [String: KeyConstraintMetadata] = [:]
-                                    for pk in primaryKeys {
-                                        let key = objectKey(schema: pk.schema, table: pk.table)
-                                        if primaryKeyByTable[key] == nil {
-                                            primaryKeyByTable[key] = pk
-                                        }
-                                    }
+                            func objectKey(schema: String, table: String) -> String {
+                                "\(schema.lowercased())|\(table.lowercased())"
+                            }
 
-                                    var tablesBySchema: [String: [SQLServerTableStructure]] = [:]
-                                    var viewsBySchema: [String: [SQLServerTableStructure]] = [:]
+                            var columnsByTable: [String: [ColumnMetadata]] = [:]
+                            columnsByTable.reserveCapacity(tableCandidates.count)
+                            for column in columns {
+                                let key = objectKey(schema: column.schema, table: column.table)
+                                columnsByTable[key, default: []].append(column)
+                            }
 
-                                    for table in tableCandidates {
-                                        let key = objectKey(schema: table.schema, table: table.name)
-                                        let tableColumns = (columnsByTable[key] ?? []).sorted { $0.ordinalPosition < $1.ordinalPosition }
-                                        let structure = SQLServerTableStructure(
-                                            table: table,
-                                            columns: tableColumns,
-                                            primaryKey: primaryKeyByTable[key]
-                                        )
-                                        let schemaKey = table.schema.lowercased()
-                                        if table.isView {
-                                            viewsBySchema[schemaKey, default: []].append(structure)
-                                        } else {
-                                            tablesBySchema[schemaKey, default: []].append(structure)
-                                        }
-                                    }
-
-                                    func groupBySchema<T>(items: [T], schema: (T) -> String) -> [String: [T]] {
-                                        var grouped: [String: [T]] = [:]
-                                        for item in items {
-                                            let key = schema(item).lowercased()
-                                            grouped[key, default: []].append(item)
-                                        }
-                                        return grouped
-                                    }
-
-                                    let functionsBySchema = groupBySchema(items: functions) { $0.schema }
-                                    let proceduresBySchema = groupBySchema(items: procedures) { $0.schema }
-                                    let triggersBySchema = groupBySchema(items: triggers) { $0.schema }
-
-                                    var orderedSchemas: [String] = []
-                                    orderedSchemas.reserveCapacity(schemas.count)
-                                    var seenSchemas: Set<String> = []
-                                    for schema in schemas {
-                                        let name = schema.name
-                                        let key = name.lowercased()
-                                        if seenSchemas.insert(key).inserted {
-                                            orderedSchemas.append(name)
-                                        }
-                                    }
-
-                                    let allSchemaKeys = Set(tablesBySchema.keys)
-                                        .union(viewsBySchema.keys)
-                                        .union(functionsBySchema.keys)
-                                        .union(proceduresBySchema.keys)
-                                        .union(triggersBySchema.keys)
-                                    for key in allSchemaKeys.sorted() where !seenSchemas.contains(key) {
-                                        orderedSchemas.append(key)
-                                        seenSchemas.insert(key)
-                                    }
-
-                                    let schemaStructures: [SQLServerSchemaStructure] = orderedSchemas.map { schemaName in
-                                        let key = schemaName.lowercased()
-                                        return SQLServerSchemaStructure(
-                                            name: schemaName,
-                                            tables: tablesBySchema[key] ?? [],
-                                            views: viewsBySchema[key] ?? [],
-                                            functions: functionsBySchema[key] ?? [],
-                                            procedures: proceduresBySchema[key] ?? [],
-                                            triggers: triggersBySchema[key] ?? []
-                                        )
-                                    }
-
-                                    return SQLServerDatabaseStructure(
-                                        database: resolvedDatabase,
-                                        schemas: schemaStructures
-                                    )
+                            var primaryKeyByTable: [String: KeyConstraintMetadata] = [:]
+                            for pk in primaryKeys {
+                                let key = objectKey(schema: pk.schema, table: pk.table)
+                                if primaryKeyByTable[key] == nil {
+                                    primaryKeyByTable[key] = pk
                                 }
                             }
+
+                            var tablesBySchema: [String: [SQLServerTableStructure]] = [:]
+                            var viewsBySchema: [String: [SQLServerTableStructure]] = [:]
+
+                            for table in tableCandidates {
+                                let key = objectKey(schema: table.schema, table: table.name)
+                                let tableColumns = (columnsByTable[key] ?? []).sorted { $0.ordinalPosition < $1.ordinalPosition }
+                                let structure = SQLServerTableStructure(
+                                    table: table,
+                                    columns: tableColumns,
+                                    primaryKey: primaryKeyByTable[key]
+                                )
+                                let schemaKey = table.schema.lowercased()
+                                if table.isView {
+                                    viewsBySchema[schemaKey, default: []].append(structure)
+                                } else {
+                                    tablesBySchema[schemaKey, default: []].append(structure)
+                                }
+                            }
+
+                            func groupBySchema<T>(items: [T], schema: (T) -> String) -> [String: [T]] {
+                                var grouped: [String: [T]] = [:]
+                                for item in items {
+                                    let key = schema(item).lowercased()
+                                    grouped[key, default: []].append(item)
+                                }
+                                return grouped
+                            }
+
+                            let functionsBySchema = groupBySchema(items: functions) { $0.schema }
+                            let proceduresBySchema = groupBySchema(items: procedures) { $0.schema }
+                            let triggersBySchema = groupBySchema(items: triggers) { $0.schema }
+
+                            var orderedSchemas: [String] = []
+                            orderedSchemas.reserveCapacity(schemas.count)
+                            var seenSchemas: Set<String> = []
+                            for schema in schemas {
+                                let name = schema.name
+                                let key = name.lowercased()
+                                if seenSchemas.insert(key).inserted {
+                                    orderedSchemas.append(name)
+                                }
+                            }
+
+                            let allSchemaKeys = Set(tablesBySchema.keys)
+                                .union(viewsBySchema.keys)
+                                .union(functionsBySchema.keys)
+                                .union(proceduresBySchema.keys)
+                                .union(triggersBySchema.keys)
+                            for key in allSchemaKeys.sorted() where !seenSchemas.contains(key) {
+                                orderedSchemas.append(key)
+                                seenSchemas.insert(key)
+                            }
+
+                            let schemaStructures: [SQLServerSchemaStructure] = orderedSchemas.map { schemaName in
+                                let key = schemaName.lowercased()
+                                return SQLServerSchemaStructure(
+                                    name: schemaName,
+                                    tables: tablesBySchema[key] ?? [],
+                                    views: viewsBySchema[key] ?? [],
+                                    functions: functionsBySchema[key] ?? [],
+                                    procedures: proceduresBySchema[key] ?? [],
+                                    triggers: triggersBySchema[key] ?? []
+                                )
+                            }
+
+                            return SQLServerDatabaseStructure(
+                                database: resolvedDatabase,
+                                schemas: schemaStructures
+                            )
                         }
                     }
                 }
