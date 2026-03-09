@@ -2,6 +2,7 @@ import XCTest
 import Logging
 import NIO
 @testable import SQLServerKit
+import SQLServerKitTesting
 
 final class SQLServerIndexTests: XCTestCase {
     private var group: EventLoopGroup!

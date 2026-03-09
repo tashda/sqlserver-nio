@@ -1,4 +1,5 @@
 @testable import SQLServerKit
+import SQLServerKitTesting
 import Foundation
 import XCTest
 import NIO

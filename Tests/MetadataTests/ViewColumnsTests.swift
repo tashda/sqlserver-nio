@@ -1,4 +1,5 @@
 @testable import SQLServerKit
+import SQLServerKitTesting
 import NIO
 import XCTest
 
@@ -78,7 +79,8 @@ final class SQLServerMetadataViewColumnsTests: XCTestCase {
 
     @available(macOS 12.0, *)
     func testListColumnsAdventureWorksVEEmployeeLikeViews() async throws {
-        let db = env("TDS_AW_DATABASE") ?? env("TDS_DATABASE") ?? "AdventureWorks2022"
+        guard env("TDS_AW_DATABASE") != nil else { throw XCTSkip("Skipping: TDS_AW_DATABASE not set") }
+        let db = env("TDS_AW_DATABASE")!
         try await withDbConnection(client: self.client, database: db) { connection in
             let viewNames = [
                 (schema: "HumanResources", name: "vEmployee"),
@@ -94,7 +96,8 @@ final class SQLServerMetadataViewColumnsTests: XCTestCase {
 
     @available(macOS 12.0, *)
     func testListColumnsAdventureWorksVJobCandidateDoesNotExecuteViewBody() async throws {
-        let db = env("TDS_AW_DATABASE") ?? env("TDS_DATABASE") ?? "AdventureWorks2022"
+        guard env("TDS_AW_DATABASE") != nil else { throw XCTSkip("Skipping: TDS_AW_DATABASE not set") }
+        let db = env("TDS_AW_DATABASE")!
         let start = DispatchTime.now()
         try await withDbConnection(client: self.client, database: db) { connection in
             let columns = try await connection.listColumns(database: db, schema: "HumanResources", table: "vJobCandidate").get()
@@ -106,7 +109,8 @@ final class SQLServerMetadataViewColumnsTests: XCTestCase {
 
     @available(macOS 12.0, *)
     func testListColumnsAdventureWorksProductionCatalogView() async throws {
-        let db = env("TDS_AW_DATABASE") ?? env("TDS_DATABASE") ?? "AdventureWorks2022"
+        guard env("TDS_AW_DATABASE") != nil else { throw XCTSkip("Skipping: TDS_AW_DATABASE not set") }
+        let db = env("TDS_AW_DATABASE")!
         let start = DispatchTime.now()
         try await withDbConnection(client: self.client, database: db) { connection in
             let columns = try await connection.listColumns(

@@ -549,11 +549,16 @@ public final class SQLServerMetadataClient {
         let lobFuture = self.fetchLobAndFilestreamStorage(database: database, schema: schema, table: table)
         let temporalFuture = self.fetchTemporalAndMemoryOptions(database: database, schema: schema, table: table)
 
-        return colsFuture.and(pkFuture).flatMap { columns, pks in
-            return uqFuture.and(fkFuture).flatMap { uqs, fks in
-                return ixFuture.and(ckFuture).flatMap { ixs, checks in
-                    return fgFuture.and(lobFuture).flatMap { fg, lob in
-                        return temporalFuture.map { temporal in
+        // Break up into smaller groups to avoid Swift 6 type checker crash with deeply chained .and() calls
+        let group1 = colsFuture.and(pkFuture).and(uqFuture)
+        let group2 = fkFuture.and(ixFuture).and(ckFuture)
+        let group3 = fgFuture.and(lobFuture).and(temporalFuture)
+
+        return group1.and(group2).flatMap { g12 in
+            let ((columns, pks), uqs) = g12.0
+            let ((fks, ixs), checks) = g12.1
+            return group3.map { g3 in
+                let ((fg, lob), temporal) = g3
             // Basic identifier helpers
             func ident(_ name: String) -> String { "[\(SQLServerMetadataClient.escapeIdentifier(name))]" }
             func qualified(_ s: String, _ n: String) -> String { "\(ident(s)).\(ident(n))" }
@@ -776,7 +781,6 @@ public final class SQLServerMetadataClient {
             }
 
             return script
-                }
             }
         }
     }
@@ -2981,21 +2985,21 @@ private func listPrimaryKeysForSingleTable(
                     self.logger.warning("[Metadata] loadSchemaStructure primary keys failed schema=\(schema) error=\(error)")
                     return self.connection.eventLoop.makeSucceededFuture([])
                 }
-                
+
                 let funcF = self.timed("loadSchemaStructure.listFunctions schema=\(schema)") {
                     self.listFunctions(database: resolvedDatabase, schema: schema, includeComments: includeComments)
                 }.flatMapError { error in
                     self.logger.warning("[Metadata] loadSchemaStructure functions failed schema=\(schema) error=\(error)")
                     return self.connection.eventLoop.makeSucceededFuture([])
                 }
-                
+
                 let procF = self.timed("loadSchemaStructure.listProcedures schema=\(schema)") {
                     self.listProcedures(database: resolvedDatabase, schema: schema, includeComments: includeComments)
                 }.flatMapError { error in
                     self.logger.warning("[Metadata] loadSchemaStructure procedures failed schema=\(schema) error=\(error)")
                     return self.connection.eventLoop.makeSucceededFuture([])
                 }
-                
+
                 let trigF = self.timed("loadSchemaStructure.listTriggers schema=\(schema)") {
                     self.listTriggers(
                         database: resolvedDatabase,
@@ -3008,13 +3012,8 @@ private func listPrimaryKeysForSingleTable(
                     return self.connection.eventLoop.makeSucceededFuture([])
                 }
 
-                return pkF.and(funcF).flatMap { pks, funcs in
-                    return procF.and(trigF).map { procs, trigs in
-                        let primaryKeys = pks
-                        let functions = funcs
-                        let procedures = procs
-                        let triggers = trigs
-
+                return pkF.and(funcF).flatMap { primaryKeys, functions in
+                    return procF.and(trigF).map { procedures, triggers in
                         func objectKey(schema: String, table: String) -> String {
                             "\(schema.lowercased())|\(table.lowercased())"
                         }
@@ -3133,21 +3132,21 @@ private func listPrimaryKeysForSingleTable(
                         self.logger.warning("[Metadata] loadDatabaseStructure primary keys failed error=\(error)")
                         return self.connection.eventLoop.makeSucceededFuture([])
                     }
-                    
+
                     let funcF = self.timed("loadDatabaseStructure.listFunctions") {
                         self.listFunctions(database: resolvedDatabase, schema: nil, includeComments: includeComments)
                     }.flatMapError { error in
                         self.logger.warning("[Metadata] loadDatabaseStructure functions failed error=\(error)")
                         return self.connection.eventLoop.makeSucceededFuture([])
                     }
-                    
+
                     let procF = self.timed("loadDatabaseStructure.listProcedures") {
                         self.listProcedures(database: resolvedDatabase, schema: nil, includeComments: includeComments)
                     }.flatMapError { error in
                         self.logger.warning("[Metadata] loadDatabaseStructure procedures failed error=\(error)")
                         return self.connection.eventLoop.makeSucceededFuture([])
                     }
-                    
+
                     let trigF = self.timed("loadDatabaseStructure.listTriggers") {
                         self.listTriggers(
                             database: resolvedDatabase,
@@ -3160,13 +3159,8 @@ private func listPrimaryKeysForSingleTable(
                         return self.connection.eventLoop.makeSucceededFuture([])
                     }
 
-                    return pkF.and(funcF).flatMap { pks, funcs in
-                        return procF.and(trigF).map { procs, trigs in
-                            let primaryKeys = pks
-                            let functions = funcs
-                            let procedures = procs
-                            let triggers = trigs
-
+                    return pkF.and(funcF).flatMap { primaryKeys, functions in
+                        return procF.and(trigF).map { procedures, triggers in
                             func objectKey(schema: String, table: String) -> String {
                                 "\(schema.lowercased())|\(table.lowercased())"
                             }

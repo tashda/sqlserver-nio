@@ -1,5 +1,6 @@
 import XCTest
 @testable import SQLServerKit
+import SQLServerKitTesting
 import Foundation
 
 final class SQLServerMetadataCommentsTests: XCTestCase {

@@ -3,6 +3,7 @@ import NIOCore
 import Logging
 @testable import SQLServerTDS
 @testable import SQLServerKit
+import SQLServerKitTesting
 
 /// Simple performance tests for SQLServerNIO
 /// Tests basic performance characteristics
