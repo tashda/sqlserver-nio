@@ -471,7 +471,7 @@ public final class SQLServerConnection {
                         severity: token.classValue
                     )
                     _ = continuation.yield(.message(message))
-                },
+                }
             )
 
             let future = self.base.send(request, logger: self.logger)
