@@ -20,7 +20,7 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
     private init(backing: Backing) { self.backing = backing }
 
     // MARK: - Logins
-    public func listLogins(includeDisabled: Bool = true) -> EventLoopFuture<[ServerLoginInfo]> {
+    public func listLogins(includeDisabled: Bool = true, includeSystemLogins: Bool = false) -> EventLoopFuture<[ServerLoginInfo]> {
         run(sql: {
             var sql = """
             SELECT name,
@@ -32,6 +32,10 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
             WHERE type IN ('S', 'U', 'G', 'C', 'K', 'E')
             """
             if !includeDisabled { sql += " AND is_disabled = 0" }
+            if !includeSystemLogins {
+                // Filter out internal SQL Server logins (##...##) and sa when not needed
+                sql += " AND name NOT LIKE '##%##'"
+            }
             sql += " ORDER BY name"
             return sql
         }()).map { rows in
@@ -54,6 +58,58 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
                 return ServerLoginInfo(name: name, type: type, isDisabled: disabled, defaultDatabase: defDb, defaultLanguage: defLang)
             }
         }
+    }
+
+    /// Map a login to a database by creating a user in the target database.
+    public func mapLoginToDatabase(login: String, database: String, userName: String? = nil, defaultSchema: String? = nil) -> EventLoopFuture<Void> {
+        let user = userName ?? login
+        var sql = "USE [\(escapeIdentifier(database))]; CREATE USER [\(escapeIdentifier(user))] FOR LOGIN [\(escapeIdentifier(login))]"
+        if let schema = defaultSchema {
+            sql += " WITH DEFAULT_SCHEMA = [\(escapeIdentifier(schema))]"
+        }
+        sql += ";"
+        return exec(sql: sql).map { _ in () }
+    }
+
+    /// List databases a login is mapped to (has a user in).
+    public func listLoginDatabaseMappings(login: String) -> EventLoopFuture<[LoginDatabaseMapping]> {
+        let loginLit = escapeLiteral(login)
+        let sql = """
+        DECLARE @results TABLE (db_name sysname, user_name sysname, default_schema sysname NULL);
+        DECLARE @db sysname;
+        DECLARE cur CURSOR FAST_FORWARD FOR
+        SELECT name FROM sys.databases WHERE state = 0;
+        OPEN cur; FETCH NEXT FROM cur INTO @db;
+        WHILE @@FETCH_STATUS = 0 BEGIN
+            DECLARE @sql nvarchar(max) = N'USE ' + QUOTENAME(@db) + N';
+                INSERT INTO @results
+                SELECT DB_NAME(), dp.name, dp.default_schema_name
+                FROM sys.database_principals dp
+                WHERE dp.sid = SUSER_SID(N''\(loginLit)'')
+                AND dp.type IN (''S'',''U'',''G'');';
+            BEGIN TRY EXEC sp_executesql @sql; END TRY BEGIN CATCH END CATCH;
+            FETCH NEXT FROM cur INTO @db;
+        END; CLOSE cur; DEALLOCATE cur;
+        SELECT db_name, user_name, default_schema FROM @results ORDER BY db_name;
+        """
+        return run(sql: sql).map { rows in
+            rows.compactMap { row -> LoginDatabaseMapping? in
+                guard let dbName = row.column("db_name")?.string,
+                      let userName = row.column("user_name")?.string else { return nil }
+                return LoginDatabaseMapping(
+                    databaseName: dbName,
+                    userName: userName,
+                    defaultSchema: row.column("default_schema")?.string
+                )
+            }
+        }
+    }
+
+    /// Remove a login's user mapping from a database.
+    public func unmapLoginFromDatabase(login: String, database: String, userName: String? = nil) -> EventLoopFuture<Void> {
+        let user = userName ?? login
+        let sql = "USE [\(escapeIdentifier(database))]; DROP USER [\(escapeIdentifier(user))];"
+        return exec(sql: sql).map { _ in () }
     }
 
     public func createSqlLogin(name: String, password: String, options: LoginOptions = .init()) -> EventLoopFuture<Void> {
@@ -293,7 +349,13 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
 
     // MARK: - Async convenience
     @available(macOS 12.0, *)
-    public func listLogins(includeDisabled: Bool = true) async throws -> [ServerLoginInfo] { try await listLogins(includeDisabled: includeDisabled).get() }
+    public func listLogins(includeDisabled: Bool = true, includeSystemLogins: Bool = false) async throws -> [ServerLoginInfo] { try await listLogins(includeDisabled: includeDisabled, includeSystemLogins: includeSystemLogins).get() }
+    @available(macOS 12.0, *)
+    public func mapLoginToDatabase(login: String, database: String, userName: String? = nil, defaultSchema: String? = nil) async throws { _ = try await mapLoginToDatabase(login: login, database: database, userName: userName, defaultSchema: defaultSchema).get() }
+    @available(macOS 12.0, *)
+    public func listLoginDatabaseMappings(login: String) async throws -> [LoginDatabaseMapping] { try await listLoginDatabaseMappings(login: login).get() }
+    @available(macOS 12.0, *)
+    public func unmapLoginFromDatabase(login: String, database: String, userName: String? = nil) async throws { _ = try await unmapLoginFromDatabase(login: login, database: database, userName: userName).get() }
     @available(macOS 12.0, *)
     public func createSqlLogin(name: String, password: String, options: LoginOptions = .init()) async throws { _ = try await createSqlLogin(name: name, password: password, options: options).get() }
     @available(macOS 12.0, *)

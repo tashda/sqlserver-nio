@@ -134,3 +134,16 @@ public struct PrincipalResolution: Sendable {
     public let sid: Data?
 }
 
+/// Represents a login's user mapping to a specific database.
+public struct LoginDatabaseMapping: Sendable {
+    public let databaseName: String
+    public let userName: String
+    public let defaultSchema: String?
+
+    public init(databaseName: String, userName: String, defaultSchema: String? = nil) {
+        self.databaseName = databaseName
+        self.userName = userName
+        self.defaultSchema = defaultSchema
+    }
+}
+
