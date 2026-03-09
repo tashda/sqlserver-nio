@@ -69,24 +69,15 @@ jobs:
 
       - name: Wait for SQL Server to be ready
         run: |
+          echo "Waiting for SQL Server to accept connections..."
           for i in $(seq 1 30); do
-            if python3 -c "
-          import socket, sys
-          s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-          s.settimeout(2)
-          try:
-              s.connect(('127.0.0.1', 1433))
-              s.close()
-              sys.exit(0)
-          except:
-              sys.exit(1)
-          " 2>/dev/null; then
-              echo "SQL Server port is open, giving it a moment to finish initialization..."
-              sleep 5
+            if (echo quit | nc -w 2 127.0.0.1 1433) 2>/dev/null; then
+              echo "SQL Server port is open, waiting for initialization..."
+              sleep 10
               echo "SQL Server is ready"
               exit 0
             fi
-            echo "Waiting for SQL Server... ($i/30)"
+            echo "Waiting... ($i/30)"
             sleep 2
           done
           echo "SQL Server failed to start"
