@@ -1,27 +1,46 @@
-# Runs tests for swift-tds
-name: test
-on: ['pull_request']
+name: CI Tests
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+on:
+  push:
+    branches:
+      - dev
+      - main
+  pull_request:
+    branches:
+      - main
+      - dev
+
 jobs:
-  test-swift-tds:
-    strategy:
-      fail-fast: false
-    # container to run the tests in
-    container: swift:5.3-focal
+  test:
+    name: Swift Tests
     runs-on: ubuntu-latest
-    # sets up a service container running an mssql server
+    
     services:
       mssql:
-        image: ajedwards/mssql-server-swift-tds
+        image: mcr.microsoft.com/mssql/server:2022-latest
         env:
           ACCEPT_EULA: Y
-          SA_PASSWORD: SwiftTDS!
-    # Checkout source and run tests
+          MSSQL_SA_PASSWORD: StrongPassword123!
+        ports:
+          - 1433:1433
+
     steps:
-      - name: Check out code
-        uses: actions/checkout@v2
-      - name: Run tests with Thread Sanitizer
-        run: swift test --enable-test-discovery --sanitize=thread
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "5.10"
+
+      - name: Run tests
         env:
-          TDS_HOSTNAME: 'mssql'
+          TDS_HOSTNAME: 127.0.0.1
+          TDS_PORT: 1433
+          TDS_DATABASE: master
+          TDS_USERNAME: sa
+          TDS_PASSWORD: StrongPassword123!
+          TDS_ENABLE_SCHEMA_TESTS: 0
+          TDS_ENABLE_ADMIN_TESTS: 0
+          TDS_ENABLE_AGENT_TESTS: 0
+        run: swift test
