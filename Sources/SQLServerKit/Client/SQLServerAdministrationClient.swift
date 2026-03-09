@@ -12,6 +12,95 @@ public struct SQLServerRoleInfo: Sendable {
     public let isFixedRole: Bool
 }
 
+// MARK: - Database Properties
+
+/// Comprehensive database properties fetched from sys.databases and related system views.
+public struct SQLServerDatabaseProperties: Sendable {
+    public let name: String
+    public let owner: String
+    public let stateDescription: String
+    public let recoveryModel: String
+    public let compatibilityLevel: Int
+    public let collationName: String
+    public let isReadOnly: Bool
+    public let userAccessDescription: String
+    public let pageVerifyOption: String
+    public let isAutoCloseOn: Bool
+    public let isAutoShrinkOn: Bool
+    public let isAutoCreateStatsOn: Bool
+    public let isAutoUpdateStatsOn: Bool
+    public let createDate: String
+    public let sizeMB: Double
+    public let activeSessions: Int
+
+    public init(
+        name: String,
+        owner: String,
+        stateDescription: String,
+        recoveryModel: String,
+        compatibilityLevel: Int,
+        collationName: String,
+        isReadOnly: Bool,
+        userAccessDescription: String,
+        pageVerifyOption: String,
+        isAutoCloseOn: Bool,
+        isAutoShrinkOn: Bool,
+        isAutoCreateStatsOn: Bool,
+        isAutoUpdateStatsOn: Bool,
+        createDate: String,
+        sizeMB: Double,
+        activeSessions: Int
+    ) {
+        self.name = name
+        self.owner = owner
+        self.stateDescription = stateDescription
+        self.recoveryModel = recoveryModel
+        self.compatibilityLevel = compatibilityLevel
+        self.collationName = collationName
+        self.isReadOnly = isReadOnly
+        self.userAccessDescription = userAccessDescription
+        self.pageVerifyOption = pageVerifyOption
+        self.isAutoCloseOn = isAutoCloseOn
+        self.isAutoShrinkOn = isAutoShrinkOn
+        self.isAutoCreateStatsOn = isAutoCreateStatsOn
+        self.isAutoUpdateStatsOn = isAutoUpdateStatsOn
+        self.createDate = createDate
+        self.sizeMB = sizeMB
+        self.activeSessions = activeSessions
+    }
+}
+
+/// Options that can be set on a database via ALTER DATABASE SET.
+public enum SQLServerDatabaseOption: Sendable {
+    case recoveryModel(RecoveryModel)
+    case compatibilityLevel(Int)
+    case readOnly(Bool)
+    case autoClose(Bool)
+    case autoShrink(Bool)
+    case autoCreateStatistics(Bool)
+    case autoUpdateStatistics(Bool)
+    case pageVerify(PageVerifyOption)
+    case userAccess(UserAccessOption)
+
+    public enum RecoveryModel: String, Sendable, CaseIterable {
+        case simple = "SIMPLE"
+        case bulkLogged = "BULK_LOGGED"
+        case full = "FULL"
+    }
+
+    public enum PageVerifyOption: String, Sendable, CaseIterable {
+        case checksum = "CHECKSUM"
+        case tornPageDetection = "TORN_PAGE_DETECTION"
+        case none = "NONE"
+    }
+
+    public enum UserAccessOption: String, Sendable, CaseIterable {
+        case multiUser = "MULTI_USER"
+        case singleUser = "SINGLE_USER"
+        case restrictedUser = "RESTRICTED_USER"
+    }
+}
+
 public final class SQLServerAdministrationClient {
     private let client: SQLServerClient
 
@@ -184,6 +273,142 @@ public final class SQLServerAdministrationClient {
     }
     
 
+
+    // MARK: - Database Management
+
+    /// Take a database offline with rollback of active transactions.
+    /// Returns informational messages from SQL Server.
+    @available(macOS 12.0, *)
+    @discardableResult
+    public func takeDatabaseOffline(name: String) async throws -> [SQLServerStreamMessage] {
+        let escaped = Self.escapeIdentifier(name)
+        let result = try await client.execute("ALTER DATABASE \(escaped) SET OFFLINE WITH ROLLBACK IMMEDIATE")
+        return result.messages
+    }
+
+    /// Bring an offline database back online.
+    /// Returns informational messages from SQL Server.
+    @available(macOS 12.0, *)
+    @discardableResult
+    public func bringDatabaseOnline(name: String) async throws -> [SQLServerStreamMessage] {
+        let escaped = Self.escapeIdentifier(name)
+        let result = try await client.execute("ALTER DATABASE \(escaped) SET ONLINE")
+        return result.messages
+    }
+
+    /// Shrink a database to reclaim unused space.
+    /// Returns informational messages from SQL Server.
+    @available(macOS 12.0, *)
+    @discardableResult
+    public func shrinkDatabase(name: String) async throws -> [SQLServerStreamMessage] {
+        let escaped = Self.escapeIdentifier(name)
+        let result = try await client.execute("DBCC SHRINKDATABASE(\(escaped))")
+        return result.messages
+    }
+
+    /// Drop a database.
+    /// Returns informational messages from SQL Server.
+    @available(macOS 12.0, *)
+    @discardableResult
+    public func dropDatabase(name: String) async throws -> [SQLServerStreamMessage] {
+        let escaped = Self.escapeIdentifier(name)
+        let result = try await client.execute("DROP DATABASE \(escaped)")
+        return result.messages
+    }
+
+    /// Fetch comprehensive properties for a database from sys.databases and related system views.
+    @available(macOS 12.0, *)
+    public func fetchDatabaseProperties(name: String) async throws -> SQLServerDatabaseProperties {
+        let escapedName = name.replacingOccurrences(of: "'", with: "''")
+        let sql = """
+        SELECT
+            d.name,
+            COALESCE(SUSER_SNAME(d.owner_sid), '') AS owner,
+            d.state_desc AS state_description,
+            d.recovery_model_desc AS recovery_model,
+            d.compatibility_level,
+            COALESCE(d.collation_name, '') AS collation_name,
+            d.is_read_only,
+            d.user_access_desc AS user_access_description,
+            d.page_verify_option_desc AS page_verify_option,
+            d.is_auto_close_on,
+            d.is_auto_shrink_on,
+            d.is_auto_create_stats_on,
+            d.is_auto_update_stats_on,
+            CONVERT(VARCHAR(23), d.create_date, 121) AS create_date,
+            COALESCE((
+                SELECT CAST(SUM(CAST(mf.size AS BIGINT)) * 8.0 / 1024 AS FLOAT)
+                FROM sys.master_files mf
+                WHERE mf.database_id = d.database_id
+            ), 0) AS size_mb,
+            COALESCE((
+                SELECT COUNT(*)
+                FROM sys.dm_exec_sessions s
+                WHERE s.database_id = d.database_id
+            ), 0) AS active_sessions
+        FROM sys.databases d
+        WHERE d.name = N'\(escapedName)'
+        """
+
+        let rows = try await client.query(sql)
+        guard let row = rows.first else {
+            throw SQLServerError.sqlExecutionError(message: "Database '\(name)' not found in sys.databases")
+        }
+
+        return SQLServerDatabaseProperties(
+            name: row.column("name")?.string ?? name,
+            owner: row.column("owner")?.string ?? "",
+            stateDescription: row.column("state_description")?.string ?? "UNKNOWN",
+            recoveryModel: row.column("recovery_model")?.string ?? "UNKNOWN",
+            compatibilityLevel: row.column("compatibility_level")?.int ?? 0,
+            collationName: row.column("collation_name")?.string ?? "",
+            isReadOnly: (row.column("is_read_only")?.int ?? 0) != 0,
+            userAccessDescription: row.column("user_access_description")?.string ?? "MULTI_USER",
+            pageVerifyOption: row.column("page_verify_option")?.string ?? "NONE",
+            isAutoCloseOn: (row.column("is_auto_close_on")?.int ?? 0) != 0,
+            isAutoShrinkOn: (row.column("is_auto_shrink_on")?.int ?? 0) != 0,
+            isAutoCreateStatsOn: (row.column("is_auto_create_stats_on")?.int ?? 0) != 0,
+            isAutoUpdateStatsOn: (row.column("is_auto_update_stats_on")?.int ?? 0) != 0,
+            createDate: row.column("create_date")?.string ?? "",
+            sizeMB: row.column("size_mb")?.double ?? 0.0,
+            activeSessions: row.column("active_sessions")?.int ?? 0
+        )
+    }
+
+    /// Alter a database option using ALTER DATABASE SET.
+    /// Returns informational messages from SQL Server.
+    @available(macOS 12.0, *)
+    @discardableResult
+    public func alterDatabaseOption(name: String, option: SQLServerDatabaseOption) async throws -> [SQLServerStreamMessage] {
+        let escaped = Self.escapeIdentifier(name)
+        let setClause: String
+
+        switch option {
+        case .recoveryModel(let model):
+            setClause = "SET RECOVERY \(model.rawValue)"
+        case .compatibilityLevel(let level):
+            setClause = "SET COMPATIBILITY_LEVEL = \(level)"
+        case .readOnly(let readOnly):
+            setClause = readOnly ? "SET READ_ONLY" : "SET READ_WRITE"
+        case .autoClose(let on):
+            setClause = "SET AUTO_CLOSE \(on ? "ON" : "OFF")"
+        case .autoShrink(let on):
+            setClause = "SET AUTO_SHRINK \(on ? "ON" : "OFF")"
+        case .autoCreateStatistics(let on):
+            setClause = "SET AUTO_CREATE_STATISTICS \(on ? "ON" : "OFF")"
+        case .autoUpdateStatistics(let on):
+            setClause = "SET AUTO_UPDATE_STATISTICS \(on ? "ON" : "OFF")"
+        case .pageVerify(let option):
+            setClause = "SET PAGE_VERIFY \(option.rawValue)"
+        case .userAccess(let access):
+            setClause = "SET \(access.rawValue)"
+        }
+
+        let result = try await client.execute("ALTER DATABASE \(escaped) \(setClause)")
+        return result.messages
+    }
+
+    // MARK: - Table Management
 
     public func dropTable(name: String) -> EventLoopFuture<Void> {
         let sql = "DROP TABLE \(Self.escapeIdentifier(name))"
