@@ -35,21 +35,19 @@ public final class SQLServerActivityMonitor {
         let fileIoFut = fetchFileIO(on: loop)
         let expensiveFut = fetchExpensiveQueries(options: options, on: loop)
 
-        return processesFut.and(waitsFut).and(fileIoFut).and(expensiveFut).map { arg0 in
-            let (pw, fe) = arg0
-            let (procsWaits, fileIO) = pw
-            let (procs, waits) = procsWaits
-            let expensive = fe
-            let waitsDelta = self.computeWaitDeltas(current: waits)
-            let fileDelta = self.computeFileIODeltas(current: fileIO)
-            return SQLServerActivitySnapshot(
-                processes: procs,
-                waits: waits,
-                waitsDelta: waitsDelta,
-                fileIO: fileIO,
-                fileIODelta: fileDelta,
-                expensiveQueries: expensive
-            )
+        return processesFut.and(waitsFut).flatMap { procs, waits in
+            return fileIoFut.and(expensiveFut).map { fileIO, expensive in
+                let waitsDelta = self.computeWaitDeltas(current: waits)
+                let fileDelta = self.computeFileIODeltas(current: fileIO)
+                return SQLServerActivitySnapshot(
+                    processes: procs,
+                    waits: waits,
+                    waitsDelta: waitsDelta,
+                    fileIO: fileIO,
+                    fileIODelta: fileDelta,
+                    expensiveQueries: expensive
+                )
+            }
         }
     }
 
