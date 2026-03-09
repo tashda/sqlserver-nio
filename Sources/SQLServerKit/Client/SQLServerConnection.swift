@@ -32,6 +32,8 @@ public final class SQLServerConnection {
         public var metadataConfiguration: SQLServerMetadataClient.Configuration
         public var retryConfiguration: SQLServerRetryConfiguration
         public var sessionOptions: SessionOptions
+        /// TCP connect timeout in seconds. Defaults to 10.
+        public var connectTimeoutSeconds: Int
 
         public init(
             hostname: String,
@@ -41,7 +43,8 @@ public final class SQLServerConnection {
             metadataConfiguration: SQLServerMetadataClient.Configuration = .init(),
             retryConfiguration: SQLServerRetryConfiguration = .init(),
             sessionOptions: SessionOptions = .ssmsDefaults,
-            transparentNetworkIPResolution: Bool = true
+            transparentNetworkIPResolution: Bool = true,
+            connectTimeoutSeconds: Int = 10
         ) {
             self.hostname = hostname
             self.port = port
@@ -51,6 +54,7 @@ public final class SQLServerConnection {
             self.retryConfiguration = retryConfiguration
             self.sessionOptions = sessionOptions
             self.transparentNetworkIPResolution = transparentNetworkIPResolution
+            self.connectTimeoutSeconds = connectTimeoutSeconds
         }
     }
 
@@ -110,6 +114,7 @@ public final class SQLServerConnection {
                     addresses: addresses,
                     tlsConfiguration: cfg.tlsConfiguration,
                     serverHostname: cfg.hostname,
+                    connectTimeout: .seconds(Int64(cfg.connectTimeoutSeconds)),
                     on: eventLoop,
                     logger: logger
                 )
@@ -514,6 +519,12 @@ public final class SQLServerConnection {
     @available(macOS 12.0, *)
     public func listDatabases() async throws -> [DatabaseMetadata] {
         try await listDatabases().get()
+    }
+
+    /// Fetch the current state of a single database.
+    @available(macOS 12.0, *)
+    public func databaseState(name: String) async throws -> DatabaseMetadata {
+        try await metadataClient.databaseState(name: name)
     }
 
     public func listSchemas(in database: String? = nil) -> EventLoopFuture<[SchemaMetadata]> {
@@ -1265,6 +1276,7 @@ public final class SQLServerConnection {
         addresses: [SocketAddress],
         tlsConfiguration: TLSConfiguration?,
         serverHostname: String,
+        connectTimeout: TimeAmount = .seconds(10),
         on eventLoop: EventLoop,
         logger: Logger
     ) -> EventLoopFuture<TDSConnection> {
@@ -1277,6 +1289,7 @@ public final class SQLServerConnection {
                 to: address,
                 tlsConfiguration: tlsConfiguration,
                 serverHostname: serverHostname,
+                connectTimeout: connectTimeout,
                 on: eventLoop
             ).flatMapError { error in
                 logger.warning("SQLServerConnection failed to connect to \(address). \(error)")

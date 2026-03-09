@@ -118,6 +118,7 @@ public final class SQLServerClient {
                     addresses: addresses,
                     tlsConfiguration: configuration.connection.tlsConfiguration,
                     serverHostname: configuration.connection.hostname,
+                    connectTimeout: .seconds(Int64(configuration.connection.connectTimeoutSeconds)),
                     on: eventLoop,
                     logger: logger
                 )
@@ -141,18 +142,24 @@ public final class SQLServerClient {
             logger: logger,
             connectionFactory: connectionFactory
         )
-        // Respect pool configuration: if minimumIdleConnections > 0, start() will prefill.
-        // Otherwise remain fully lazy to match SSMS/JDBC behavior.
         pool.start()
 
-        return eventLoopGroup.next().makeSucceededFuture(()).map { _ in
-            SQLServerClient(
-                configuration: configuration,
-                eventLoopGroup: eventLoopGroup,
-                ownsEventLoopGroup: ownsGroup,
-                pool: pool,
-                logger: logger
-            )
+        // Eagerly validate the connection by creating one outside the pool.
+        // This forces the actual TCP connect + TDS login so callers get
+        // immediate feedback on bad credentials, unreachable hosts, etc.
+        let loop = eventLoopGroup.next()
+        return connectionFactory(loop).flatMap { connection in
+            // Validation succeeded — close this probe connection (the pool
+            // will create its own connections on demand).
+            connection.close().map {
+                SQLServerClient(
+                    configuration: configuration,
+                    eventLoopGroup: eventLoopGroup,
+                    ownsEventLoopGroup: ownsGroup,
+                    pool: pool,
+                    logger: logger
+                )
+            }
         }.flatMapError { error in
             let cleanup = pool.shutdownGracefully().flatMap { _ -> EventLoopFuture<Void> in
                 guard ownsGroup else {
@@ -162,7 +169,7 @@ public final class SQLServerClient {
             }
 
             return cleanup.flatMapThrowing {
-                throw error
+                throw SQLServerError.normalize(error)
             }
         }
     }
@@ -557,6 +564,16 @@ public final class SQLServerClient {
     @available(macOS 12.0, *)
     public func listDatabases(on eventLoop: EventLoop? = nil) async throws -> [DatabaseMetadata] {
         try await listDatabases(on: eventLoop).get()
+    }
+
+    /// Fetch the current state of a single database.
+    @available(macOS 12.0, *)
+    public func databaseState(name: String) async throws -> DatabaseMetadata {
+        try await withConnection { connection in
+            connection.eventLoop.makeFutureWithTask {
+                try await connection.databaseState(name: name)
+            }
+        }.get()
     }
 
     public func listSchemas(
