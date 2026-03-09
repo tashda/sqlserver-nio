@@ -1,4 +1,5 @@
 @testable import SQLServerKit
+import SQLServerKitTesting
 import XCTest
 import NIO
 import Logging
@@ -143,8 +144,8 @@ final class SQLServerTransactionClientTests: XCTestCase {
         try await adminClient.createTable(name: tableName, columns: columns)
 
         let result = try await txClient.executeInTransaction {
-            _ = try await dbClient.execute("INSERT INTO [\(tableName)] (id, value) VALUES (1, N'Success')").get()
-            _ = try await dbClient.execute("INSERT INTO [\(tableName)] (id, value) VALUES (2, N'Also Success')").get()
+            _ = try await self.dbClient.execute("INSERT INTO [\(tableName)] (id, value) VALUES (1, N'Success')").get()
+            _ = try await self.dbClient.execute("INSERT INTO [\(tableName)] (id, value) VALUES (2, N'Also Success')").get()
             return "Transaction completed successfully"
         }
         XCTAssertEqual(result, "Transaction completed successfully")
@@ -155,9 +156,9 @@ final class SQLServerTransactionClientTests: XCTestCase {
         var errorThrown = false
         do {
             _ = try await txClient.executeInTransaction {
-                _ = try await dbClient.execute("INSERT INTO [\(tableName)] (id, value) VALUES (3, N'Before Error')").get()
-                _ = try await dbClient.execute("INSERT INTO [\(tableName)] (id, value) VALUES (999, N'Should Not Exist')").get()
-                _ = try await dbClient.execute("INVALID SQL STATEMENT").get()
+                _ = try await self.dbClient.execute("INSERT INTO [\(tableName)] (id, value) VALUES (3, N'Before Error')").get()
+                _ = try await self.dbClient.execute("INSERT INTO [\(tableName)] (id, value) VALUES (999, N'Should Not Exist')").get()
+                _ = try await self.dbClient.execute("INVALID SQL STATEMENT").get()
                 return "Should not reach here"
             }
         } catch {
@@ -186,7 +187,7 @@ final class SQLServerTransactionClientTests: XCTestCase {
         _ = try await dbClient.execute("INSERT INTO [\(tableName)] (id, operation) VALUES (1, N'Initial')").get()
 
         let result1 = try await txClient.executeInSavepoint(named: "sp1") {
-            _ = try await dbClient.execute("INSERT INTO [\(tableName)] (id, operation) VALUES (2, N'Savepoint 1')").get()
+            _ = try await self.dbClient.execute("INSERT INTO [\(tableName)] (id, operation) VALUES (2, N'Savepoint 1')").get()
             return "Savepoint 1 completed"
         }
         XCTAssertEqual(result1, "Savepoint 1 completed")
@@ -194,8 +195,8 @@ final class SQLServerTransactionClientTests: XCTestCase {
         var errorThrown = false
         do {
             _ = try await txClient.executeInSavepoint(named: "sp2") {
-                _ = try await dbClient.execute("INSERT INTO [\(tableName)] (id, operation) VALUES (3, N'Before Error')").get()
-                _ = try await dbClient.execute("INVALID SQL").get()
+                _ = try await self.dbClient.execute("INSERT INTO [\(tableName)] (id, operation) VALUES (3, N'Before Error')").get()
+                _ = try await self.dbClient.execute("INVALID SQL").get()
                 return "Should not reach here"
             }
         } catch {

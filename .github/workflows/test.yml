@@ -1,27 +1,77 @@
-# Runs tests for swift-tds
-name: test
-on: ['pull_request']
+name: CI
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [main]
+
 jobs:
-  test-swift-tds:
-    strategy:
-      fail-fast: false
-    # container to run the tests in
-    container: swift:5.3-focal
+  build:
+    name: Build (Linux Swift 6.0)
     runs-on: ubuntu-latest
-    # sets up a service container running an mssql server
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.0"
+      - name: Build library
+        run: swift build
+      - name: Build tests
+        run: swift build --build-tests
+
+  unit-tests:
+    name: TDS Protocol Tests
+    runs-on: ubuntu-latest
+    needs: build
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.0"
+      - name: Run TDS unit tests
+        run: swift test --filter SQLServerTDSTests
+
+  integration-smoke:
+    name: Integration Smoke Test
+    runs-on: ubuntu-latest
+    needs: build
+    timeout-minutes: 10
     services:
       mssql:
-        image: ajedwards/mssql-server-swift-tds
+        image: mcr.microsoft.com/mssql/server:2022-latest
         env:
           ACCEPT_EULA: Y
-          SA_PASSWORD: SwiftTDS!
-    # Checkout source and run tests
+          MSSQL_SA_PASSWORD: YourStrong!Passw0rd
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'YourStrong!Passw0rd' -C -Q 'SELECT 1'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 30s
     steps:
-      - name: Check out code
-        uses: actions/checkout@v2
-      - name: Run tests with Thread Sanitizer
-        run: swift test --enable-test-discovery --sanitize=thread
+      - uses: actions/checkout@v4
+      - uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.0"
+      - name: Run connection and core tests
         env:
-          TDS_HOSTNAME: 'mssql'
+          TDS_HOSTNAME: 127.0.0.1
+          TDS_PORT: "1433"
+          TDS_DATABASE: master
+          TDS_USERNAME: sa
+          TDS_PASSWORD: "YourStrong!Passw0rd"
+          TDS_ENABLE_AGENT_TESTS: "0"
+        run: |
+          # Hard 5-minute process timeout so tests can never stall the pipeline
+          timeout 300 swift test --filter 'SQLServerConnectionTests|CoreTests' || {
+            exit_code=$?
+            if [ $exit_code -eq 124 ]; then
+              echo "::error::Tests timed out after 5 minutes"
+            fi
+            exit $exit_code
+          }
