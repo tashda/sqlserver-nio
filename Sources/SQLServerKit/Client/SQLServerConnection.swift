@@ -1222,12 +1222,17 @@ public final class SQLServerConnection {
     
     private static func makeAllSocketAddresses(hostname: String, port: Int) throws -> [SocketAddress] {
         // Use zeroed struct + field assignment for cross-platform compatibility
-        // (addrinfo member order differs between Darwin and glibc)
+        // (addrinfo member order and type aliases differ between Darwin and glibc)
         var hints = addrinfo()
         hints.ai_flags = AI_ADDRCONFIG
         hints.ai_family = AF_UNSPEC
+        #if canImport(Darwin)
         hints.ai_socktype = SOCK_STREAM
         hints.ai_protocol = IPPROTO_TCP
+        #else
+        hints.ai_socktype = Int32(SOCK_STREAM.rawValue)
+        hints.ai_protocol = Int32(IPPROTO_TCP)
+        #endif
         var infoPointer: UnsafeMutablePointer<addrinfo>?
         let portString = "\(port)"
         let error = getaddrinfo(hostname, portString, &hints, &infoPointer)
