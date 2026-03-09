@@ -549,22 +549,12 @@ public final class SQLServerMetadataClient {
         let lobFuture = self.fetchLobAndFilestreamStorage(database: database, schema: schema, table: table)
         let temporalFuture = self.fetchTemporalAndMemoryOptions(database: database, schema: schema, table: table)
 
-        return colsFuture.and(pkFuture).and(uqFuture).and(fkFuture).and(ixFuture).and(ckFuture).and(fgFuture).and(lobFuture).and(temporalFuture).map { nested in
-            // Unpack nested tuple from chained `and` calls
-            let temporal = nested.1
-            let lob = nested.0.1
-            let fg = nested.0.0.1
-            let e = nested.0.0.0
-            let checks = e.1
-            let d = e.0
-            let ixs = d.1
-            let c = d.0
-            let fks = c.1
-            let b = c.0
-            let uqs = b.1
-            let a = b.0
-            let columns = a.0
-            let pks = a.1
+        return colsFuture.and(pkFuture).and(uqFuture).flatMap { nested1 in
+            let ((columns, pks), uqs) = nested1
+            return fkFuture.and(ixFuture).and(ckFuture).flatMap { nested2 in
+                let ((fks, ixs), checks) = nested2
+                return fgFuture.and(lobFuture).and(temporalFuture).map { nested3 in
+                    let ((fg, lob), temporal) = nested3
             // Basic identifier helpers
             func ident(_ name: String) -> String { "[\(SQLServerMetadataClient.escapeIdentifier(name))]" }
             func qualified(_ s: String, _ n: String) -> String { "\(ident(s)).\(ident(n))" }
@@ -787,6 +777,8 @@ public final class SQLServerMetadataClient {
             }
 
             return script
+                }
+            }
         }
     }
 
