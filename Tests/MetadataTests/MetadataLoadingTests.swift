@@ -1,4 +1,5 @@
 @testable import SQLServerKit
+import SQLServerKitTesting
 import XCTest
 import NIO
 
@@ -46,7 +47,10 @@ final class SQLServerAppMetadataLoadingTests: XCTestCase {
 
     @available(macOS 12.0, *)
     func testAppMetadataLoadForAdventureWorks2022() async throws {
-        let dbName = env("TDS_AW_DATABASE") ?? "AdventureWorks2022"
+        guard env("TDS_AW_DATABASE") != nil else {
+            throw XCTSkip("Skipping: TDS_AW_DATABASE not set")
+        }
+        let dbName = env("TDS_AW_DATABASE")!
 
         try await withTimeout(operationTimeout) {
             try await self.client.withConnection { connection in

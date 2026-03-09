@@ -3,6 +3,7 @@ import NIOCore
 import Logging
 @testable import SQLServerTDS
 @testable import SQLServerKit
+import SQLServerKitTesting
 
 /// Consolidated connection tests for SQLServerNIO
 /// Covers basic connection functionality, pooling, and lifecycle management

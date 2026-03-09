@@ -11,10 +11,44 @@ on:
       - dev
 
 jobs:
-  test:
-    name: Swift Tests
+  build:
+    name: Build
     runs-on: ubuntu-latest
-    
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.0"
+
+      - name: Build
+        run: swift build
+
+  unit-tests:
+    name: TDS Unit Tests
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.0"
+
+      - name: Run TDS unit tests
+        run: swift test --filter SQLServerTDSTests
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: build
+
     services:
       mssql:
         image: mcr.microsoft.com/mssql/server:2022-latest
@@ -33,14 +67,57 @@ jobs:
         with:
           swift-version: "6.0"
 
-      - name: Run tests
+      - name: Wait for SQL Server to be ready
+        run: |
+          for i in $(seq 1 30); do
+            if python3 -c "
+          import socket, sys
+          s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+          s.settimeout(2)
+          try:
+              s.connect(('127.0.0.1', 1433))
+              s.close()
+              sys.exit(0)
+          except:
+              sys.exit(1)
+          " 2>/dev/null; then
+              echo "SQL Server port is open, giving it a moment to finish initialization..."
+              sleep 5
+              echo "SQL Server is ready"
+              exit 0
+            fi
+            echo "Waiting for SQL Server... ($i/30)"
+            sleep 2
+          done
+          echo "SQL Server failed to start"
+          exit 1
+
+      - name: Run integration tests
         env:
           TDS_HOSTNAME: 127.0.0.1
-          TDS_PORT: 1433
+          TDS_PORT: "1433"
           TDS_DATABASE: master
           TDS_USERNAME: sa
           TDS_PASSWORD: StrongPassword123!
-          TDS_ENABLE_SCHEMA_TESTS: 0
-          TDS_ENABLE_ADMIN_TESTS: 0
-          TDS_ENABLE_AGENT_TESTS: 0
-        run: swift test
+          TDS_ENABLE_SCHEMA_TESTS: "0"
+          TDS_ENABLE_ADMIN_TESTS: "0"
+          TDS_ENABLE_AGENT_TESTS: "0"
+        run: |
+          swift test \
+            --filter SQLServerConnectionTests \
+            --filter SQLServerTableTests \
+            --filter SQLServerIndexTests \
+            --filter SQLServerConstraintTests \
+            --filter SQLServerViewTests \
+            --filter SQLServerTriggerTests \
+            --filter SQLServerRoutineTests \
+            --filter SQLServerSecurityTests \
+            --filter SQLServerAgentTests \
+            --filter SQLServerBulkTests \
+            --filter SQLServerTransactionTests \
+            --filter SQLServerTypeTests \
+            --filter SQLServerDataTypeTests \
+            --filter SQLServerMetadataTests \
+            --filter SQLServerAdvancedTests \
+            --filter CoreTests \
+            --filter TDSLayerTests
