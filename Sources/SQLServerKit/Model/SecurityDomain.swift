@@ -28,6 +28,8 @@ public struct ServerLoginInfo: Sendable {
     public let isDisabled: Bool
     public let defaultDatabase: String?
     public let defaultLanguage: String?
+    public let isPolicyChecked: Bool?
+    public let isExpirationChecked: Bool?
 }
 
 public enum DatabasePrincipalType: String, Sendable {
