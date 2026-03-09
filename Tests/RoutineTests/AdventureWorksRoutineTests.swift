@@ -34,7 +34,7 @@ final class SQLServerAdventureWorksRoutineTests: XCTestCase {
     @available(macOS 12.0, *)
     func testAdventureWorks2022ComprehensiveMetadataLoading() async throws {
         // Comprehensive test that validates all TDS protocol fixes by loading all metadata
-        // that Echo would need when working with AdventureWorks2022 database
+        // that App would need when working with AdventureWorks2022 database
         let dbName = env("TDS_AW_DATABASE") ?? "AdventureWorks2022"
 
         try await client.withConnection { connection in

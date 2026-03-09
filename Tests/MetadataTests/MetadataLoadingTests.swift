@@ -2,7 +2,7 @@
 import XCTest
 import NIO
 
-final class SQLServerEchoMetadataLoadingTests: XCTestCase {
+final class SQLServerAppMetadataLoadingTests: XCTestCase {
     private var group: EventLoopGroup!
     private var client: SQLServerClient!
 
@@ -45,7 +45,7 @@ final class SQLServerEchoMetadataLoadingTests: XCTestCase {
     }
 
     @available(macOS 12.0, *)
-    func testEchoMetadataLoadForAdventureWorks2022() async throws {
+    func testAppMetadataLoadForAdventureWorks2022() async throws {
         let dbName = env("TDS_AW_DATABASE") ?? "AdventureWorks2022"
 
         try await withTimeout(operationTimeout) {

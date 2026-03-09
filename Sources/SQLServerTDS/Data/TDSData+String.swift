@@ -76,6 +76,18 @@ extension TDSData {
             return String(decoding: bytes, as: UTF8.self)
         case .nvarchar, .nchar, .nText:
             return value.readUTF16String(length: value.readableBytes)
+        case .guid:
+            // uniqueidentifier: 16 bytes in mixed-endian TDS format
+            guard value.readableBytes == 16,
+                  let bytes = value.readBytes(length: 16) else { return nil }
+            // TDS sends Data1 (4 bytes LE), Data2 (2 bytes LE), Data3 (2 bytes LE), Data4 (8 bytes big-endian)
+            let hex: (UInt8) -> String = { String(format: "%02X", $0) }
+            let d1 = [bytes[3], bytes[2], bytes[1], bytes[0]].map(hex).joined()
+            let d2 = [bytes[5], bytes[4]].map(hex).joined()
+            let d3 = [bytes[7], bytes[6]].map(hex).joined()
+            let d4a = [bytes[8], bytes[9]].map(hex).joined()
+            let d4b = bytes[10...15].map(hex).joined()
+            return "\(d1)-\(d2)-\(d3)-\(d4a)-\(d4b)"
         default:
             // Best-effort fallback: try to decode any remaining bytes as textual.
             if let bytes = value.readBytes(length: value.readableBytes), !bytes.isEmpty {

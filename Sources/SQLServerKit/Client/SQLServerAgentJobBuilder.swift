@@ -135,7 +135,7 @@ public final class SQLServerAgentJobBuilder: @unchecked Sendable {
     /// Creates the job and all requested components. On failure, attempts to delete the job.
     /// - Returns: The created job name (and, if resolvable, the job_id as string)
     @available(macOS 12.0, *)
-    public func commit() async throws -> (name: String, jobId: String?) {
+    public func commit() async throws -> (name: String, jobId: String) {
         // Create base job
         do {
             try await agent.createJob(named: jobName, description: description, enabled: enabled, ownerLoginName: ownerLoginName)
@@ -240,8 +240,8 @@ public final class SQLServerAgentJobBuilder: @unchecked Sendable {
                 try await agent.setJobEmailNotification(jobName: jobName, operatorName: n.operatorName, notifyLevel: n.level.rawValue)
             }
 
-            // Resolve job id (best-effort)
-            let jobId = try? await agent.fetchJobId(named: jobName)
+            // Resolve job id — the job was just created, so this must succeed
+            let jobId = try await agent.fetchJobId(named: jobName)
             return (name: jobName, jobId: jobId)
         } catch {
             // Rollback: delete job and any schedules we created

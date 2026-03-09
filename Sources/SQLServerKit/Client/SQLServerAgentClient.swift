@@ -698,6 +698,28 @@ public final class SQLServerAgentClient: @unchecked Sendable {
         }
     }
 
+    /// Update multiple job properties in a single call.
+    public func updateJob(
+        named jobName: String,
+        description: String? = nil,
+        ownerLoginName: String? = nil,
+        categoryName: String? = nil,
+        enabled: Bool? = nil,
+        startStepId: Int? = nil
+    ) -> EventLoopFuture<Void> {
+        return lookupJobId(jobName: jobName).flatMap { jobId in
+            var parts: [String] = ["@job_id = N'\(jobId)'"]
+            if let desc = description { parts.append("@description = N'\(escapeLiteral(desc))'") }
+            if let owner = ownerLoginName { parts.append("@owner_login_name = N'\(escapeLiteral(owner))'") }
+            if let cat = categoryName { parts.append("@category_name = N'\(escapeLiteral(cat))'") }
+            if let enabled { parts.append("@enabled = \(enabled ? 1 : 0)") }
+            if let startStep = startStepId, startStep > 0 { parts.append("@start_step_id = \(startStep)") }
+            guard parts.count > 1 else { return self.run("SELECT 1").map { _ in () } }
+            let sql = "EXEC msdb.dbo.sp_update_job \(parts.joined(separator: ", "));"
+            return self.run(sql).map { _ in () }
+        }
+    }
+
     /// Configure step flow control and retry/output options.
     /// onSuccessAction/onFailAction: 1=Quit with success, 2=Quit with failure, 3=Go to next step, 4=Go to step id.
     public func configureStep(
@@ -1543,6 +1565,14 @@ public final class SQLServerAgentClient: @unchecked Sendable {
 
     @available(macOS 12.0, *)
     public func setJobCategory(named jobName: String, categoryName: String) async throws { _ = try await setJobCategory(named: jobName, categoryName: categoryName).get() }
+
+    @available(macOS 12.0, *)
+    public func setJobStartStep(jobName: String, stepId: Int) async throws { _ = try await setJobStartStep(jobName: jobName, stepId: stepId).get() }
+
+    @available(macOS 12.0, *)
+    public func updateJob(named jobName: String, description: String? = nil, ownerLoginName: String? = nil, categoryName: String? = nil, enabled: Bool? = nil, startStepId: Int? = nil) async throws {
+        _ = try await updateJob(named: jobName, description: description, ownerLoginName: ownerLoginName, categoryName: categoryName, enabled: enabled, startStepId: startStepId).get()
+    }
 
     @available(macOS 12.0, *)
     public func listJobNextRunTimes(jobName: String? = nil) async throws -> [SQLServerAgentNextRunInfo] { try await listJobNextRunTimes(jobName: jobName).get() }

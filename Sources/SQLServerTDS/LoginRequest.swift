@@ -5,16 +5,20 @@ import Logging
 public class LoginRequest: TDSRequest {
     private let payload: TDSMessages.Login7Message
 
+    /// Captured server error message from ErrorInfoToken during login.
+    public internal(set) var serverErrorMessage: String?
+
     public let onRow: ((TDSRow) -> Void)? = nil
     public let onMetadata: (([TDSTokens.ColMetadataToken.ColumnData]) -> Void)? = nil
     public let onDone: ((TDSTokens.DoneToken) -> Void)? = nil
-    public let onMessage: ((TDSTokens.ErrorInfoToken, Bool) -> Void)? = nil
+    public let onMessage: ((TDSTokens.ErrorInfoToken, Bool) -> Void)?
     public let onReturnValue: ((TDSTokens.ReturnValueToken) -> Void)? = nil
     public let stream: Bool = false // Login requests are always non-streaming
     public let onData: ((TDSData) -> Void)? = nil // Login requests don't use onData
 
     public init(payload: TDSMessages.Login7Message) {
         self.payload = payload
+        self.onMessage = nil
     }
 
     public func start(allocator: ByteBufferAllocator) throws -> [TDSPacket] {
