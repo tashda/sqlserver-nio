@@ -101,7 +101,7 @@ public enum SQLServerDatabaseOption: Sendable {
     }
 }
 
-public final class SQLServerAdministrationClient {
+public final class SQLServerAdministrationClient: @unchecked Sendable {
     private let client: SQLServerClient
 
     public init(client: SQLServerClient) {
