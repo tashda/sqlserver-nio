@@ -47,7 +47,7 @@ let configuration = SQLServerClient.Configuration(
     port: 1433,
     login: .init(
         database: "master",
-        authentication: .sqlPassword(username: "sa", password: "StrongPassword123")
+        authentication: .sqlPassword(username: "sa", password: "<your_password>")
     ),
     tlsConfiguration: .makeClientConfiguration()
 )
@@ -315,6 +315,37 @@ Notes:
 - Existing object‑level grant/revoke/deny APIs remain; the unified overloads add schema/database and column‑level support.
 - For column grants, pass column names in the `.object(_,_,columns:)` securable.
 - Agent credential helpers currently duplicate server credential methods; these will be deprecated in favor of the server client.
+
+### Server Security (Logins/Roles/Credentials/Permissions)
+
+Use `SQLServerServerSecurityClient` for server‑level management. It exposes CRUD for logins and credentials, role membership, and server permissions, with both async/await and EventLoopFuture variants. You can construct it with either a pooled `SQLServerClient` or a single `SQLServerConnection`:
+
+```swift
+let serverSec = SQLServerServerSecurityClient(client: client)
+
+// List logins
+let logins = try await serverSec.listLogins()
+
+// Create a SQL login (CHECK_POLICY/EXPIRATION and defaults supported)
+try await serverSec.createSqlLogin(
+    name: "app_login",
+    password: "<your_password>",
+    options: .init(defaultDatabase: "MyDb", checkPolicy: true, checkExpiration: false)
+)
+
+// Add to a server role
+try await serverSec.addMemberToServerRole(role: "securityadmin", principal: "app_login")
+
+// Grant server permission
+try await serverSec.grant(permission: .viewServerState, to: "app_login")
+
+// Credentials
+try await serverSec.createCredential(name: "s3_cred", identity: "DOMAIN\\svc_user", secret: "secret")
+try await serverSec.alterCredential(name: "s3_cred", identity: nil, secret: "newSecret")
+try await serverSec.dropCredential(name: "s3_cred")
+```
+
+Note: Server‑level tests and operations may require `sysadmin` or specific server permissions (e.g., `ALTER ANY CREDENTIAL`). Gate integration tests with `TDS_ENABLE_SERVER_SECURITY_TESTS=1`.
 
 Notes:
 - SQL Server uses SELECT TOP n or FETCH NEXT n ROWS ONLY, not LIMIT.
@@ -777,7 +808,7 @@ Configure retries via `SQLServerRetryConfiguration` on your connection/client co
 4. Run `swift test` or open `SQLServerNIO.xctestplan` in Xcode.
 
 ```
-TDS_HOSTNAME=127.0.0.1 TDS_PORT=1433 TDS_DATABASE=master TDS_USERNAME=sa TDS_PASSWORD=StrongPassword123! swift test
+TDS_HOSTNAME=127.0.0.1 TDS_PORT=1433 TDS_DATABASE=master TDS_USERNAME=sa TDS_PASSWORD=<your_password> swift test
 ```
 
 `SQLServerNIO.xctestplan` includes configurations for core, admin, and SQL Agent suites. Use environment flags such as `TDS_HOSTNAME`, `TDS_PORT`, `TDS_USERNAME`, `TDS_PASSWORD`, `TDS_DATABASE`, `TDS_ENABLE_SCHEMA_TESTS`, and `TDS_ENABLE_AGENT_TESTS`.
@@ -791,33 +822,3 @@ Issues and pull requests welcome. See `Docs/API_Audit.md` and `Docs/Roadmap.md` 
 MIT. See [LICENSE].
 
 [SwiftNIO]: https://github.com/apple/swift-nio
-### Server Security (Logins/Roles/Credentials/Permissions)
-
-Use `SQLServerServerSecurityClient` for server‑level management. It exposes CRUD for logins and credentials, role membership, and server permissions, with both async/await and EventLoopFuture variants. You can construct it with either a pooled `SQLServerClient` or a single `SQLServerConnection`:
-
-```swift
-let serverSec = SQLServerServerSecurityClient(client: client)
-
-// List logins
-let logins = try await serverSec.listLogins()
-
-// Create a SQL login (CHECK_POLICY/EXPIRATION and defaults supported)
-try await serverSec.createSqlLogin(
-    name: "app_login",
-    password: "Str0ngP@ss!",
-    options: .init(defaultDatabase: "MyDb", checkPolicy: true, checkExpiration: false)
-)
-
-// Add to a server role
-try await serverSec.addMemberToServerRole(role: "securityadmin", principal: "app_login")
-
-// Grant server permission
-try await serverSec.grant(permission: .viewServerState, to: "app_login")
-
-// Credentials
-try await serverSec.createCredential(name: "s3_cred", identity: "DOMAIN\\svc_user", secret: "secret")
-try await serverSec.alterCredential(name: "s3_cred", identity: nil, secret: "newSecret")
-try await serverSec.dropCredential(name: "s3_cred")
-```
-
-Note: Server‑level tests and operations may require `sysadmin` or specific server permissions (e.g., `ALTER ANY CREDENTIAL`). Gate integration tests with `TDS_ENABLE_SERVER_SECURITY_TESTS=1`.

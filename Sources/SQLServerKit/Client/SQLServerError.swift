@@ -7,7 +7,7 @@ public enum SQLServerError: Swift.Error, CustomStringConvertible, LocalizedError
     case clientShutdown
     case connectionClosed
     case timeout(description: String?, underlying: Swift.Error?)
-    case authenticationFailed
+    case authenticationFailed(message: String? = nil)
     case protocolError(TDSError)
     case unsupportedPlatform
     case sqlExecutionError(message: String)
@@ -20,35 +20,98 @@ public enum SQLServerError: Swift.Error, CustomStringConvertible, LocalizedError
     public var description: String {
         switch self {
         case .clientShutdown:
-            return "SQLServerError.clientShutdown"
+            return "The client has been shut down."
         case .connectionClosed:
-            return "SQLServerError.connectionClosed"
+            return "The connection was closed."
         case .timeout(let description, _):
             if let description {
-                return "SQLServerError.timeout(\(description))"
+                return "Connection timed out: \(description)"
             } else {
-                return "SQLServerError.timeout"
+                return "Connection timed out. The server may be unreachable."
             }
-        case .authenticationFailed:
-            return "SQLServerError.authenticationFailed"
+        case .authenticationFailed(let message):
+            if let message {
+                return message
+            } else {
+                return "Authentication failed."
+            }
         case .protocolError(let error):
-            return "SQLServerError.protocolError(\(error))"
+            return "TDS error: \(error)"
         case .unsupportedPlatform:
-            return "SQLServerError.unsupportedPlatform"
+            return "This platform is not supported."
         case .sqlExecutionError(let message):
-            return "SQLServerError.sqlExecutionError(\(message))"
+            return message
         case .deadlockDetected(let message):
-            return "SQLServerError.deadlockDetected(\(message))"
+            return "Deadlock detected: \(message)"
         case .invalidArgument(let message):
-            return "SQLServerError.invalidArgument(\(message))"
+            return message
         case .transient(let error):
-            return "SQLServerError.transient(\(error))"
+            return Self.describeNIOError(error)
         case .unknown(let error):
-            return "SQLServerError.unknown(\(error))"
+            return Self.describeNIOError(error)
         }
     }
-    
+
     public var errorDescription: String? {
         return description
+    }
+
+    /// Translate common NIO errors into user-friendly messages.
+    private static func describeNIOError(_ error: Swift.Error) -> String {
+        // IOError has errnoCode — use it directly for reliable matching
+        if let ioError = error as? IOError {
+            return describeIOError(ioError)
+        }
+
+        // Use String(describing:) which includes the real description, not the
+        // generic NSError bridge that just shows "NIOCore.IOError error N"
+        let desc = String(describing: error).lowercased()
+
+        // ChannelError
+        if desc.contains("channelerror") || desc.contains("connecttimeout") {
+            return "Connection timed out. The server may be unreachable."
+        }
+
+        // NIOConnectionError
+        if desc.contains("nioconnectionerror") || desc.contains("connecterror") {
+            if desc.contains("connection refused") {
+                return "Connection refused. The server may not be running or the port may be wrong."
+            }
+            return "Could not connect to the server."
+        }
+
+        // DNS resolution failures
+        if desc.contains("name or service not known")
+            || desc.contains("nodename nor servname provided")
+            || desc.contains("getaddrinfo")
+            || desc.contains("no such host") {
+            return "Could not resolve hostname. Check the server address."
+        }
+
+        // Fallback: use String(describing:) which is more informative than localizedDescription
+        return String(describing: error)
+    }
+
+    /// Translate IOError errno codes into user-friendly messages.
+    private static func describeIOError(_ error: IOError) -> String {
+        switch error.errnoCode {
+        case 1:  // EPERM
+            return "Connection failed. The server may not be running or the address is unreachable."
+        case 13: // EACCES
+            return "Permission denied when connecting to the server."
+        case 51: // ENETUNREACH
+            return "Network is unreachable."
+        case 60: // ETIMEDOUT
+            return "Connection timed out. The server may be unreachable."
+        case 61: // ECONNREFUSED
+            return "Connection refused. The server may not be running or the port may be wrong."
+        case 64: // EHOSTDOWN
+            return "The server appears to be down."
+        case 65: // EHOSTUNREACH
+            return "No route to host. The server may be unreachable."
+        default:
+            // Use String(describing:) which includes the actual reason string
+            return "Connection failed: \(String(describing: error))"
+        }
     }
 }

@@ -3,7 +3,7 @@ import Foundation
 public enum TDSError: Error, LocalizedError, CustomStringConvertible, Equatable {
     case protocolError(String)
     case connectionClosed
-    case invalidCredentials
+    case invalidCredentials(String)
     case needMoreData
     
     /// See `LocalizedError`.
@@ -19,8 +19,8 @@ public enum TDSError: Error, LocalizedError, CustomStringConvertible, Equatable 
             description = "protocol error: \(message)"
         case .connectionClosed:
             description = "connection closed"
-        case .invalidCredentials:
-            description = "Invalid login credentials"
+        case .invalidCredentials(let message):
+            description = message
         case .needMoreData:
             description = "need more data"
         }
