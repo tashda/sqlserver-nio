@@ -23,20 +23,22 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
     public func listLogins(includeDisabled: Bool = true, includeSystemLogins: Bool = false) -> EventLoopFuture<[ServerLoginInfo]> {
         run(sql: {
             var sql = """
-            SELECT name,
-                   type_desc,
-                   is_disabled,
-                   default_database_name,
-                   default_language_name
-            FROM sys.server_principals
-            WHERE type IN ('S', 'U', 'G', 'C', 'K', 'E')
+            SELECT sp.name,
+                   sp.type_desc,
+                   sp.is_disabled,
+                   sp.default_database_name,
+                   sp.default_language_name,
+                   sl.is_policy_checked,
+                   sl.is_expiration_checked
+            FROM sys.server_principals sp
+            LEFT JOIN sys.sql_logins sl ON sl.principal_id = sp.principal_id
+            WHERE sp.type IN ('S', 'U', 'G', 'C', 'K', 'E')
             """
-            if !includeDisabled { sql += " AND is_disabled = 0" }
+            if !includeDisabled { sql += " AND sp.is_disabled = 0" }
             if !includeSystemLogins {
-                // Filter out internal SQL Server logins (##...##) and sa when not needed
-                sql += " AND name NOT LIKE '##%##'"
+                sql += " AND sp.name NOT LIKE '##%##'"
             }
-            sql += " ORDER BY name"
+            sql += " ORDER BY sp.name"
             return sql
         }()).map { rows in
             rows.compactMap { row -> ServerLoginInfo? in
@@ -45,6 +47,8 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
                 let disabled = (row.column("is_disabled")?.int ?? 0) == 1
                 let defDb = row.column("default_database_name")?.string
                 let defLang = row.column("default_language_name")?.string
+                let policyChecked = row.column("is_policy_checked")?.int.map { $0 == 1 }
+                let expirationChecked = row.column("is_expiration_checked")?.int.map { $0 == 1 }
                 let type: ServerLoginType
                 switch typeDesc {
                 case "SQL_LOGIN": type = .sql
@@ -55,7 +59,7 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
                 case "EXTERNAL_LOGIN": type = .external
                 default: type = .sql
                 }
-                return ServerLoginInfo(name: name, type: type, isDisabled: disabled, defaultDatabase: defDb, defaultLanguage: defLang)
+                return ServerLoginInfo(name: name, type: type, isDisabled: disabled, defaultDatabase: defDb, defaultLanguage: defLang, isPolicyChecked: policyChecked, isExpirationChecked: expirationChecked)
             }
         }
     }
