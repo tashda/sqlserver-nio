@@ -4,7 +4,7 @@ import SQLServerTDS
 
 // MARK: - Server-scoped Security Client
 
-public final class SQLServerServerSecurityClient {
+public final class SQLServerServerSecurityClient: @unchecked Sendable {
     private enum Backing {
         case connection(SQLServerConnection)
         case client(SQLServerClient)

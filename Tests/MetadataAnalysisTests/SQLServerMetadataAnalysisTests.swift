@@ -2,6 +2,7 @@ import XCTest
 import NIO
 import Logging
 @testable import SQLServerKit
+import SQLServerKitTesting
 
 /// Comprehensive metadata analysis test to systematically identify failure patterns
 /// This test enumerates all schemas, tables, and views in a database and tests

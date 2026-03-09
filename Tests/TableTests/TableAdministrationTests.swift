@@ -1,5 +1,6 @@
 import XCTest
 @testable import SQLServerKit
+import SQLServerKitTesting
 
 final class SQLServerTableAdministrationTests: XCTestCase {
     var group: EventLoopGroup!

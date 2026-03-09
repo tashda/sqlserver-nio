@@ -2,6 +2,7 @@ import XCTest
 import NIO
 import Logging
 @testable import SQLServerKit
+import SQLServerKitTesting
 
 /// Integration tests for stored procedure output parameters (RPC RETURNVALUE token path).
 ///
