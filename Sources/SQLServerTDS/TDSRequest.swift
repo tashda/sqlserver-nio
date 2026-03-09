@@ -263,11 +263,23 @@ final class TDSRequestHandler: ChannelDuplexHandler {
                     request.tokenHandler.onDone(doneToken)
                     let doneMoreFlag: UShort = 0x0001
                     if (doneToken.status & doneMoreFlag) == 0 {
-                        cleanupRequest(request)
+                        // If this is a LoginRequest that completed without a LOGINACK,
+                        // the server rejected the login. Fail with the captured error message.
+                        if let loginReq = request.delegate as? LoginRequest, !loginAckReceived {
+                            let message = loginReq.serverErrorMessage ?? "Login failed"
+                            cleanupRequest(request, error: TDSError.invalidCredentials(message))
+                        } else {
+                            cleanupRequest(request)
+                        }
                         startNextIfQueued(context: context)
                     }
                 case .info, .error:
                     let messageToken = token as! TDSTokens.ErrorInfoToken
+                    // Capture server error messages on LoginRequest so login failures
+                    // include the actual server error text (e.g. error 18456).
+                    if token.type == .error, let loginReq = request.delegate as? LoginRequest {
+                        loginReq.serverErrorMessage = messageToken.messageText
+                    }
                     request.delegate.onMessage?(messageToken, token.type == .error)
                     request.tokenHandler.onMessage(messageToken)
                 case .returnValue:

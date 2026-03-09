@@ -1,6 +1,7 @@
 import Foundation
 import NIO
 @testable import SQLServerKit
+import SQLServerKitTesting
 import XCTest
 
 /// Minimal tests to verify enhanced Agent APIs work correctly

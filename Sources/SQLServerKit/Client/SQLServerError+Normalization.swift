@@ -11,8 +11,8 @@ extension SQLServerError {
             switch tds {
             case .connectionClosed:
                 return .connectionClosed
-            case .invalidCredentials:
-                return .authenticationFailed
+            case .invalidCredentials(let message):
+                return .authenticationFailed(message: message)
             case .protocolError(let message):
                 // Map protocol errors that explicitly signal a timeout to SQLServerError.timeout
                 if message.localizedCaseInsensitiveContains("timeout") {
@@ -33,6 +33,10 @@ extension SQLServerError {
         }
         if let nioError = error as? NIOConnectionError {
             return .transient(nioError)
+        }
+        // IOError from NIO (POSIX errno-based errors like connection refused, no route to host)
+        if let ioError = error as? IOError {
+            return .transient(ioError)
         }
         return .unknown(error)
     }

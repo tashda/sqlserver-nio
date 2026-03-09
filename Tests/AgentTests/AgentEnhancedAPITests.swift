@@ -1,7 +1,7 @@
 import Foundation
 import NIO
 @testable import SQLServerKit
-import Foundation
+import SQLServerKitTesting
 import XCTest
 
 /// Tests for the enhanced SQLServerAgentClient APIs that provide comprehensive job management data
@@ -304,7 +304,7 @@ final class AgentEnhancedAPITests: XCTestCase {
         print("✅ Date conversion working correctly in enhanced APIs")
     }
 
-    /// Test for the connectionClosed issue Echo is experiencing
+    /// Test for the connectionClosed issue App is experiencing
     func testEnhancedAPIConnectionStability() async throws {
         let agent = try await withTimeout(TIMEOUT) {
             try await self.client.withConnection { connection in

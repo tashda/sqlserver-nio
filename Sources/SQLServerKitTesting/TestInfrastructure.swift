@@ -35,7 +35,7 @@ public enum TestEnvironment: String, CaseIterable {
                 port: 1433,
                 database: "master",
                 username: "sa",
-                password: "YourPassword123!"
+                password: "<your_password>"
             )
         case .sql2025:
             return TestEnvironmentConfig(
@@ -43,7 +43,7 @@ public enum TestEnvironment: String, CaseIterable {
                 port: 1433,
                 database: "master",
                 username: "sa",
-                password: "YourPassword123!"
+                password: "<your_password>"
             )
         }
     }

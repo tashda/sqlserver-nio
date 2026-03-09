@@ -15,10 +15,12 @@ extension TDSConnection {
         to socketAddress: SocketAddress,
         tlsConfiguration: TLSConfiguration? = .makeClientConfiguration(),
         serverHostname: String? = nil,
+        connectTimeout: TimeAmount = .seconds(10),
         on eventLoop: EventLoop
     ) -> EventLoopFuture<TDSConnection> {
         let bootstrap = ClientBootstrap(group: eventLoop)
             .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
+            .connectTimeout(connectTimeout)
         
         let logger = Logger(label: "swift-tds")
         
