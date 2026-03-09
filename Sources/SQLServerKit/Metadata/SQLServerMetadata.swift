@@ -7,6 +7,20 @@ import SQLServerTDS
 // Lightweight metadata structs
 public struct DatabaseMetadata: Sendable {
     public let name: String
+    /// Database state descriptor (e.g. "ONLINE", "OFFLINE", "RESTORING").
+    /// `nil` when the state was not fetched.
+    public let stateDescription: String?
+
+    public init(name: String, stateDescription: String? = nil) {
+        self.name = name
+        self.stateDescription = stateDescription
+    }
+
+    /// Whether the database is currently online.
+    public var isOnline: Bool {
+        guard let state = stateDescription else { return true }
+        return state.uppercased() == "ONLINE"
+    }
 }
 
 public struct SchemaMetadata: Sendable {
@@ -512,7 +526,7 @@ public final class SQLServerMetadataClient {
     }
 
     private func effectiveDatabase(_ database: String?) -> String? {
-        if let database {
+        if let database, !database.isEmpty {
             return database
         }
         return defaultDatabaseLock.withLock { defaultDatabase }
@@ -1181,13 +1195,32 @@ public final class SQLServerMetadataClient {
     // MARK: - Databases
 
     public func listDatabases() -> EventLoopFuture<[DatabaseMetadata]> {
-        let sql = "EXEC sp_databases;"
+        let sql = """
+            SELECT d.name AS DATABASE_NAME, d.state_desc
+            FROM sys.databases d
+            ORDER BY d.name;
+            """
         return queryExecutor(sql).map { rows in
             rows.compactMap { row in
                 guard let name = row.column("DATABASE_NAME")?.string else { return nil }
-                return DatabaseMetadata(name: name)
+                let state = row.column("state_desc")?.string
+                return DatabaseMetadata(name: name, stateDescription: state)
             }
         }
+    }
+
+    /// Fetch the current state of a single database.
+    @available(macOS 12.0, *)
+    public func databaseState(name: String) async throws -> DatabaseMetadata {
+        let escaped = name.replacingOccurrences(of: "'", with: "''")
+        let sql = "SELECT d.name, d.state_desc FROM sys.databases d WHERE d.name = '\(escaped)'"
+        let rows = try await queryExecutor(sql).get()
+        guard let row = rows.first,
+              let dbName = row.column("name")?.string else {
+            throw SQLServerError.sqlExecutionError(message: "Database '\(name)' not found")
+        }
+        let state = row.column("state_desc")?.string
+        return DatabaseMetadata(name: dbName, stateDescription: state)
     }
 
     // MARK: - Schemas
@@ -3698,7 +3731,7 @@ private func listPrimaryKeysForSingleTable(
     }
 
     private func qualified(_ database: String?, object: String) -> String {
-        if let resolved = effectiveDatabase(database) {
+        if let resolved = effectiveDatabase(database), !resolved.isEmpty {
             return "[\(SQLServerMetadataClient.escapeIdentifier(resolved))].\(object)"
         } else {
             return object

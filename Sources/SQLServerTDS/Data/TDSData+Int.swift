@@ -136,47 +136,47 @@ private extension TDSData {
             guard let uint8 = value.getInteger(at: value.readerIndex, as: UInt8.self) else {
                 return nil
             }
-            return I(uint8)
+            return I(exactly: uint8)
         case .smallInt:
             assert(value.readableBytes == 2)
             guard let int16 = value.readInteger(endianness: .little, as: Int16.self) else {
                 return nil
             }
-            return I(int16)
+            return I(exactly: int16)
         case .int:
             assert(value.readableBytes == 4)
             guard let int32 = value.getInteger(at: value.readerIndex, endianness: .little, as: Int32.self) else {
                 return nil
             }
-            return I(int32)
+            return I(exactly: int32)
         case .bigInt:
             assert(value.readableBytes == 8)
             guard let int64 = value.getInteger(at: value.readerIndex, endianness: .little, as: Int64.self) else {
                 return nil
             }
-            return I(int64)
+            return I(exactly: int64)
         case .intn:
             switch value.readableBytes {
             case 1:
                 guard let uint8 = value.getInteger(at: value.readerIndex, as: UInt8.self) else {
                     return nil
                 }
-                return I(uint8)
+                return I(exactly: uint8)
             case 2:
                 guard let int16 = value.readInteger(endianness: .little, as: Int16.self) else {
                     return nil
                 }
-                return I(int16)
+                return I(exactly: int16)
             case 4:
                 guard let int32 = value.getInteger(at: value.readerIndex, endianness: .little, as: Int32.self) else {
                     return nil
                 }
-                return I(int32)
+                return I(exactly: int32)
             case 8:
                 guard let int64 = value.getInteger(at: value.readerIndex, endianness: .little, as: Int64.self) else {
                     return nil
                 }
-                return I(int64)
+                return I(exactly: int64)
             case 0:
                 return nil
             default:

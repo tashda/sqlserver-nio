@@ -6,6 +6,7 @@ import SQLServerTDS
 public protocol MSSQLSession {
     func serverVersion() async throws -> String
     func makeAgentClient() -> SQLServerAgentClient
+    func makeAdministrationClient() -> SQLServerAdministrationClient
     func makeDatabaseSecurityClient() -> SQLServerDatabaseSecurityClient
     func makeServerSecurityClient() -> SQLServerServerSecurityClient
 }
