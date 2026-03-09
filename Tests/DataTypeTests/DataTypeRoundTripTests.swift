@@ -3,6 +3,7 @@ import XCTest
 import Logging
 import NIO
 @testable import SQLServerKit
+import SQLServerKitTesting
 import Foundation
 
 final class SQLServerDataTypeRoundTripTests: XCTestCase {
