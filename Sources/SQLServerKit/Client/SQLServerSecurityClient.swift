@@ -104,7 +104,7 @@ public struct DetailedPermissionInfo: Sendable {
 
 // MARK: - SQLServerSecurityClient
 
-public final class SQLServerSecurityClient {
+public final class SQLServerSecurityClient: @unchecked Sendable {
     private enum Backing {
         case connection(SQLServerConnection)
         case client(SQLServerClient)

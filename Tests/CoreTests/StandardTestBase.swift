@@ -3,6 +3,7 @@ import NIOCore
 import Logging
 @testable import SQLServerTDS
 @testable import SQLServerKit
+import SQLServerKitTesting
 
 /// Standard base class for all SQLServer tests
 /// Provides consistent setup, teardown, and query execution patterns

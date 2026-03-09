@@ -1,5 +1,6 @@
 import XCTest
 @testable import SQLServerKit
+import SQLServerKitTesting
 
 final class SQLServerEnvDiagnosticsTests: XCTestCase {
     func testPrintTdsEnvironment() throws {
@@ -37,9 +38,11 @@ final class SQLServerEnvDiagnosticsTests: XCTestCase {
         let text = report.joined(separator: "\n")
         print(text)
 
+        #if canImport(Darwin)
         let attachment = XCTAttachment(string: text)
         attachment.lifetime = .keepAlways
         add(attachment)
+        #endif
     }
 }
 
