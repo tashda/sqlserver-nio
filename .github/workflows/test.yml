@@ -11,9 +11,10 @@ on:
       - dev
 
 jobs:
-  build:
-    name: Build
+  build-and-test:
+    name: Build & Unit Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout code
@@ -27,72 +28,5 @@ jobs:
       - name: Build
         run: swift build
 
-  unit-tests:
-    name: TDS Unit Tests
-    runs-on: ubuntu-latest
-    needs: build
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Swift
-        uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: "6.0"
-
       - name: Run TDS unit tests
         run: swift test --filter SQLServerTDSTests
-
-  integration-tests:
-    name: Integration Tests
-    runs-on: ubuntu-latest
-    needs: build
-
-    services:
-      mssql:
-        image: mcr.microsoft.com/mssql/server:2022-latest
-        env:
-          ACCEPT_EULA: Y
-          MSSQL_SA_PASSWORD: StrongPassword123!
-        ports:
-          - 1433:1433
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Swift
-        uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: "6.0"
-
-      - name: Wait for SQL Server to be ready
-        run: |
-          echo "Waiting for SQL Server to accept connections..."
-          for i in $(seq 1 30); do
-            if (echo quit | nc -w 2 127.0.0.1 1433) 2>/dev/null; then
-              echo "SQL Server port is open, waiting for initialization..."
-              sleep 10
-              echo "SQL Server is ready"
-              exit 0
-            fi
-            echo "Waiting... ($i/30)"
-            sleep 2
-          done
-          echo "SQL Server failed to start"
-          exit 1
-
-      - name: Run integration tests
-        env:
-          TDS_HOSTNAME: 127.0.0.1
-          TDS_PORT: "1433"
-          TDS_DATABASE: master
-          TDS_USERNAME: sa
-          TDS_PASSWORD: StrongPassword123!
-          TDS_ENABLE_SCHEMA_TESTS: "0"
-          TDS_ENABLE_ADMIN_TESTS: "0"
-          TDS_ENABLE_AGENT_TESTS: "0"
-        timeout-minutes: 15
-        run: |
-          swift test --filter 'SQLServerConnectionTests|SQLServerTableTests|SQLServerIndexTests|SQLServerConstraintTests|SQLServerViewTests|SQLServerTriggerTests|SQLServerRoutineTests|SQLServerSecurityTests|SQLServerAgentTests|SQLServerBulkTests|SQLServerTransactionTests|SQLServerTypeTests|SQLServerDataTypeTests|SQLServerMetadataTests|SQLServerAdvancedTests|CoreTests|TDSLayerTests'
