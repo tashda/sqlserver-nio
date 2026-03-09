@@ -73,6 +73,85 @@ public struct SQLServerDatabaseFile: Sendable {
     public let maxSizeDescription: String
     public let growthDescription: String
     public let fileGroupName: String?
+
+    /// Raw size in 8KB pages (for modification operations).
+    public let sizePages: Int
+    /// Raw max_size value (-1 = unlimited, 0 = no growth, positive = pages).
+    public let maxSizeRaw: Int
+    /// Raw growth value (pages or percentage).
+    public let growthRaw: Int
+    /// Whether growth is expressed as a percentage.
+    public let isPercentGrowth: Bool
+    /// File type code (0 = ROWS, 1 = LOG, 2 = FILESTREAM, etc.)
+    public let type: Int
+
+    public init(
+        name: String,
+        typeDescription: String,
+        physicalName: String,
+        sizeMB: Double,
+        maxSizeDescription: String,
+        growthDescription: String,
+        fileGroupName: String?,
+        sizePages: Int = 0,
+        maxSizeRaw: Int = -1,
+        growthRaw: Int = 0,
+        isPercentGrowth: Bool = false,
+        type: Int = 0
+    ) {
+        self.name = name
+        self.typeDescription = typeDescription
+        self.physicalName = physicalName
+        self.sizeMB = sizeMB
+        self.maxSizeDescription = maxSizeDescription
+        self.growthDescription = growthDescription
+        self.fileGroupName = fileGroupName
+        self.sizePages = sizePages
+        self.maxSizeRaw = maxSizeRaw
+        self.growthRaw = growthRaw
+        self.isPercentGrowth = isPercentGrowth
+        self.type = type
+    }
+
+    /// Computed growth in MB (returns nil if percent growth).
+    public var growthMB: Int? {
+        guard !isPercentGrowth else { return nil }
+        return growthRaw * 8 / 1024
+    }
+
+    /// Computed growth percentage (returns nil if not percent growth).
+    public var growthPercent: Int? {
+        guard isPercentGrowth else { return nil }
+        return growthRaw
+    }
+
+    /// Computed max size in MB (returns nil if unlimited or no growth).
+    public var maxSizeMB: Int? {
+        guard maxSizeRaw > 0 else { return nil }
+        return maxSizeRaw * 8 / 1024
+    }
+
+    /// Whether the file has unlimited max size.
+    public var isMaxSizeUnlimited: Bool { maxSizeRaw == -1 }
+
+    /// Whether the file is set to no growth.
+    public var isNoGrowth: Bool { maxSizeRaw == 0 && growthRaw == 0 }
+}
+
+/// Options for modifying a database file via ALTER DATABASE MODIFY FILE.
+public enum SQLServerDatabaseFileOption: Sendable {
+    /// Resize the file to the specified size in MB.
+    case sizeMB(Int)
+    /// Set the maximum size in MB. Use -1 for unlimited.
+    case maxSizeMB(Int)
+    /// Set max size to unlimited.
+    case maxSizeUnlimited
+    /// Set file growth by MB.
+    case filegrowthMB(Int)
+    /// Set file growth by percentage.
+    case filegrowthPercent(Int)
+    /// Disable file growth.
+    case filegrowthNone
 }
 
 /// Options that can be set on a database via ALTER DATABASE SET.
@@ -471,14 +550,19 @@ public final class SQLServerAdministrationClient: @unchecked Sendable {
         let sql = """
         SELECT
             mf.name,
+            mf.type,
             mf.type_desc,
             mf.physical_name,
+            mf.size,
             CAST(mf.size AS BIGINT) * 8.0 / 1024 AS size_mb,
+            mf.max_size,
             CASE
                 WHEN mf.max_size = -1 THEN 'Unlimited'
                 WHEN mf.max_size = 0 THEN 'No Growth'
                 ELSE CAST(CAST(mf.max_size AS BIGINT) * 8 / 1024 AS VARCHAR) + ' MB'
             END AS max_size_desc,
+            mf.growth,
+            mf.is_percent_growth,
             CASE
                 WHEN mf.is_percent_growth = 1 THEN CAST(mf.growth AS VARCHAR) + '%'
                 WHEN mf.growth = 0 THEN 'None'
@@ -501,9 +585,162 @@ public final class SQLServerAdministrationClient: @unchecked Sendable {
                 sizeMB: row.column("size_mb")?.double ?? 0,
                 maxSizeDescription: row.column("max_size_desc")?.string ?? "",
                 growthDescription: row.column("growth_desc")?.string ?? "",
-                fileGroupName: { let v = row.column("filegroup_name")?.string ?? ""; return v.isEmpty ? nil : v }()
+                fileGroupName: { let v = row.column("filegroup_name")?.string ?? ""; return v.isEmpty ? nil : v }(),
+                sizePages: row.column("size")?.int ?? 0,
+                maxSizeRaw: row.column("max_size")?.int ?? -1,
+                growthRaw: row.column("growth")?.int ?? 0,
+                isPercentGrowth: (row.column("is_percent_growth")?.int ?? 0) != 0,
+                type: row.column("type")?.int ?? 0
             )
         }
+    }
+
+    /// Modify a database file property (size, max size, or growth).
+    /// Returns informational messages from SQL Server.
+    @available(macOS 12.0, *)
+    @discardableResult
+    public func modifyDatabaseFile(
+        databaseName: String,
+        logicalFileName: String,
+        option: SQLServerDatabaseFileOption
+    ) async throws -> [SQLServerStreamMessage] {
+        let escapedDb = Self.escapeIdentifier(databaseName)
+        let escapedFile = logicalFileName.replacingOccurrences(of: "'", with: "''")
+
+        let optionClause: String
+        switch option {
+        case .sizeMB(let mb):
+            optionClause = "SIZE = \(mb)MB"
+        case .maxSizeMB(let mb):
+            optionClause = "MAXSIZE = \(mb)MB"
+        case .maxSizeUnlimited:
+            optionClause = "MAXSIZE = UNLIMITED"
+        case .filegrowthMB(let mb):
+            optionClause = "FILEGROWTH = \(mb)MB"
+        case .filegrowthPercent(let pct):
+            optionClause = "FILEGROWTH = \(pct)%"
+        case .filegrowthNone:
+            optionClause = "FILEGROWTH = 0"
+        }
+
+        let sql = "ALTER DATABASE \(escapedDb) MODIFY FILE (NAME = N'\(escapedFile)', \(optionClause))"
+        let result = try await client.execute(sql)
+        return result.messages
+    }
+
+    /// Add a new data file to a database.
+    /// Returns informational messages from SQL Server.
+    @available(macOS 12.0, *)
+    @discardableResult
+    public func addDatabaseFile(
+        databaseName: String,
+        logicalName: String,
+        fileName: String,
+        sizeMB: Int = 8,
+        maxSizeMB: Int? = nil,
+        filegrowthMB: Int = 64,
+        fileGroup: String? = nil
+    ) async throws -> [SQLServerStreamMessage] {
+        let escapedDb = Self.escapeIdentifier(databaseName)
+        let escapedLogical = logicalName.replacingOccurrences(of: "'", with: "''")
+        let escapedPhysical = fileName.replacingOccurrences(of: "'", with: "''")
+
+        var clauses = [
+            "NAME = N'\(escapedLogical)'",
+            "FILENAME = N'\(escapedPhysical)'",
+            "SIZE = \(sizeMB)MB",
+            "FILEGROWTH = \(filegrowthMB)MB"
+        ]
+
+        if let maxSize = maxSizeMB {
+            clauses.append("MAXSIZE = \(maxSize)MB")
+        } else {
+            clauses.append("MAXSIZE = UNLIMITED")
+        }
+
+        let fileSpec = clauses.joined(separator: ", ")
+        let toFileGroup: String
+        if let fg = fileGroup {
+            toFileGroup = " TO FILEGROUP \(Self.escapeIdentifier(fg))"
+        } else {
+            toFileGroup = ""
+        }
+
+        let sql = "ALTER DATABASE \(escapedDb) ADD FILE (\(fileSpec))\(toFileGroup)"
+        let result = try await client.execute(sql)
+        return result.messages
+    }
+
+    /// Add a new log file to a database.
+    /// Returns informational messages from SQL Server.
+    @available(macOS 12.0, *)
+    @discardableResult
+    public func addDatabaseLogFile(
+        databaseName: String,
+        logicalName: String,
+        fileName: String,
+        sizeMB: Int = 8,
+        maxSizeMB: Int? = nil,
+        filegrowthMB: Int = 64
+    ) async throws -> [SQLServerStreamMessage] {
+        let escapedDb = Self.escapeIdentifier(databaseName)
+        let escapedLogical = logicalName.replacingOccurrences(of: "'", with: "''")
+        let escapedPhysical = fileName.replacingOccurrences(of: "'", with: "''")
+
+        var clauses = [
+            "NAME = N'\(escapedLogical)'",
+            "FILENAME = N'\(escapedPhysical)'",
+            "SIZE = \(sizeMB)MB",
+            "FILEGROWTH = \(filegrowthMB)MB"
+        ]
+
+        if let maxSize = maxSizeMB {
+            clauses.append("MAXSIZE = \(maxSize)MB")
+        } else {
+            clauses.append("MAXSIZE = UNLIMITED")
+        }
+
+        let fileSpec = clauses.joined(separator: ", ")
+        let sql = "ALTER DATABASE \(escapedDb) ADD LOG FILE (\(fileSpec))"
+        let result = try await client.execute(sql)
+        return result.messages
+    }
+
+    /// Remove a file from a database.
+    /// The file must be empty before it can be removed. Use `shrinkDatabaseFile` first if needed.
+    /// Returns informational messages from SQL Server.
+    @available(macOS 12.0, *)
+    @discardableResult
+    public func removeDatabaseFile(
+        databaseName: String,
+        logicalFileName: String
+    ) async throws -> [SQLServerStreamMessage] {
+        let escapedDb = Self.escapeIdentifier(databaseName)
+        let escapedFile = logicalFileName.replacingOccurrences(of: "'", with: "''")
+        let sql = "ALTER DATABASE \(escapedDb) REMOVE FILE \(Self.escapeIdentifier(escapedFile))"
+        let result = try await client.execute(sql)
+        return result.messages
+    }
+
+    /// Shrink a specific database file to reclaim unused space.
+    /// targetSizeMB: the target size in MB (pass 0 to shrink as much as possible).
+    /// Returns informational messages from SQL Server.
+    @available(macOS 12.0, *)
+    @discardableResult
+    public func shrinkDatabaseFile(
+        databaseName: String,
+        logicalFileName: String,
+        targetSizeMB: Int = 0
+    ) async throws -> [SQLServerStreamMessage] {
+        // DBCC SHRINKFILE must run in the context of the target database.
+        let escapedFile = logicalFileName.replacingOccurrences(of: "'", with: "''")
+        let escapedDb = Self.escapeIdentifier(databaseName)
+        let sql = """
+        USE \(escapedDb);
+        DBCC SHRINKFILE(N'\(escapedFile)', \(targetSizeMB));
+        """
+        let result = try await client.execute(sql)
+        return result.messages
     }
 
     /// Alter a database option using ALTER DATABASE SET.
