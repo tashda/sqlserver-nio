@@ -93,22 +93,6 @@ jobs:
           TDS_ENABLE_SCHEMA_TESTS: "0"
           TDS_ENABLE_ADMIN_TESTS: "0"
           TDS_ENABLE_AGENT_TESTS: "0"
+        timeout-minutes: 15
         run: |
-          swift test \
-            --filter SQLServerConnectionTests \
-            --filter SQLServerTableTests \
-            --filter SQLServerIndexTests \
-            --filter SQLServerConstraintTests \
-            --filter SQLServerViewTests \
-            --filter SQLServerTriggerTests \
-            --filter SQLServerRoutineTests \
-            --filter SQLServerSecurityTests \
-            --filter SQLServerAgentTests \
-            --filter SQLServerBulkTests \
-            --filter SQLServerTransactionTests \
-            --filter SQLServerTypeTests \
-            --filter SQLServerDataTypeTests \
-            --filter SQLServerMetadataTests \
-            --filter SQLServerAdvancedTests \
-            --filter CoreTests \
-            --filter TDSLayerTests
+          swift test --filter 'SQLServerConnectionTests|SQLServerTableTests|SQLServerIndexTests|SQLServerConstraintTests|SQLServerViewTests|SQLServerTriggerTests|SQLServerRoutineTests|SQLServerSecurityTests|SQLServerAgentTests|SQLServerBulkTests|SQLServerTransactionTests|SQLServerTypeTests|SQLServerDataTypeTests|SQLServerMetadataTests|SQLServerAdvancedTests|CoreTests|TDSLayerTests'
