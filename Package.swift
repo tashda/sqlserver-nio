@@ -63,6 +63,17 @@ let package = Package(
             ],
             path: "Tests/ConnectionTests"),
 
+        // Database Tests
+        .testTarget(
+            name: "SQLServerDatabaseTests",
+            dependencies: [
+                "SQLServerKit",
+                "SQLServerKitTesting",
+                .product(name: "NIOTestUtils", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+            ],
+            path: "Tests/DatabaseTests"),
+
         // Table Tests
         .testTarget(
             name: "SQLServerTableTests",
