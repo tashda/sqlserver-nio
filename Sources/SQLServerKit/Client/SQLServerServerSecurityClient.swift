@@ -20,19 +20,25 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
     private init(backing: Backing) { self.backing = backing }
 
     // MARK: - Logins
-    public func listLogins(includeDisabled: Bool = true) -> EventLoopFuture<[ServerLoginInfo]> {
+    public func listLogins(includeDisabled: Bool = true, includeSystemLogins: Bool = false) -> EventLoopFuture<[ServerLoginInfo]> {
         run(sql: {
             var sql = """
-            SELECT name,
-                   type_desc,
-                   is_disabled,
-                   default_database_name,
-                   default_language_name
-            FROM sys.server_principals
-            WHERE type IN ('S', 'U', 'G', 'C', 'K', 'E')
+            SELECT sp.name,
+                   sp.type_desc,
+                   sp.is_disabled,
+                   sp.default_database_name,
+                   sp.default_language_name,
+                   sl.is_policy_checked,
+                   sl.is_expiration_checked
+            FROM sys.server_principals sp
+            LEFT JOIN sys.sql_logins sl ON sl.principal_id = sp.principal_id
+            WHERE sp.type IN ('S', 'U', 'G', 'C', 'K', 'E')
             """
-            if !includeDisabled { sql += " AND is_disabled = 0" }
-            sql += " ORDER BY name"
+            if !includeDisabled { sql += " AND sp.is_disabled = 0" }
+            if !includeSystemLogins {
+                sql += " AND sp.name NOT LIKE '##%##'"
+            }
+            sql += " ORDER BY sp.name"
             return sql
         }()).map { rows in
             rows.compactMap { row -> ServerLoginInfo? in
@@ -41,6 +47,8 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
                 let disabled = (row.column("is_disabled")?.int ?? 0) == 1
                 let defDb = row.column("default_database_name")?.string
                 let defLang = row.column("default_language_name")?.string
+                let policyChecked = row.column("is_policy_checked")?.int.map { $0 == 1 }
+                let expirationChecked = row.column("is_expiration_checked")?.int.map { $0 == 1 }
                 let type: ServerLoginType
                 switch typeDesc {
                 case "SQL_LOGIN": type = .sql
@@ -51,9 +59,61 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
                 case "EXTERNAL_LOGIN": type = .external
                 default: type = .sql
                 }
-                return ServerLoginInfo(name: name, type: type, isDisabled: disabled, defaultDatabase: defDb, defaultLanguage: defLang)
+                return ServerLoginInfo(name: name, type: type, isDisabled: disabled, defaultDatabase: defDb, defaultLanguage: defLang, isPolicyChecked: policyChecked, isExpirationChecked: expirationChecked)
             }
         }
+    }
+
+    /// Map a login to a database by creating a user in the target database.
+    public func mapLoginToDatabase(login: String, database: String, userName: String? = nil, defaultSchema: String? = nil) -> EventLoopFuture<Void> {
+        let user = userName ?? login
+        var sql = "USE [\(escapeIdentifier(database))]; CREATE USER [\(escapeIdentifier(user))] FOR LOGIN [\(escapeIdentifier(login))]"
+        if let schema = defaultSchema {
+            sql += " WITH DEFAULT_SCHEMA = [\(escapeIdentifier(schema))]"
+        }
+        sql += ";"
+        return exec(sql: sql).map { _ in () }
+    }
+
+    /// List databases a login is mapped to (has a user in).
+    public func listLoginDatabaseMappings(login: String) -> EventLoopFuture<[LoginDatabaseMapping]> {
+        let loginLit = escapeLiteral(login)
+        let sql = """
+        DECLARE @results TABLE (db_name sysname, user_name sysname, default_schema sysname NULL);
+        DECLARE @db sysname;
+        DECLARE cur CURSOR FAST_FORWARD FOR
+        SELECT name FROM sys.databases WHERE state = 0;
+        OPEN cur; FETCH NEXT FROM cur INTO @db;
+        WHILE @@FETCH_STATUS = 0 BEGIN
+            DECLARE @sql nvarchar(max) = N'USE ' + QUOTENAME(@db) + N';
+                INSERT INTO @results
+                SELECT DB_NAME(), dp.name, dp.default_schema_name
+                FROM sys.database_principals dp
+                WHERE dp.sid = SUSER_SID(N''\(loginLit)'')
+                AND dp.type IN (''S'',''U'',''G'');';
+            BEGIN TRY EXEC sp_executesql @sql; END TRY BEGIN CATCH END CATCH;
+            FETCH NEXT FROM cur INTO @db;
+        END; CLOSE cur; DEALLOCATE cur;
+        SELECT db_name, user_name, default_schema FROM @results ORDER BY db_name;
+        """
+        return run(sql: sql).map { rows in
+            rows.compactMap { row -> LoginDatabaseMapping? in
+                guard let dbName = row.column("db_name")?.string,
+                      let userName = row.column("user_name")?.string else { return nil }
+                return LoginDatabaseMapping(
+                    databaseName: dbName,
+                    userName: userName,
+                    defaultSchema: row.column("default_schema")?.string
+                )
+            }
+        }
+    }
+
+    /// Remove a login's user mapping from a database.
+    public func unmapLoginFromDatabase(login: String, database: String, userName: String? = nil) -> EventLoopFuture<Void> {
+        let user = userName ?? login
+        let sql = "USE [\(escapeIdentifier(database))]; DROP USER [\(escapeIdentifier(user))];"
+        return exec(sql: sql).map { _ in () }
     }
 
     public func createSqlLogin(name: String, password: String, options: LoginOptions = .init()) -> EventLoopFuture<Void> {
@@ -291,9 +351,50 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
         exec(sql: "DROP CREDENTIAL [\(escapeIdentifier(name))];").map { _ in () }
     }
 
+    /// List all database roles in a specific database, with membership status for a given user.
+    public func listDatabaseRolesForUser(database: String, userName: String) -> EventLoopFuture<[DatabaseUserRoleMembership]> {
+        let userLit = escapeLiteral(userName)
+        let sql = """
+        USE [\(escapeIdentifier(database))];
+        SELECT r.name AS role_name,
+               CASE WHEN rm.member_principal_id IS NOT NULL THEN 1 ELSE 0 END AS is_member
+        FROM sys.database_principals r
+        LEFT JOIN sys.database_role_members rm
+            ON rm.role_principal_id = r.principal_id
+            AND rm.member_principal_id = (SELECT principal_id FROM sys.database_principals WHERE name = N'\(userLit)')
+        WHERE r.type = 'R' AND r.is_fixed_role = 1
+        ORDER BY r.name;
+        """
+        return run(sql: sql).map { rows in
+            rows.compactMap { row -> DatabaseUserRoleMembership? in
+                guard let roleName = row.column("role_name")?.string else { return nil }
+                let isMember = row.column("is_member")?.int == 1
+                return DatabaseUserRoleMembership(roleName: roleName, isMember: isMember)
+            }
+        }
+    }
+
+    /// Add a user to a database role.
+    public func addUserToDatabaseRole(database: String, userName: String, role: String) -> EventLoopFuture<Void> {
+        let sql = "USE [\(escapeIdentifier(database))]; ALTER ROLE [\(escapeIdentifier(role))] ADD MEMBER [\(escapeIdentifier(userName))];"
+        return exec(sql: sql).map { _ in () }
+    }
+
+    /// Remove a user from a database role.
+    public func removeUserFromDatabaseRole(database: String, userName: String, role: String) -> EventLoopFuture<Void> {
+        let sql = "USE [\(escapeIdentifier(database))]; ALTER ROLE [\(escapeIdentifier(role))] DROP MEMBER [\(escapeIdentifier(userName))];"
+        return exec(sql: sql).map { _ in () }
+    }
+
     // MARK: - Async convenience
     @available(macOS 12.0, *)
-    public func listLogins(includeDisabled: Bool = true) async throws -> [ServerLoginInfo] { try await listLogins(includeDisabled: includeDisabled).get() }
+    public func listLogins(includeDisabled: Bool = true, includeSystemLogins: Bool = false) async throws -> [ServerLoginInfo] { try await listLogins(includeDisabled: includeDisabled, includeSystemLogins: includeSystemLogins).get() }
+    @available(macOS 12.0, *)
+    public func mapLoginToDatabase(login: String, database: String, userName: String? = nil, defaultSchema: String? = nil) async throws { _ = try await mapLoginToDatabase(login: login, database: database, userName: userName, defaultSchema: defaultSchema).get() }
+    @available(macOS 12.0, *)
+    public func listLoginDatabaseMappings(login: String) async throws -> [LoginDatabaseMapping] { try await listLoginDatabaseMappings(login: login).get() }
+    @available(macOS 12.0, *)
+    public func unmapLoginFromDatabase(login: String, database: String, userName: String? = nil) async throws { _ = try await unmapLoginFromDatabase(login: login, database: database, userName: userName).get() }
     @available(macOS 12.0, *)
     public func createSqlLogin(name: String, password: String, options: LoginOptions = .init()) async throws { _ = try await createSqlLogin(name: name, password: password, options: options).get() }
     @available(macOS 12.0, *)
@@ -338,6 +439,12 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
     public func alterCredential(name: String, identity: String?, secret: String?) async throws { _ = try await alterCredential(name: name, identity: identity, secret: secret).get() }
     @available(macOS 12.0, *)
     public func dropCredential(name: String) async throws { _ = try await dropCredential(name: name).get() }
+    @available(macOS 12.0, *)
+    public func listDatabaseRolesForUser(database: String, userName: String) async throws -> [DatabaseUserRoleMembership] { try await listDatabaseRolesForUser(database: database, userName: userName).get() }
+    @available(macOS 12.0, *)
+    public func addUserToDatabaseRole(database: String, userName: String, role: String) async throws { _ = try await addUserToDatabaseRole(database: database, userName: userName, role: role).get() }
+    @available(macOS 12.0, *)
+    public func removeUserFromDatabaseRole(database: String, userName: String, role: String) async throws { _ = try await removeUserFromDatabaseRole(database: database, userName: userName, role: role).get() }
 
     // MARK: - Helpers
     private func run(sql: String) -> EventLoopFuture<[TDSRow]> {

@@ -28,6 +28,8 @@ public struct ServerLoginInfo: Sendable {
     public let isDisabled: Bool
     public let defaultDatabase: String?
     public let defaultLanguage: String?
+    public let isPolicyChecked: Bool?
+    public let isExpirationChecked: Bool?
 }
 
 public enum DatabasePrincipalType: String, Sendable {
@@ -132,5 +134,29 @@ public struct PrincipalResolution: Sendable {
     public let exists: Bool
     public let principalType: ServerLoginType?
     public let sid: Data?
+}
+
+/// Represents a login's user mapping to a specific database.
+public struct LoginDatabaseMapping: Sendable {
+    public let databaseName: String
+    public let userName: String
+    public let defaultSchema: String?
+
+    public init(databaseName: String, userName: String, defaultSchema: String? = nil) {
+        self.databaseName = databaseName
+        self.userName = userName
+        self.defaultSchema = defaultSchema
+    }
+}
+
+/// Represents a database role and whether a user is a member.
+public struct DatabaseUserRoleMembership: Sendable {
+    public let roleName: String
+    public let isMember: Bool
+
+    public init(roleName: String, isMember: Bool) {
+        self.roleName = roleName
+        self.isMember = isMember
+    }
 }
 

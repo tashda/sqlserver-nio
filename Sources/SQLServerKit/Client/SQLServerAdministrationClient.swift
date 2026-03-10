@@ -16,58 +16,142 @@ public struct SQLServerRoleInfo: Sendable {
 
 /// Comprehensive database properties fetched from sys.databases and related system views.
 public struct SQLServerDatabaseProperties: Sendable {
+    // General
     public let name: String
     public let owner: String
     public let stateDescription: String
+    public let createDate: String
+    public let sizeMB: Double
+    public let activeSessions: Int
+    public let collationName: String
+
+    // Options
     public let recoveryModel: String
     public let compatibilityLevel: Int
-    public let collationName: String
     public let isReadOnly: Bool
     public let userAccessDescription: String
     public let pageVerifyOption: String
+    public let targetRecoveryTimeSeconds: Int
+    public let delayedDurability: String
+    public let snapshotIsolationState: String
+    public let isReadCommittedSnapshotOn: Bool
+    public let isEncrypted: Bool
+    public let isBrokerEnabled: Bool
+    public let isTrustworthy: Bool
+    public let isParameterizationForced: Bool
+
+    // Automatic
     public let isAutoCloseOn: Bool
     public let isAutoShrinkOn: Bool
     public let isAutoCreateStatsOn: Bool
     public let isAutoUpdateStatsOn: Bool
-    public let createDate: String
+    public let isAutoUpdateStatsAsyncOn: Bool
+
+    // ANSI / Miscellaneous
+    public let isAnsiNullDefaultOn: Bool
+    public let isAnsiNullsOn: Bool
+    public let isAnsiPaddingOn: Bool
+    public let isAnsiWarningsOn: Bool
+    public let isArithAbortOn: Bool
+    public let isConcatNullYieldsNullOn: Bool
+    public let isQuotedIdentifierOn: Bool
+    public let isRecursiveTriggersOn: Bool
+    public let isNumericRoundAbortOn: Bool
+    public let isDateCorrelationOn: Bool
+
+    // Backup
+    public let lastBackupDate: String?
+    public let lastLogBackupDate: String?
+}
+
+/// Database file information from sys.master_files.
+public struct SQLServerDatabaseFile: Sendable {
+    public let name: String
+    public let typeDescription: String
+    public let physicalName: String
     public let sizeMB: Double
-    public let activeSessions: Int
+    public let maxSizeDescription: String
+    public let growthDescription: String
+    public let fileGroupName: String?
+
+    /// Raw size in 8KB pages (for modification operations).
+    public let sizePages: Int
+    /// Raw max_size value (-1 = unlimited, 0 = no growth, positive = pages).
+    public let maxSizeRaw: Int
+    /// Raw growth value (pages or percentage).
+    public let growthRaw: Int
+    /// Whether growth is expressed as a percentage.
+    public let isPercentGrowth: Bool
+    /// File type code (0 = ROWS, 1 = LOG, 2 = FILESTREAM, etc.)
+    public let type: Int
 
     public init(
         name: String,
-        owner: String,
-        stateDescription: String,
-        recoveryModel: String,
-        compatibilityLevel: Int,
-        collationName: String,
-        isReadOnly: Bool,
-        userAccessDescription: String,
-        pageVerifyOption: String,
-        isAutoCloseOn: Bool,
-        isAutoShrinkOn: Bool,
-        isAutoCreateStatsOn: Bool,
-        isAutoUpdateStatsOn: Bool,
-        createDate: String,
+        typeDescription: String,
+        physicalName: String,
         sizeMB: Double,
-        activeSessions: Int
+        maxSizeDescription: String,
+        growthDescription: String,
+        fileGroupName: String?,
+        sizePages: Int = 0,
+        maxSizeRaw: Int = -1,
+        growthRaw: Int = 0,
+        isPercentGrowth: Bool = false,
+        type: Int = 0
     ) {
         self.name = name
-        self.owner = owner
-        self.stateDescription = stateDescription
-        self.recoveryModel = recoveryModel
-        self.compatibilityLevel = compatibilityLevel
-        self.collationName = collationName
-        self.isReadOnly = isReadOnly
-        self.userAccessDescription = userAccessDescription
-        self.pageVerifyOption = pageVerifyOption
-        self.isAutoCloseOn = isAutoCloseOn
-        self.isAutoShrinkOn = isAutoShrinkOn
-        self.isAutoCreateStatsOn = isAutoCreateStatsOn
-        self.isAutoUpdateStatsOn = isAutoUpdateStatsOn
-        self.createDate = createDate
+        self.typeDescription = typeDescription
+        self.physicalName = physicalName
         self.sizeMB = sizeMB
-        self.activeSessions = activeSessions
+        self.maxSizeDescription = maxSizeDescription
+        self.growthDescription = growthDescription
+        self.fileGroupName = fileGroupName
+        self.sizePages = sizePages
+        self.maxSizeRaw = maxSizeRaw
+        self.growthRaw = growthRaw
+        self.isPercentGrowth = isPercentGrowth
+        self.type = type
     }
+
+    /// Computed growth in MB (returns nil if percent growth).
+    public var growthMB: Int? {
+        guard !isPercentGrowth else { return nil }
+        return growthRaw * 8 / 1024
+    }
+
+    /// Computed growth percentage (returns nil if not percent growth).
+    public var growthPercent: Int? {
+        guard isPercentGrowth else { return nil }
+        return growthRaw
+    }
+
+    /// Computed max size in MB (returns nil if unlimited or no growth).
+    public var maxSizeMB: Int? {
+        guard maxSizeRaw > 0 else { return nil }
+        return maxSizeRaw * 8 / 1024
+    }
+
+    /// Whether the file has unlimited max size.
+    public var isMaxSizeUnlimited: Bool { maxSizeRaw == -1 }
+
+    /// Whether the file is set to no growth.
+    public var isNoGrowth: Bool { maxSizeRaw == 0 && growthRaw == 0 }
+}
+
+/// Options for modifying a database file via ALTER DATABASE MODIFY FILE.
+public enum SQLServerDatabaseFileOption: Sendable {
+    /// Resize the file to the specified size in MB.
+    case sizeMB(Int)
+    /// Set the maximum size in MB. Use -1 for unlimited.
+    case maxSizeMB(Int)
+    /// Set max size to unlimited.
+    case maxSizeUnlimited
+    /// Set file growth by MB.
+    case filegrowthMB(Int)
+    /// Set file growth by percentage.
+    case filegrowthPercent(Int)
+    /// Disable file growth.
+    case filegrowthNone
 }
 
 /// Options that can be set on a database via ALTER DATABASE SET.
@@ -79,8 +163,27 @@ public enum SQLServerDatabaseOption: Sendable {
     case autoShrink(Bool)
     case autoCreateStatistics(Bool)
     case autoUpdateStatistics(Bool)
+    case autoUpdateStatisticsAsync(Bool)
     case pageVerify(PageVerifyOption)
     case userAccess(UserAccessOption)
+    case targetRecoveryTime(Int)
+    case delayedDurability(DelayedDurabilityOption)
+    case allowSnapshotIsolation(Bool)
+    case readCommittedSnapshot(Bool)
+    case encryption(Bool)
+    case brokerEnabled(Bool)
+    case trustworthy(Bool)
+    case parameterization(ParameterizationOption)
+    case ansiNullDefault(Bool)
+    case ansiNulls(Bool)
+    case ansiPadding(Bool)
+    case ansiWarnings(Bool)
+    case arithAbort(Bool)
+    case concatNullYieldsNull(Bool)
+    case quotedIdentifier(Bool)
+    case recursiveTriggers(Bool)
+    case numericRoundAbort(Bool)
+    case dateCorrelationOptimization(Bool)
 
     public enum RecoveryModel: String, Sendable, CaseIterable {
         case simple = "SIMPLE"
@@ -98,6 +201,17 @@ public enum SQLServerDatabaseOption: Sendable {
         case multiUser = "MULTI_USER"
         case singleUser = "SINGLE_USER"
         case restrictedUser = "RESTRICTED_USER"
+    }
+
+    public enum DelayedDurabilityOption: String, Sendable, CaseIterable {
+        case disabled = "DISABLED"
+        case allowed = "ALLOWED"
+        case forced = "FORCED"
+    }
+
+    public enum ParameterizationOption: String, Sendable, CaseIterable {
+        case simple = "SIMPLE"
+        case forced = "FORCED"
     }
 }
 
@@ -335,6 +449,7 @@ public final class SQLServerAdministrationClient: @unchecked Sendable {
             d.is_auto_shrink_on,
             d.is_auto_create_stats_on,
             d.is_auto_update_stats_on,
+            d.is_auto_update_stats_async_on,
             CONVERT(VARCHAR(23), d.create_date, 121) AS create_date,
             COALESCE((
                 SELECT CAST(SUM(CAST(mf.size AS BIGINT)) * 8.0 / 1024 AS FLOAT)
@@ -345,7 +460,37 @@ public final class SQLServerAdministrationClient: @unchecked Sendable {
                 SELECT COUNT(*)
                 FROM sys.dm_exec_sessions s
                 WHERE s.database_id = d.database_id
-            ), 0) AS active_sessions
+            ), 0) AS active_sessions,
+            d.target_recovery_time_in_seconds,
+            COALESCE(d.delayed_durability_desc, 'DISABLED') AS delayed_durability,
+            d.snapshot_isolation_state_desc AS snapshot_isolation_state,
+            d.is_read_committed_snapshot_on,
+            d.is_encrypted,
+            d.is_broker_enabled,
+            d.is_trustworthy_on,
+            d.is_parameterization_forced,
+            d.is_ansi_null_default_on,
+            d.is_ansi_nulls_on,
+            d.is_ansi_padding_on,
+            d.is_ansi_warnings_on,
+            d.is_arithabort_on,
+            d.is_concat_null_yields_null_on,
+            d.is_quoted_identifier_on,
+            d.is_recursive_triggers_on,
+            d.is_numeric_roundabort_on,
+            d.is_date_correlation_on,
+            COALESCE((
+                SELECT TOP 1 CONVERT(VARCHAR(23), bs.backup_finish_date, 121)
+                FROM msdb.dbo.backupset bs
+                WHERE bs.database_name = d.name AND bs.type = 'D'
+                ORDER BY bs.backup_finish_date DESC
+            ), '') AS last_backup_date,
+            COALESCE((
+                SELECT TOP 1 CONVERT(VARCHAR(23), bs.backup_finish_date, 121)
+                FROM msdb.dbo.backupset bs
+                WHERE bs.database_name = d.name AND bs.type = 'L'
+                ORDER BY bs.backup_finish_date DESC
+            ), '') AS last_log_backup_date
         FROM sys.databases d
         WHERE d.name = N'\(escapedName)'
         """
@@ -355,24 +500,247 @@ public final class SQLServerAdministrationClient: @unchecked Sendable {
             throw SQLServerError.sqlExecutionError(message: "Database '\(name)' not found in sys.databases")
         }
 
+        func boolCol(_ name: String) -> Bool { (row.column(name)?.int ?? 0) != 0 }
+
         return SQLServerDatabaseProperties(
             name: row.column("name")?.string ?? name,
             owner: row.column("owner")?.string ?? "",
             stateDescription: row.column("state_description")?.string ?? "UNKNOWN",
-            recoveryModel: row.column("recovery_model")?.string ?? "UNKNOWN",
-            compatibilityLevel: row.column("compatibility_level")?.int ?? 0,
-            collationName: row.column("collation_name")?.string ?? "",
-            isReadOnly: (row.column("is_read_only")?.int ?? 0) != 0,
-            userAccessDescription: row.column("user_access_description")?.string ?? "MULTI_USER",
-            pageVerifyOption: row.column("page_verify_option")?.string ?? "NONE",
-            isAutoCloseOn: (row.column("is_auto_close_on")?.int ?? 0) != 0,
-            isAutoShrinkOn: (row.column("is_auto_shrink_on")?.int ?? 0) != 0,
-            isAutoCreateStatsOn: (row.column("is_auto_create_stats_on")?.int ?? 0) != 0,
-            isAutoUpdateStatsOn: (row.column("is_auto_update_stats_on")?.int ?? 0) != 0,
             createDate: row.column("create_date")?.string ?? "",
             sizeMB: row.column("size_mb")?.double ?? 0.0,
-            activeSessions: row.column("active_sessions")?.int ?? 0
+            activeSessions: row.column("active_sessions")?.int ?? 0,
+            collationName: row.column("collation_name")?.string ?? "",
+            recoveryModel: row.column("recovery_model")?.string ?? "UNKNOWN",
+            compatibilityLevel: row.column("compatibility_level")?.int ?? 0,
+            isReadOnly: boolCol("is_read_only"),
+            userAccessDescription: row.column("user_access_description")?.string ?? "MULTI_USER",
+            pageVerifyOption: row.column("page_verify_option")?.string ?? "NONE",
+            targetRecoveryTimeSeconds: row.column("target_recovery_time_in_seconds")?.int ?? 0,
+            delayedDurability: row.column("delayed_durability")?.string ?? "DISABLED",
+            snapshotIsolationState: row.column("snapshot_isolation_state")?.string ?? "OFF",
+            isReadCommittedSnapshotOn: boolCol("is_read_committed_snapshot_on"),
+            isEncrypted: boolCol("is_encrypted"),
+            isBrokerEnabled: boolCol("is_broker_enabled"),
+            isTrustworthy: boolCol("is_trustworthy_on"),
+            isParameterizationForced: boolCol("is_parameterization_forced"),
+            isAutoCloseOn: boolCol("is_auto_close_on"),
+            isAutoShrinkOn: boolCol("is_auto_shrink_on"),
+            isAutoCreateStatsOn: boolCol("is_auto_create_stats_on"),
+            isAutoUpdateStatsOn: boolCol("is_auto_update_stats_on"),
+            isAutoUpdateStatsAsyncOn: boolCol("is_auto_update_stats_async_on"),
+            isAnsiNullDefaultOn: boolCol("is_ansi_null_default_on"),
+            isAnsiNullsOn: boolCol("is_ansi_nulls_on"),
+            isAnsiPaddingOn: boolCol("is_ansi_padding_on"),
+            isAnsiWarningsOn: boolCol("is_ansi_warnings_on"),
+            isArithAbortOn: boolCol("is_arithabort_on"),
+            isConcatNullYieldsNullOn: boolCol("is_concat_null_yields_null_on"),
+            isQuotedIdentifierOn: boolCol("is_quoted_identifier_on"),
+            isRecursiveTriggersOn: boolCol("is_recursive_triggers_on"),
+            isNumericRoundAbortOn: boolCol("is_numeric_roundabort_on"),
+            isDateCorrelationOn: boolCol("is_date_correlation_on"),
+            lastBackupDate: { let v = row.column("last_backup_date")?.string ?? ""; return v.isEmpty ? nil : v }(),
+            lastLogBackupDate: { let v = row.column("last_log_backup_date")?.string ?? ""; return v.isEmpty ? nil : v }()
         )
+    }
+
+    /// Fetch database files from sys.master_files.
+    @available(macOS 12.0, *)
+    public func fetchDatabaseFiles(name: String) async throws -> [SQLServerDatabaseFile] {
+        let escapedName = name.replacingOccurrences(of: "'", with: "''")
+        let sql = """
+        SELECT
+            mf.name,
+            mf.type,
+            mf.type_desc,
+            mf.physical_name,
+            mf.size,
+            CAST(mf.size AS BIGINT) * 8.0 / 1024 AS size_mb,
+            mf.max_size,
+            CASE
+                WHEN mf.max_size = -1 THEN 'Unlimited'
+                WHEN mf.max_size = 0 THEN 'No Growth'
+                ELSE CAST(CAST(mf.max_size AS BIGINT) * 8 / 1024 AS VARCHAR) + ' MB'
+            END AS max_size_desc,
+            mf.growth,
+            mf.is_percent_growth,
+            CASE
+                WHEN mf.is_percent_growth = 1 THEN CAST(mf.growth AS VARCHAR) + '%'
+                WHEN mf.growth = 0 THEN 'None'
+                ELSE CAST(mf.growth * 8 / 1024 AS VARCHAR) + ' MB'
+            END AS growth_desc,
+            COALESCE(fg.name, '') AS filegroup_name
+        FROM sys.master_files mf
+        LEFT JOIN sys.filegroups fg ON fg.data_space_id = mf.data_space_id
+            AND mf.database_id = DB_ID()
+        WHERE mf.database_id = DB_ID(N'\(escapedName)')
+        ORDER BY mf.type, mf.file_id
+        """
+
+        let rows = try await client.query(sql)
+        return rows.map { row in
+            SQLServerDatabaseFile(
+                name: row.column("name")?.string ?? "",
+                typeDescription: row.column("type_desc")?.string ?? "",
+                physicalName: row.column("physical_name")?.string ?? "",
+                sizeMB: row.column("size_mb")?.double ?? 0,
+                maxSizeDescription: row.column("max_size_desc")?.string ?? "",
+                growthDescription: row.column("growth_desc")?.string ?? "",
+                fileGroupName: { let v = row.column("filegroup_name")?.string ?? ""; return v.isEmpty ? nil : v }(),
+                sizePages: row.column("size")?.int ?? 0,
+                maxSizeRaw: row.column("max_size")?.int ?? -1,
+                growthRaw: row.column("growth")?.int ?? 0,
+                isPercentGrowth: (row.column("is_percent_growth")?.int ?? 0) != 0,
+                type: row.column("type")?.int ?? 0
+            )
+        }
+    }
+
+    /// Modify a database file property (size, max size, or growth).
+    /// Returns informational messages from SQL Server.
+    @available(macOS 12.0, *)
+    @discardableResult
+    public func modifyDatabaseFile(
+        databaseName: String,
+        logicalFileName: String,
+        option: SQLServerDatabaseFileOption
+    ) async throws -> [SQLServerStreamMessage] {
+        let escapedDb = Self.escapeIdentifier(databaseName)
+        let escapedFile = logicalFileName.replacingOccurrences(of: "'", with: "''")
+
+        let optionClause: String
+        switch option {
+        case .sizeMB(let mb):
+            optionClause = "SIZE = \(mb)MB"
+        case .maxSizeMB(let mb):
+            optionClause = "MAXSIZE = \(mb)MB"
+        case .maxSizeUnlimited:
+            optionClause = "MAXSIZE = UNLIMITED"
+        case .filegrowthMB(let mb):
+            optionClause = "FILEGROWTH = \(mb)MB"
+        case .filegrowthPercent(let pct):
+            optionClause = "FILEGROWTH = \(pct)%"
+        case .filegrowthNone:
+            optionClause = "FILEGROWTH = 0"
+        }
+
+        let sql = "ALTER DATABASE \(escapedDb) MODIFY FILE (NAME = N'\(escapedFile)', \(optionClause))"
+        let result = try await client.execute(sql)
+        return result.messages
+    }
+
+    /// Add a new data file to a database.
+    /// Returns informational messages from SQL Server.
+    @available(macOS 12.0, *)
+    @discardableResult
+    public func addDatabaseFile(
+        databaseName: String,
+        logicalName: String,
+        fileName: String,
+        sizeMB: Int = 8,
+        maxSizeMB: Int? = nil,
+        filegrowthMB: Int = 64,
+        fileGroup: String? = nil
+    ) async throws -> [SQLServerStreamMessage] {
+        let escapedDb = Self.escapeIdentifier(databaseName)
+        let escapedLogical = logicalName.replacingOccurrences(of: "'", with: "''")
+        let escapedPhysical = fileName.replacingOccurrences(of: "'", with: "''")
+
+        var clauses = [
+            "NAME = N'\(escapedLogical)'",
+            "FILENAME = N'\(escapedPhysical)'",
+            "SIZE = \(sizeMB)MB",
+            "FILEGROWTH = \(filegrowthMB)MB"
+        ]
+
+        if let maxSize = maxSizeMB {
+            clauses.append("MAXSIZE = \(maxSize)MB")
+        } else {
+            clauses.append("MAXSIZE = UNLIMITED")
+        }
+
+        let fileSpec = clauses.joined(separator: ", ")
+        let toFileGroup: String
+        if let fg = fileGroup {
+            toFileGroup = " TO FILEGROUP \(Self.escapeIdentifier(fg))"
+        } else {
+            toFileGroup = ""
+        }
+
+        let sql = "ALTER DATABASE \(escapedDb) ADD FILE (\(fileSpec))\(toFileGroup)"
+        let result = try await client.execute(sql)
+        return result.messages
+    }
+
+    /// Add a new log file to a database.
+    /// Returns informational messages from SQL Server.
+    @available(macOS 12.0, *)
+    @discardableResult
+    public func addDatabaseLogFile(
+        databaseName: String,
+        logicalName: String,
+        fileName: String,
+        sizeMB: Int = 8,
+        maxSizeMB: Int? = nil,
+        filegrowthMB: Int = 64
+    ) async throws -> [SQLServerStreamMessage] {
+        let escapedDb = Self.escapeIdentifier(databaseName)
+        let escapedLogical = logicalName.replacingOccurrences(of: "'", with: "''")
+        let escapedPhysical = fileName.replacingOccurrences(of: "'", with: "''")
+
+        var clauses = [
+            "NAME = N'\(escapedLogical)'",
+            "FILENAME = N'\(escapedPhysical)'",
+            "SIZE = \(sizeMB)MB",
+            "FILEGROWTH = \(filegrowthMB)MB"
+        ]
+
+        if let maxSize = maxSizeMB {
+            clauses.append("MAXSIZE = \(maxSize)MB")
+        } else {
+            clauses.append("MAXSIZE = UNLIMITED")
+        }
+
+        let fileSpec = clauses.joined(separator: ", ")
+        let sql = "ALTER DATABASE \(escapedDb) ADD LOG FILE (\(fileSpec))"
+        let result = try await client.execute(sql)
+        return result.messages
+    }
+
+    /// Remove a file from a database.
+    /// The file must be empty before it can be removed. Use `shrinkDatabaseFile` first if needed.
+    /// Returns informational messages from SQL Server.
+    @available(macOS 12.0, *)
+    @discardableResult
+    public func removeDatabaseFile(
+        databaseName: String,
+        logicalFileName: String
+    ) async throws -> [SQLServerStreamMessage] {
+        let escapedDb = Self.escapeIdentifier(databaseName)
+        let escapedFile = logicalFileName.replacingOccurrences(of: "'", with: "''")
+        let sql = "ALTER DATABASE \(escapedDb) REMOVE FILE \(Self.escapeIdentifier(escapedFile))"
+        let result = try await client.execute(sql)
+        return result.messages
+    }
+
+    /// Shrink a specific database file to reclaim unused space.
+    /// targetSizeMB: the target size in MB (pass 0 to shrink as much as possible).
+    /// Returns informational messages from SQL Server.
+    @available(macOS 12.0, *)
+    @discardableResult
+    public func shrinkDatabaseFile(
+        databaseName: String,
+        logicalFileName: String,
+        targetSizeMB: Int = 0
+    ) async throws -> [SQLServerStreamMessage] {
+        // DBCC SHRINKFILE must run in the context of the target database.
+        let escapedFile = logicalFileName.replacingOccurrences(of: "'", with: "''")
+        let escapedDb = Self.escapeIdentifier(databaseName)
+        let sql = """
+        USE \(escapedDb);
+        DBCC SHRINKFILE(N'\(escapedFile)', \(targetSizeMB));
+        """
+        let result = try await client.execute(sql)
+        return result.messages
     }
 
     /// Alter a database option using ALTER DATABASE SET.
@@ -381,6 +749,7 @@ public final class SQLServerAdministrationClient: @unchecked Sendable {
     @discardableResult
     public func alterDatabaseOption(name: String, option: SQLServerDatabaseOption) async throws -> [SQLServerStreamMessage] {
         let escaped = Self.escapeIdentifier(name)
+        let onOff: (Bool) -> String = { $0 ? "ON" : "OFF" }
         let setClause: String
 
         switch option {
@@ -391,17 +760,55 @@ public final class SQLServerAdministrationClient: @unchecked Sendable {
         case .readOnly(let readOnly):
             setClause = readOnly ? "SET READ_ONLY" : "SET READ_WRITE"
         case .autoClose(let on):
-            setClause = "SET AUTO_CLOSE \(on ? "ON" : "OFF")"
+            setClause = "SET AUTO_CLOSE \(onOff(on))"
         case .autoShrink(let on):
-            setClause = "SET AUTO_SHRINK \(on ? "ON" : "OFF")"
+            setClause = "SET AUTO_SHRINK \(onOff(on))"
         case .autoCreateStatistics(let on):
-            setClause = "SET AUTO_CREATE_STATISTICS \(on ? "ON" : "OFF")"
+            setClause = "SET AUTO_CREATE_STATISTICS \(onOff(on))"
         case .autoUpdateStatistics(let on):
-            setClause = "SET AUTO_UPDATE_STATISTICS \(on ? "ON" : "OFF")"
+            setClause = "SET AUTO_UPDATE_STATISTICS \(onOff(on))"
+        case .autoUpdateStatisticsAsync(let on):
+            setClause = "SET AUTO_UPDATE_STATISTICS_ASYNC \(onOff(on))"
         case .pageVerify(let option):
             setClause = "SET PAGE_VERIFY \(option.rawValue)"
         case .userAccess(let access):
             setClause = "SET \(access.rawValue)"
+        case .targetRecoveryTime(let seconds):
+            setClause = "SET TARGET_RECOVERY_TIME = \(seconds) SECONDS"
+        case .delayedDurability(let option):
+            setClause = "SET DELAYED_DURABILITY = \(option.rawValue)"
+        case .allowSnapshotIsolation(let on):
+            setClause = "SET ALLOW_SNAPSHOT_ISOLATION \(onOff(on))"
+        case .readCommittedSnapshot(let on):
+            setClause = "SET READ_COMMITTED_SNAPSHOT \(onOff(on))"
+        case .encryption(let on):
+            setClause = "SET ENCRYPTION \(onOff(on))"
+        case .brokerEnabled(let on):
+            setClause = on ? "SET ENABLE_BROKER" : "SET DISABLE_BROKER"
+        case .trustworthy(let on):
+            setClause = "SET TRUSTWORTHY \(onOff(on))"
+        case .parameterization(let option):
+            setClause = "SET PARAMETERIZATION \(option.rawValue)"
+        case .ansiNullDefault(let on):
+            setClause = "SET ANSI_NULL_DEFAULT \(onOff(on))"
+        case .ansiNulls(let on):
+            setClause = "SET ANSI_NULLS \(onOff(on))"
+        case .ansiPadding(let on):
+            setClause = "SET ANSI_PADDING \(onOff(on))"
+        case .ansiWarnings(let on):
+            setClause = "SET ANSI_WARNINGS \(onOff(on))"
+        case .arithAbort(let on):
+            setClause = "SET ARITHABORT \(onOff(on))"
+        case .concatNullYieldsNull(let on):
+            setClause = "SET CONCAT_NULL_YIELDS_NULL \(onOff(on))"
+        case .quotedIdentifier(let on):
+            setClause = "SET QUOTED_IDENTIFIER \(onOff(on))"
+        case .recursiveTriggers(let on):
+            setClause = "SET RECURSIVE_TRIGGERS \(onOff(on))"
+        case .numericRoundAbort(let on):
+            setClause = "SET NUMERIC_ROUNDABORT \(onOff(on))"
+        case .dateCorrelationOptimization(let on):
+            setClause = "SET DATE_CORRELATION_OPTIMIZATION \(onOff(on))"
         }
 
         let result = try await client.execute("ALTER DATABASE \(escaped) \(setClause)")
