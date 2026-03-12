@@ -32,17 +32,17 @@ extension SQLServerAgentOperations {
         return run(sql).map { _ in () }
     }
 
-    public func attachSchedule(scheduleName: String, toJob jobName: String) -> EventLoopFuture<Void> {
+    internal func attachSchedule(scheduleName: String, toJob jobName: String) -> EventLoopFuture<Void> {
         let sql = "EXEC msdb.dbo.sp_attach_schedule @job_name = N'\(Self.escapeLiteral(jobName))', @schedule_name = N'\(Self.escapeLiteral(scheduleName))';"
         return run(sql).map { _ in () }
     }
 
-    public func detachSchedule(scheduleName: String, fromJob jobName: String) -> EventLoopFuture<Void> {
+    internal func detachSchedule(scheduleName: String, fromJob jobName: String) -> EventLoopFuture<Void> {
         let sql = "EXEC msdb.dbo.sp_detach_schedule @job_name = N'\(Self.escapeLiteral(jobName))', @schedule_name = N'\(Self.escapeLiteral(scheduleName))';"
         return run(sql).map { _ in () }
     }
 
-    public func deleteSchedule(named scheduleName: String) -> EventLoopFuture<Void> {
+    internal func deleteSchedule(named scheduleName: String) -> EventLoopFuture<Void> {
         let sql = "EXEC msdb.dbo.sp_delete_schedule @schedule_name = N'\(Self.escapeLiteral(scheduleName))';"
         return run(sql).map { _ in () }
     }
@@ -75,7 +75,7 @@ extension SQLServerAgentOperations {
         return run(sql).map { _ in () }
     }
 
-    public func listSchedules(forJob jobName: String? = nil) -> EventLoopFuture<[SQLServerAgentScheduleInfo]> {
+    internal func listSchedules(forJob jobName: String? = nil) -> EventLoopFuture<[SQLServerAgentScheduleInfo]> {
         let sql: String
         if let jobName {
             sql = """

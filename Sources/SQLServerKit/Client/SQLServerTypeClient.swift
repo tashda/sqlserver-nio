@@ -58,7 +58,7 @@ public final class SQLServerTypeClient: @unchecked Sendable {
     // MARK: - Create User-Defined Table Type
 
     /// Creates a user-defined table type with the specified columns
-    public func createUserDefinedTableType(_ definition: UserDefinedTableTypeDefinition) -> EventLoopFuture<Void> {
+    internal func createUserDefinedTableType(_ definition: UserDefinedTableTypeDefinition) -> EventLoopFuture<Void> {
         let columnDefinitions = definition.columns.map { column in
             var columnDef = "[\(column.name)] \(column.dataType.sqlLiteral)"
 
@@ -95,7 +95,7 @@ public final class SQLServerTypeClient: @unchecked Sendable {
     // MARK: - Drop User-Defined Table Type
 
     /// Drops a user-defined table type
-    public func dropUserDefinedTableType(name: String, schema: String = "dbo") -> EventLoopFuture<Void> {
+    internal func dropUserDefinedTableType(name: String, schema: String = "dbo") -> EventLoopFuture<Void> {
         let escapedName = "\(schema).[\(name)]"
         let sql = "DROP TYPE IF EXISTS \(escapedName)"
         return client.execute(sql).map { _ in () }
@@ -110,7 +110,7 @@ public final class SQLServerTypeClient: @unchecked Sendable {
     // MARK: - List User-Defined Table Types
 
     /// Lists all user-defined table types in the database
-    public func listUserDefinedTableTypes(schema: String? = nil) -> EventLoopFuture<[UserDefinedTableTypeDefinition]> {
+    internal func listUserDefinedTableTypes(schema: String? = nil) -> EventLoopFuture<[UserDefinedTableTypeDefinition]> {
         let queryFuture: EventLoopFuture<[SQLServerRow]>
 
         if let schema = schema {

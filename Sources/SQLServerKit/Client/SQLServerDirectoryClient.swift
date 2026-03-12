@@ -34,7 +34,7 @@ public final class SQLServerDirectoryClient {
 
     // Server-side validation only; best-effort
     public struct ValidationOptions: Sendable { public init() {} }
-    public func validatePrincipal(name: String, options: ValidationOptions = .init()) -> EventLoopFuture<PrincipalResolution> {
+    internal func validatePrincipal(name: String, options: ValidationOptions = .init()) -> EventLoopFuture<PrincipalResolution> {
         let escaped = name.replacingOccurrences(of: "'", with: "''")
         let sql = "SELECT sid = SUSER_SID(N'\(escaped)'), sname = SUSER_SNAME(SUSER_SID(N'\(escaped)'));"
         return run(sql: sql).map { rows in
@@ -43,6 +43,11 @@ public final class SQLServerDirectoryClient {
             }
             return PrincipalResolution(input: name, exists: false, principalType: nil, sid: nil)
         }
+    }
+
+    @available(macOS 12.0, *)
+    public func validatePrincipal(name: String, options: ValidationOptions = .init()) async throws -> PrincipalResolution {
+        try await validatePrincipal(name: name, options: options).get()
     }
 
     private func run(sql: String) -> EventLoopFuture<[SQLServerRow]> {

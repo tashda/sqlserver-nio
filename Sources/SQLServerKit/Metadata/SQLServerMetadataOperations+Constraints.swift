@@ -124,7 +124,7 @@ extension SQLServerMetadataOperations {
 
     // MARK: - Indexes
 
-    public func listIndexes(database: String? = nil, schema: String, table: String) -> EventLoopFuture<[IndexMetadata]> {
+    internal func listIndexes(database: String? = nil, schema: String, table: String) -> EventLoopFuture<[IndexMetadata]> {
         let sql = """
         SELECT
             schema_name = s.name,
@@ -205,7 +205,7 @@ extension SQLServerMetadataOperations {
 
     // MARK: - Foreign Keys
 
-    public func listForeignKeys(database: String? = nil, schema: String, table: String) -> EventLoopFuture<[ForeignKeyMetadata]> {
+    internal func listForeignKeys(database: String? = nil, schema: String, table: String) -> EventLoopFuture<[ForeignKeyMetadata]> {
         let sql = """
         SELECT
             fk_schema = fs.name,
@@ -253,7 +253,7 @@ extension SQLServerMetadataOperations {
 
     // MARK: - Dependencies
 
-    public func listDependencies(database: String? = nil, schema: String, object: String) -> EventLoopFuture<[DependencyMetadata]> {
+    internal func listDependencies(database: String? = nil, schema: String, object: String) -> EventLoopFuture<[DependencyMetadata]> {
         let sql = "WITH target AS (SELECT o.object_id FROM \(qualified(database, object: "sys.objects")) o JOIN \(qualified(database, object: "sys.schemas")) s ON o.schema_id = s.schema_id WHERE s.name = N'\(SQLServerMetadataOperations.escapeLiteral(schema))' AND o.name = N'\(SQLServerMetadataOperations.escapeLiteral(object))') SELECT rs.name as referencing_schema, ro.name as referencing_object, ro.type_desc as referencing_type, sed.is_schema_bound_reference as is_schema_bound FROM target JOIN \(qualified(database, object: "sys.sql_expression_dependencies")) sed ON sed.referenced_id = target.object_id JOIN \(qualified(database, object: "sys.objects")) ro ON sed.referencing_id = ro.object_id JOIN \(qualified(database, object: "sys.schemas")) rs ON ro.schema_id = rs.schema_id WHERE sed.referenced_minor_id = 0 ORDER BY rs.name, ro.name;"
         return queryExecutor(sql).map { rows in
             rows.compactMap { row in

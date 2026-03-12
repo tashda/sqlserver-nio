@@ -125,7 +125,7 @@ public final class SQLServerMetadataOperations: @unchecked Sendable {
         }
     }
 
-    public func fetchAgentStatus() -> EventLoopFuture<SQLServerAgentStatus> {
+    internal func fetchAgentStatus() -> EventLoopFuture<SQLServerAgentStatus> {
         let sql = """
         SELECT
             is_enabled = CAST(ISNULL((

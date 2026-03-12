@@ -2,6 +2,7 @@ import NIO
 import NIOEmbedded
 import NIOCore
 import NIOConcurrencyHelpers
+import Foundation
 import Logging
 import SQLServerTDS
 
@@ -9,13 +10,13 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
     public struct Configuration: Sendable {
         public var maximumConcurrentConnections: Int
         public var minimumIdleConnections: Int
-        public var connectionIdleTimeout: TimeAmount?
+        public var connectionIdleTimeout: TimeInterval?
         public var validationQuery: String?
 
         public init(
             maximumConcurrentConnections: Int = 8,
             minimumIdleConnections: Int = 0,
-            connectionIdleTimeout: TimeAmount? = nil,
+            connectionIdleTimeout: TimeInterval? = nil,
             validationQuery: String? = nil
         ) {
             precondition(maximumConcurrentConnections > 0, "maximumConcurrentConnections must be positive")
@@ -59,7 +60,7 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
         }
 
         @discardableResult
-        public func release(close: Bool = false) -> EventLoopFuture<Void> {
+        internal func release(close: Bool = false) -> EventLoopFuture<Void> {
             let alreadyReleased = releaseLock.withLock { () -> Bool in
                 if released {
                     return true
@@ -109,7 +110,7 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
     private var isShuttingDown = false
     private let logger: Logger
 
-    public init(
+    internal init(
         configuration: Configuration,
         eventLoopGroup: EventLoopGroup,
         logger: Logger = Logger(label: "tds.sqlserver.pool"),
@@ -123,7 +124,7 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
         // mirroring SSMS/JDBC behavior where connections are created on demand.
     }
 
-    public func checkout(on eventLoop: EventLoop? = nil) -> EventLoopFuture<PooledConnection> {
+    internal func checkout(on eventLoop: EventLoop? = nil) -> EventLoopFuture<PooledConnection> {
         let targetLoop = eventLoop ?? eventLoopGroup.next()
         let promise = targetLoop.makePromise(of: TDSConnection.self)
         let request = PoolRequest(promise: promise, eventLoop: targetLoop)
@@ -134,7 +135,7 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
     }
 
     @discardableResult
-    public func withConnection<Result: Sendable>(
+    internal func withConnection<Result: Sendable>(
         on eventLoop: EventLoop? = nil,
         _ closure: @Sendable @escaping (TDSConnection) -> EventLoopFuture<Result>
     ) -> EventLoopFuture<Result> {
@@ -148,7 +149,7 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
         }
     }
 
-    public func shutdownGracefully() -> EventLoopFuture<Void> {
+    internal func shutdownGracefully() -> EventLoopFuture<Void> {
         var connectionsToClose: [TDSConnection] = []
         var waiting: [PoolRequest] = []
         var alreadyShuttingDown = false
@@ -299,7 +300,7 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
         guard let timeout = configuration.connectionIdleTimeout else {
             return nil
         }
-        return connection.eventLoop.scheduleTask(deadline: .now() + timeout) { [weak self, weak connection] in
+        return connection.eventLoop.scheduleTask(in: timeout.nioTimeAmount) { [weak self, weak connection] in
             guard let self = self, let connection = connection else { return }
             self.expireIdleConnection(connection)
         }

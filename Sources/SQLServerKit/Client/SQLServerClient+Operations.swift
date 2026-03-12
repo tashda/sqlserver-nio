@@ -38,7 +38,7 @@ extension SQLServerClient {
 
     // MARK: - SQL Agent Status
 
-    public func fetchAgentStatus(on eventLoop: EventLoop? = nil) -> EventLoopFuture<SQLServerAgentStatus> {
+    internal func fetchAgentStatus(on eventLoop: EventLoop? = nil) -> EventLoopFuture<SQLServerAgentStatus> {
         let loop = eventLoop ?? eventLoopGroup.next()
         return withConnection(on: loop) { connection in
             connection.fetchAgentStatus()
@@ -58,7 +58,7 @@ extension SQLServerClient {
         }
     }
 
-    public func listDatabases(on eventLoop: EventLoop? = nil) -> EventLoopFuture<[DatabaseMetadata]> {
+    internal func listDatabases(on eventLoop: EventLoop? = nil) -> EventLoopFuture<[DatabaseMetadata]> {
         withConnection(on: eventLoop) { connection in
             connection.listDatabases()
         }
@@ -285,7 +285,7 @@ extension SQLServerClient {
         return attempt(1)
     }
 
-    public func serverVersion(on eventLoop: EventLoop? = nil) -> EventLoopFuture<String> {
+    internal func serverVersion(on eventLoop: EventLoop? = nil) -> EventLoopFuture<String> {
         let loop = eventLoop ?? eventLoopGroup.next()
         return withConnection(on: loop) { connection in
             connection.serverVersion()

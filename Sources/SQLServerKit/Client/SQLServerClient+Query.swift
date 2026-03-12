@@ -3,7 +3,6 @@ import NIO
 import SQLServerTDS
 
 extension SQLServerClient {
-    @available(*, deprecated, message: "Use async execute(_:on:) instead.")
     public func execute(
         _ sql: String,
         on eventLoop: EventLoop? = nil
@@ -25,7 +24,6 @@ extension SQLServerClient {
         return fut.withTestTimeoutIfEnabled(on: loop)
     }
 
-    @available(*, deprecated, message: "Use async execute(_:on:) instead.")
     public func execute(
         _ sql: String,
         on eventLoop: EventLoop? = nil,
@@ -37,7 +35,6 @@ extension SQLServerClient {
         }
     }
 
-    @available(*, deprecated, message: "Use async query(_:on:) instead.")
     public func query(
         _ sql: String,
         on eventLoop: EventLoop? = nil
@@ -49,7 +46,6 @@ extension SQLServerClient {
         return fut.withTestTimeoutIfEnabled(on: loop)
     }
 
-    @available(*, deprecated, message: "Use async query(_:on:) with timeout handling in Swift concurrency.")
     public func query(
         _ sql: String,
         on eventLoop: EventLoop? = nil,
@@ -61,7 +57,6 @@ extension SQLServerClient {
         }
     }
 
-    @available(*, deprecated, message: "Use async queryScalar(_:as:on:) instead.")
     public func queryScalar<T: SQLServerDataConvertible & Sendable>(
         _ sql: String,
         as type: T.Type = T.self,
@@ -83,7 +78,7 @@ extension SQLServerClient {
         }
     }
 
-    public func executeSeparateBatches(_ sqlStatements: [String]) -> EventLoopFuture<[SQLServerExecutionResult]> {
+    internal func executeSeparateBatches(_ sqlStatements: [String]) -> EventLoopFuture<[SQLServerExecutionResult]> {
         let promise = eventLoopGroup.next().makePromise(of: [SQLServerExecutionResult].self)
         if #available(macOS 12.0, *) {
             promise.completeWithTask {

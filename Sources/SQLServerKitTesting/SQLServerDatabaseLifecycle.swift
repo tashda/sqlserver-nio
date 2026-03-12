@@ -5,22 +5,25 @@ import SQLServerTDS
 
 // MARK: - Database Lifecycle
 
+@available(macOS 12.0, *)
 public func createTemporaryDatabase(client: SQLServerClient, prefix: String = "tmp") async throws -> String {
     let token = UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8)
     let dbName = "\(prefix)_\(token)"
     let createSql = "CREATE DATABASE [\(dbName)];"
     try await executeWithTransientRetry(client: client) { connection in
-        connection.execute(createSql)
+        try await connection.execute(createSql)
     }
     try await waitForDatabaseOnline(client: client, name: String(dbName))
     try await waitForDatabaseConnectable(name: String(dbName))
     return String(dbName)
 }
 
+@available(macOS 12.0, *)
 public func dropTemporaryDatabase(client: SQLServerClient, name: String) async throws {
     try await dropDatabaseIfExists(client: client, name: name)
 }
 
+@available(macOS 12.0, *)
 public func withTemporaryDatabase<T>(
     client: SQLServerClient,
     prefix: String = "tmp",
@@ -38,9 +41,10 @@ public func withTemporaryDatabase<T>(
     }
 }
 
+@available(macOS 12.0, *)
 public func withDbClient<T>(
     for database: String,
-    using group: EventLoopGroup,
+    using _: EventLoopGroup,
     maxConnections: Int = 4,
     operation: (SQLServerClient) async throws -> T
 ) async throws -> T {
@@ -63,21 +67,22 @@ public func withDbClient<T>(
                     validationQuery: nil
                 )
             ),
-            eventLoopGroupProvider: .shared(group)
-        ).get()
+            numberOfThreads: 1
+        )
     }
 
     do {
         let result = try await operation(client)
-        try await client.shutdownGracefully().get()
+        try await client.shutdownGracefully()
         return result
     } catch {
         // Ensure cleanup even if operation fails
-        try? await client.shutdownGracefully().get()
+        try? await client.shutdownGracefully()
         throw error
     }
 }
 
+@available(macOS 12.0, *)
 public func dropDatabaseIfExists(client: SQLServerClient, name: String) async throws {
     let dropSql = """
     IF DB_ID(N'\(name)') IS NOT NULL
@@ -92,9 +97,8 @@ public func dropDatabaseIfExists(client: SQLServerClient, name: String) async th
         attempt += 1
         do {
             try await executeWithTransientRetry(client: client) { connection in
-                connection.changeDatabase("master").flatMap { _ in
-                    connection.execute(dropSql)
-                }
+                try await connection.changeDatabase("master")
+                return try await connection.execute(dropSql)
             }
         } catch {
             if !isTransientConnectionClosureError(error) {
@@ -114,69 +118,56 @@ public func dropDatabaseIfExists(client: SQLServerClient, name: String) async th
     throw SQLServerError.sqlExecutionError(message: "Unable to drop temporary database \(name) after multiple attempts")
 }
 
+@available(macOS 12.0, *)
 public func executeInDb(client: SQLServerClient, database: String, _ sql: String) async throws {
     try await executeWithTransientRetry(client: client) { connection in
-        connection.changeDatabase(database).flatMap { _ in
-            connection.execute(sql).flatMap { result in
-                resetDatabaseIfPossible(connection, to: connection.configuration.login.database).map { result }
-            }.flatMapError { error in
-                resetDatabaseIfPossible(connection, to: connection.configuration.login.database).flatMapThrowing { throw error }
-            }
+        let originalDatabase = connection.currentDatabase
+        try await connection.changeDatabase(database)
+        do {
+            let result = try await connection.execute(sql)
+            try await connection.changeDatabase(originalDatabase)
+            return result
+        } catch {
+            try? await connection.changeDatabase(originalDatabase)
+            throw error
         }
     }
 }
 
+@available(macOS 12.0, *)
 public func withDbConnection<T: Sendable>(
     client: SQLServerClient,
     database: String,
     operation: @escaping @Sendable (SQLServerConnection) async throws -> T
 ) async throws -> T {
-    let future: EventLoopFuture<T> = client.withConnection(on: nil) { connection in
-        let promise = connection.eventLoop.makePromise(of: T.self)
-        let originalDatabase = connection.configuration.login.database
-
-        connection.changeDatabase(database).whenComplete { result in
-            switch result {
-            case .failure(let error):
-                promise.fail(error)
-            case .success:
-                Task {
-                    do {
-                        let value = try await operation(connection)
-                        resetDatabaseIfPossible(connection, to: originalDatabase).whenComplete { resetResult in
-                            switch resetResult {
-                            case .success:
-                                promise.succeed(value)
-                            case .failure(let error):
-                                promise.fail(error)
-                            }
-                        }
-                    } catch {
-                        resetDatabaseIfPossible(connection, to: originalDatabase).whenComplete { _ in
-                            promise.fail(error)
-                        }
-                    }
-                }
-            }
+    try await client.withConnection { connection in
+        let originalDatabase = connection.currentDatabase
+        try await connection.changeDatabase(database)
+        do {
+            let value = try await operation(connection)
+            try await connection.changeDatabase(originalDatabase)
+            return value
+        } catch {
+            try? await connection.changeDatabase(originalDatabase)
+            throw error
         }
-
-        return promise.futureResult
     }
-
-    return try await future.get()
 }
 
+@available(macOS 12.0, *)
 public func queryInDb(client: SQLServerClient, database: String, _ sql: String) async throws -> [SQLServerRow] {
-    let future: EventLoopFuture<[SQLServerRow]> = client.withConnection(on: nil) { connection in
-        connection.changeDatabase(database).flatMap { _ in
-            connection.query(sql).flatMap { rows in
-                resetDatabaseIfPossible(connection, to: connection.configuration.login.database).map { rows }
-            }.flatMapError { error in
-                resetDatabaseIfPossible(connection, to: connection.configuration.login.database).flatMapThrowing { throw error }
-            }
+    try await client.withConnection { connection in
+        let originalDatabase = connection.currentDatabase
+        try await connection.changeDatabase(database)
+        do {
+            let rows = try await connection.query(sql)
+            try await connection.changeDatabase(originalDatabase)
+            return rows
+        } catch {
+            try? await connection.changeDatabase(originalDatabase)
+            throw error
         }
     }
-    return try await future.get()
 }
 
 // MARK: - Internal Helpers
@@ -197,26 +188,17 @@ internal func isTransientConnectionClosureError(_ error: Error) -> Bool {
     return false
 }
 
-internal func resetDatabaseIfPossible(_ connection: SQLServerConnection, to database: String) -> EventLoopFuture<Void> {
-    connection.changeDatabase(database).flatMapError { error in
-        if isTransientConnectionClosureError(error) {
-            return connection.eventLoop.makeSucceededFuture(())
-        }
-        return connection.eventLoop.makeFailedFuture(error)
-    }
-}
-
+@available(macOS 12.0, *)
 internal func executeWithTransientRetry(
     client: SQLServerClient,
     attempts: Int = 3,
-    operation: @escaping @Sendable (SQLServerConnection) -> EventLoopFuture<SQLServerExecutionResult>
+    operation: @escaping @Sendable (SQLServerConnection) async throws -> SQLServerExecutionResult
 ) async throws {
     var attempt = 0
     while true {
         attempt += 1
         do {
-            let future: EventLoopFuture<SQLServerExecutionResult> = client.withConnection(on: nil, operation)
-            _ = try await future.get()
+            _ = try await client.withConnection(operation)
             return
         } catch {
             if isTransientConnectionClosureError(error), attempt < attempts {
@@ -228,17 +210,17 @@ internal func executeWithTransientRetry(
     }
 }
 
+@available(macOS 12.0, *)
 internal func queryWithTransientRetry<T: Sendable>(
     client: SQLServerClient,
     attempts: Int = 3,
-    operation: @escaping @Sendable (SQLServerConnection) -> EventLoopFuture<T>
+    operation: @escaping @Sendable (SQLServerConnection) async throws -> T
 ) async throws -> T {
     var attempt = 0
     while true {
         attempt += 1
         do {
-            let future: EventLoopFuture<T> = client.withConnection(on: nil, operation)
-            return try await future.get()
+            return try await client.withConnection(operation)
         } catch {
             if isTransientConnectionClosureError(error), attempt < attempts {
                 try await Task.sleep(nanoseconds: 100_000_000)
@@ -249,10 +231,11 @@ internal func queryWithTransientRetry<T: Sendable>(
     }
 }
 
+@available(macOS 12.0, *)
 internal func databaseExists(client: SQLServerClient, name: String) async throws -> Bool {
     let sql = "SELECT DB_ID(N'\(name)') AS dbid;"
     let rows: [SQLServerRow] = try await queryWithTransientRetry(client: client) { connection in
-        connection.query(sql)
+        try await connection.query(sql)
     }
     if let dbValue = rows.first?.column("dbid")?.int, dbValue != 0 {
         return true
@@ -260,6 +243,7 @@ internal func databaseExists(client: SQLServerClient, name: String) async throws
     return false
 }
 
+@available(macOS 12.0, *)
 internal func waitForDatabaseOnline(client: SQLServerClient, name: String, attempts: Int = 20) async throws {
     let escaped = name.replacingOccurrences(of: "'", with: "''")
     let sql = """
@@ -270,7 +254,7 @@ internal func waitForDatabaseOnline(client: SQLServerClient, name: String, attem
 
     for attempt in 1...attempts {
         let rows: [SQLServerRow] = try await queryWithTransientRetry(client: client) { connection in
-            connection.query(sql)
+            try await connection.query(sql)
         }
         if let row = rows.first,
            row.column("state")?.int == 0 {
@@ -284,8 +268,8 @@ internal func waitForDatabaseOnline(client: SQLServerClient, name: String, attem
     throw SQLServerError.sqlExecutionError(message: "Database \(name) did not reach ONLINE state")
 }
 
+@available(macOS 12.0, *)
 internal func waitForDatabaseConnectable(name: String, attempts: Int = 20) async throws {
-    let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     var config = makeSQLServerConnectionConfiguration()
     config.login.database = name
 
@@ -302,31 +286,27 @@ internal func waitForDatabaseConnectable(name: String, attempts: Int = 20) async
                             validationQuery: nil
                         )
                     ),
-                    eventLoopGroupProvider: .shared(group)
-                ).get()
+                    numberOfThreads: 1
+                )
                 do {
-                    let rows = try await client.query("SELECT DB_NAME() AS db_name").get()
-                    try await client.shutdownGracefully().get()
+                    let rows = try await client.query("SELECT DB_NAME() AS db_name")
+                    try await client.shutdownGracefully()
                     if rows.first?.column("db_name")?.string?.caseInsensitiveCompare(name) == .orderedSame {
-                        try await group.shutdownGracefully()
                         return
                     }
                 } catch {
-                    try? await client.shutdownGracefully().get()
+                    try? await client.shutdownGracefully()
                     throw error
                 }
             } catch {
                 if attempt == attempts {
-                    try await group.shutdownGracefully()
                     throw error
                 }
             }
 
             try await Task.sleep(nanoseconds: 250_000_000)
         }
-        try await group.shutdownGracefully()
     } catch {
-        try? await group.shutdownGracefully()
         throw error
     }
 }

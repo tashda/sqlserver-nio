@@ -4,7 +4,7 @@ import SQLServerTDS
 extension SQLServerAdministrationClient {
     // MARK: - Table Management
 
-    public func createTable(name: String, columns: [SQLServerColumnDefinition]) -> EventLoopFuture<Void> {
+    internal func createTable(name: String, columns: [SQLServerColumnDefinition]) -> EventLoopFuture<Void> {
         let promise = client.eventLoopGroup.next().makePromise(of: Void.self)
         if #available(macOS 12.0, *) {
             promise.completeWithTask {

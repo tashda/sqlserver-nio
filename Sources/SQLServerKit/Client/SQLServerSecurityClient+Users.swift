@@ -54,7 +54,7 @@ extension SQLServerSecurityClient {
         _ = try await exec(sql)
     }
     
-    public func dropUser(name: String) -> EventLoopFuture<Void> {
+    internal func dropUser(name: String) -> EventLoopFuture<Void> {
         let loop = self.eventLoop
         let promise = loop.makePromise(of: Void.self)
         if #available(macOS 12.0, *) {

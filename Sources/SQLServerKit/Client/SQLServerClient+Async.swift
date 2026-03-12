@@ -38,7 +38,7 @@ extension SQLServerClient {
     }
 
     @available(macOS 12.0, *)
-    public func withConnection<Result: Sendable>(
+    internal func withConnection<Result: Sendable>(
         on eventLoop: EventLoop? = nil,
         _ operation: @escaping @Sendable (SQLServerConnection) async throws -> Result
     ) async throws -> Result {
@@ -228,7 +228,7 @@ extension SQLServerClient {
     }
 
     @available(macOS 12.0, *)
-    public func fetchAgentStatus(on eventLoop: EventLoop? = nil) async throws -> SQLServerAgentStatus {
+    internal func fetchAgentStatus(on eventLoop: EventLoop? = nil) async throws -> SQLServerAgentStatus {
         try await withConnection(on: eventLoop) { connection in
             try await connection.fetchAgentStatus()
         }
@@ -263,7 +263,7 @@ extension SQLServerClient {
     }
 
     @available(macOS 12.0, *)
-    public func listDatabases(on eventLoop: EventLoop? = nil) async throws -> [DatabaseMetadata] {
+    internal func listDatabases(on eventLoop: EventLoop? = nil) async throws -> [DatabaseMetadata] {
         try await withConnection(on: eventLoop) { connection in
             try await connection.listDatabases().get()
         }
@@ -530,7 +530,7 @@ extension SQLServerClient {
     }
 
     @available(macOS 12.0, *)
-    public func serverVersion(on eventLoop: EventLoop? = nil) async throws -> String {
+    internal func serverVersion(on eventLoop: EventLoop? = nil) async throws -> String {
         try await withConnection(on: eventLoop) { connection in
             try await connection.serverVersion()
         }
