@@ -122,7 +122,7 @@ public class SQLServerDockerManager: @unchecked Sendable {
                 } else {
                     try loadAdventureWorks(dockerPath: dockerPath)
                 }
-                FileManager.default.createFile(atPath: adventureWorksMarkerPath, contents: Data(), attributes: nil)
+                _ = FileManager.default.createFile(atPath: adventureWorksMarkerPath, contents: Data(), attributes: nil)
             }
 
             exportEnvironment()
@@ -385,8 +385,13 @@ private extension ProcessInfo {
     var machineArchitecture: String {
         var systemInfo = utsname()
         uname(&systemInfo)
-        return withUnsafePointer(to: &systemInfo.machine) {
-            $0.withMemoryRebound(to: CChar.self, capacity: Int(_SYS_NAMELEN)) {
+        let machine = systemInfo.machine
+        let machineSize = MemoryLayout.size(ofValue: machine)
+        return withUnsafePointer(to: machine) {
+            $0.withMemoryRebound(
+                to: CChar.self,
+                capacity: machineSize
+            ) {
                 String(cString: $0)
             }
         }

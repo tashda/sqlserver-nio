@@ -1,5 +1,8 @@
 name: CI
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 on:
   push:
     branches: [dev, refactor/structure-and-swift6]
@@ -17,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: swift-actions/setup-swift@v2
         with:
           swift-version: "6.2"
@@ -36,7 +39,7 @@ jobs:
       matrix:
         sqlserver-version: ["2008R2", "2012", "2014", "2016", "2017-latest", "2019-latest", "2022-latest", "2025-latest"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: swift-actions/setup-swift@v2
         with:
           swift-version: "6.2"
