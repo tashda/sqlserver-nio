@@ -47,7 +47,7 @@ public class RawSqlRequest: TDSRequest, @unchecked Sendable {
     }
 
     public func log(to logger: Logger) {
-        logger.debug("Sending SQL Batch request: \(sql)")
+        logger.debug("Sending SQL Batch request: \(Self.summarize(sql))")
     }
 
     public func serialize(into buffer: inout ByteBuffer) throws {
@@ -57,5 +57,12 @@ public class RawSqlRequest: TDSRequest, @unchecked Sendable {
             outstandingRequestCount: outstandingRequestCountOverride ?? 1
         )
         try payload.serialize(into: &buffer)
+    }
+
+    private static func summarize(_ sql: String, maxLength: Int = 240) -> String {
+        let singleLine = sql.replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\r", with: " ")
+        guard singleLine.count > maxLength else { return singleLine }
+        let prefix = singleLine.prefix(maxLength)
+        return "\(prefix)... [truncated \(singleLine.count - maxLength) chars]"
     }
 }
