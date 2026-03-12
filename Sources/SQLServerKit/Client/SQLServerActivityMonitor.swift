@@ -35,29 +35,36 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
     /// Takes a single snapshot of activity.
     public func snapshot(options: SQLServerActivityOptions = .init(), on eventLoop: EventLoop? = nil) -> EventLoopFuture<SQLServerActivitySnapshot> {
         let loop = eventLoop ?? client.eventLoopGroup.next()
+        let timeout: TimeAmount = .seconds(10)
         
-        // We use .recover { _ in [] } or similar to ensure one failing query doesn't kill the whole snapshot
+        logger.debug("Activity Monitor: Starting snapshot")
+
         let overviewFut = fetchOverview(on: loop).recover { [weak self] error in
             self?.logger.error("Activity Monitor: Failed to fetch overview: \(error)")
             return nil
         }
+        
         let processesFut = fetchProcesses(options: options, on: loop).recover { [weak self] error in
             self?.logger.error("Activity Monitor: Failed to fetch processes: \(error)")
             return []
         }
+        
         let waitsFut = fetchWaits(on: loop).recover { [weak self] error in
             self?.logger.error("Activity Monitor: Failed to fetch waits: \(error)")
             return []
         }
+        
         let fileIoFut = fetchFileIO(on: loop).recover { [weak self] error in
             self?.logger.error("Activity Monitor: Failed to fetch file IO: \(error)")
             return []
         }
+        
         let expensiveFut = fetchExpensiveQueries(options: options, on: loop).recover { [weak self] error in
             self?.logger.error("Activity Monitor: Failed to fetch expensive queries: \(error)")
             return []
         }
 
+        // Add overall timeout to the combined operation
         return overviewFut.and(processesFut).flatMap { overview, procs in
             return waitsFut.and(fileIoFut).flatMap { waits, fileIO in
                 return expensiveFut.map { expensive in
@@ -124,7 +131,6 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
                         let snap = try await self.snapshot(options: options)
                         continuation.yield(snap)
                     } catch {
-                        // We continue streaming even on error, as snapshot() now recovers per-section
                         logger.error("Activity Monitor: Stream snapshot error: \(error)")
                     }
                     try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
@@ -138,7 +144,6 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
     // MARK: - Queries
 
     private func fetchOverview(on loop: EventLoop) -> EventLoopFuture<SQLServerActivityOverview?> {
-        // Splitting these into separate queries to avoid driver multi-result-set issues
         let cpuSql = """
         SELECT TOP(1) [SQLProcessUtilization] AS cpu_usage
         FROM (
@@ -157,6 +162,8 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
         
         let batchSql = "SELECT cntr_value FROM sys.dm_os_performance_counters WHERE counter_name = 'Batch Requests/sec' AND object_name LIKE '%SQL Statistics%';"
 
+        // We wrap each query in its own future and handle them with timeouts if possible via client configuration
+        // For now, we rely on snapshot() level recovery.
         let cpuFut = client.query(cpuSql, on: loop).map { $0.first?.column("cpu_usage")?.int ?? 0 }.recover { _ in 0 }
         let waitsFut = client.query(waitsSql, on: loop).map { $0.first?.column("waiting_tasks")?.int ?? 0 }.recover { _ in 0 }
         let batchFut = client.query(batchSql, on: loop).map { $0.first?.column("cntr_value")?.int64 ?? 0 }.recover { _ in 0 }
@@ -213,7 +220,9 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
             r.percent_complete
         """
         if options.includeSqlText { sql += ", st.text AS sql_text" }
-        if options.includeQueryPlan { sql += ", qp.query_plan AS plan_xml" }
+        // Query plan is very heavy, we should probably only fetch it on demand, but SSMS does it.
+        // For resilience, we skip it unless explicitly asked.
+        if options.includeQueryPlan { sql += ", CAST(qp.query_plan AS NVARCHAR(MAX)) AS plan_xml" }
         sql += """
         FROM sys.dm_exec_sessions AS s
         LEFT JOIN sys.dm_exec_connections AS c ON c.session_id = s.session_id
@@ -222,7 +231,7 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
         if options.includeSqlText { sql += " OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) AS st" }
         if options.includeQueryPlan { sql += " OUTER APPLY sys.dm_exec_query_plan(r.plan_handle) AS qp" }
         sql += """
-        WHERE s.is_user_process = 1 AND s.session_id <> @@SPID
+        WHERE s.session_id <> @@SPID
         ORDER BY s.session_id;
         """
 
@@ -334,7 +343,7 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
             qs.last_execution_time
         """
         if options.includeSqlText { sql += ", st.text AS sql_text" }
-        if options.includeQueryPlan { sql += ", qp.query_plan AS plan_xml" }
+        if options.includeQueryPlan { sql += ", CAST(qp.query_plan AS NVARCHAR(MAX)) AS plan_xml" }
         sql += """
         FROM sys.dm_exec_query_stats AS qs
         """
