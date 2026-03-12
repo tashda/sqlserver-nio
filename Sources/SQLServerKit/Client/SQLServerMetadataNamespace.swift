@@ -18,6 +18,13 @@ public final class SQLServerMetadataNamespace: @unchecked Sendable {
     }
 
     @available(macOS 12.0, *)
+    public func databaseState(name: String) async throws -> DatabaseMetadata {
+        try await client.withConnection { connection in
+            try await connection.databaseState(name: name)
+        }
+    }
+
+    @available(macOS 12.0, *)
     public func listTables(
         database: String? = nil,
         schema: String? = nil,
@@ -47,6 +54,39 @@ public final class SQLServerMetadataNamespace: @unchecked Sendable {
     public func listIndexes(database: String? = nil, schema: String, table: String) async throws -> [IndexMetadata] {
         try await client.withConnection { connection in
             try await connection.listIndexes(database: database, schema: schema, table: table).get()
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listPrimaryKeys(
+        database: String? = nil,
+        schema: String? = nil,
+        table: String? = nil
+    ) async throws -> [KeyConstraintMetadata] {
+        try await client.withConnection { connection in
+            try await connection.listPrimaryKeys(database: database, schema: schema, table: table).get()
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listPrimaryKeysFromCatalog(
+        database: String? = nil,
+        schema: String? = nil,
+        table: String? = nil
+    ) async throws -> [KeyConstraintMetadata] {
+        try await client.withConnection { connection in
+            try await connection.listPrimaryKeysFromCatalog(database: database, schema: schema, table: table).get()
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listUniqueConstraints(
+        database: String? = nil,
+        schema: String? = nil,
+        table: String? = nil
+    ) async throws -> [KeyConstraintMetadata] {
+        try await client.withConnection { connection in
+            try await connection.listUniqueConstraints(database: database, schema: schema, table: table).get()
         }
     }
 
