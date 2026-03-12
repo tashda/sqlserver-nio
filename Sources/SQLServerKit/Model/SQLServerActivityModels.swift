@@ -6,7 +6,7 @@ public struct SQLServerActivityOptions: Sendable, Equatable {
     public var includeSqlText: Bool
     public var includeQueryPlan: Bool
 
-    public init(includeSqlText: Bool = false, includeQueryPlan: Bool = false) {
+    public init(includeSqlText: Bool = true, includeQueryPlan: Bool = false) {
         self.includeSqlText = includeSqlText
         self.includeQueryPlan = includeQueryPlan
     }
@@ -62,7 +62,9 @@ public struct SQLServerActivityOverview: Sendable {
     }
 }
 
-public struct SQLServerProcessInfo: Sendable {
+public struct SQLServerProcessInfo: Sendable, Identifiable {
+    public var id: Int { sessionId }
+    
     public struct Request: Sendable {
         public let status: String?
         public let command: String?
@@ -92,12 +94,6 @@ public struct SQLServerProcessInfo: Sendable {
     public let request: Request?
 }
 
-public struct SQLServerSessionMemoryStat: Sendable {
-    public let sessionId: Int
-    public let memoryUsageKB: Int
-    public let request: SQLServerProcessInfo.Request?
-}
-
 public struct SQLServerWaitStat: Sendable {
     public let waitType: String
     public let waitingTasksCount: Int
@@ -105,7 +101,9 @@ public struct SQLServerWaitStat: Sendable {
     public let signalWaitTimeMs: Int
 }
 
-public struct SQLServerWaitStatDelta: Sendable {
+public struct SQLServerWaitStatDelta: Sendable, Identifiable {
+    public var id: String { waitType }
+    
     public let waitType: String
     public let waitingTasksCountDelta: Int
     public let waitTimeMsDelta: Int
@@ -125,7 +123,9 @@ public struct SQLServerFileIOStat: Sendable {
     public let ioStallWriteMs: Int64
 }
 
-public struct SQLServerFileIOStatDelta: Sendable {
+public struct SQLServerFileIOStatDelta: Sendable, Identifiable {
+    public var id: String { "\(databaseId):\(fileId)" }
+    
     public let databaseId: Int
     public let fileId: Int
     public let numReadsDelta: Int
@@ -136,7 +136,9 @@ public struct SQLServerFileIOStatDelta: Sendable {
     public let ioStallWriteMsDelta: Int64
 }
 
-public struct SQLServerExpensiveQuery: Sendable {
+public struct SQLServerExpensiveQuery: Sendable, Identifiable {
+    public var id: String { queryHashHex ?? UUID().uuidString }
+    
     public let queryHashHex: String?
     public let executionCount: Int
     public let totalWorkerTime: Int64
@@ -149,4 +151,3 @@ public struct SQLServerExpensiveQuery: Sendable {
     public let sqlText: String?
     public let planXml: String?
 }
-
