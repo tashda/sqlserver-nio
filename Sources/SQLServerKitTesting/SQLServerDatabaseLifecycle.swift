@@ -14,7 +14,6 @@ public func createTemporaryDatabase(client: SQLServerClient, prefix: String = "t
         try await connection.execute(createSql)
     }
     try await waitForDatabaseOnline(client: client, name: String(dbName))
-    try await waitForDatabaseConnectable(name: String(dbName))
     return String(dbName)
 }
 
@@ -44,7 +43,7 @@ public func withTemporaryDatabase<T>(
 @available(macOS 12.0, *)
 public func withDbClient<T>(
     for database: String,
-    using _: EventLoopGroup,
+    using _: EventLoopGroup? = nil,
     maxConnections: Int = 4,
     operation: (SQLServerClient) async throws -> T
 ) async throws -> T {
@@ -273,40 +272,28 @@ internal func waitForDatabaseConnectable(name: String, attempts: Int = 20) async
     var config = makeSQLServerConnectionConfiguration()
     config.login.database = name
 
-    do {
-        for attempt in 1...attempts {
+    for attempt in 1...attempts {
+        do {
+            let connection = try await SQLServerConnection.connect(
+                configuration: config,
+                numberOfThreads: 1
+            )
             do {
-                let client = try await SQLServerClient.connect(
-                    configuration: SQLServerClient.Configuration(
-                        connection: config,
-                        poolConfiguration: SQLServerConnectionPool.Configuration(
-                            maximumConcurrentConnections: 1,
-                            minimumIdleConnections: 0,
-                            connectionIdleTimeout: nil,
-                            validationQuery: nil
-                        )
-                    ),
-                    numberOfThreads: 1
-                )
-                do {
-                    let rows = try await client.query("SELECT DB_NAME() AS db_name")
-                    try await client.shutdownGracefully()
-                    if rows.first?.column("db_name")?.string?.caseInsensitiveCompare(name) == .orderedSame {
-                        return
-                    }
-                } catch {
-                    try? await client.shutdownGracefully()
-                    throw error
+                let rows = try await connection.query("SELECT DB_NAME() AS db_name")
+                try await connection.close()
+                if rows.first?.column("db_name")?.string?.caseInsensitiveCompare(name) == .orderedSame {
+                    return
                 }
             } catch {
-                if attempt == attempts {
-                    throw error
-                }
+                try? await connection.close()
+                throw error
             }
-
-            try await Task.sleep(nanoseconds: 250_000_000)
+        } catch {
+            if attempt == attempts {
+                throw error
+            }
         }
-    } catch {
-        throw error
+
+        try await Task.sleep(nanoseconds: 250_000_000)
     }
 }

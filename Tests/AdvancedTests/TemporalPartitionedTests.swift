@@ -1,28 +1,24 @@
 @testable import SQLServerKit
 import SQLServerKitTesting
 import XCTest
-import NIO
 import Logging
 
 final class SQLServerTemporalPartitionedTests: XCTestCase, @unchecked Sendable {
-    var group: EventLoopGroup!
     var client: SQLServerClient!
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
         TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
 
-        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         let config = makeSQLServerClientConfiguration()
-        self.client = try await SQLServerClient.connect(configuration: config, eventLoopGroupProvider: .shared(group)).get()
+        self.client = try await SQLServerClient.connect(configuration: config, numberOfThreads: 1)
         // Probe connectivity once; mark for skip if unstable
         do {
-            _ = try await withTimeout(5) { try await self.client.query("SELECT 1 as ready").get() }
+            _ = try await withTimeout(5) { try await self.client.query("SELECT 1 as ready") }
         } catch { throw error }
     }
 
     override func tearDown() async throws {
-        try await client?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
+        try? await client?.shutdownGracefully()
     }
 
     // Temporal table scripting (no partitioning)
@@ -57,7 +53,7 @@ final class SQLServerTemporalPartitionedTests: XCTestCase, @unchecked Sendable {
             try await self.client.withConnection { conn in
                     let pf = "pfInt_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8))"
                     let ps = "psInt_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8))"
-                    _ = try await conn.query("SELECT 1").get()
+                    _ = try await conn.query("SELECT 1")
                     try await conn.createPartitionFunction(name: String(pf), dataType: .int, values: ["100", "1000"])
                     try await conn.createPartitionScheme(name: String(ps), functionName: String(pf))
 

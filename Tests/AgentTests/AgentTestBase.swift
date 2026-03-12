@@ -1,11 +1,9 @@
 import Foundation
-import NIO
 @testable import SQLServerKit
 import SQLServerKitTesting
 import XCTest
 
 class AgentTestBase: XCTestCase, @unchecked Sendable {
-    var group: EventLoopGroup!
     var client: SQLServerClient!
     var managedJobNames: [String] = []
     var managedScheduleNames: [String] = []
@@ -20,14 +18,13 @@ class AgentTestBase: XCTestCase, @unchecked Sendable {
             try SQLServerDockerManager.shared.startIfNeeded()
         }
 
-        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         var config = makeSQLServerClientConfiguration()
         config.poolConfiguration.connectionIdleTimeout = nil
         config.poolConfiguration.minimumIdleConnections = 0
-        self.client = try await SQLServerClient.connect(configuration: config, eventLoopGroupProvider: .shared(group)).get()
+        self.client = try await SQLServerClient.connect(configuration: config, numberOfThreads: 1)
 
         _ = try await withTimeout(operationTimeout) {
-            try await self.client.query("SELECT 1").get()
+            try await self.client.query("SELECT 1")
         }
 
         let agentStatus = try await withTimeout(operationTimeout) {
@@ -35,8 +32,8 @@ class AgentTestBase: XCTestCase, @unchecked Sendable {
         }
 
         if agentStatus.isSqlAgentRunning && !agentStatus.isSqlAgentEnabled {
-            _ = try await client.query("EXEC sp_configure 'show advanced options', 1; RECONFIGURE;").get()
-            _ = try await client.query("EXEC sp_configure 'Agent XPs', 1; RECONFIGURE;").get()
+            _ = try await client.query("EXEC sp_configure 'show advanced options', 1; RECONFIGURE;")
+            _ = try await client.query("EXEC sp_configure 'Agent XPs', 1; RECONFIGURE;")
         }
     }
 
@@ -54,15 +51,13 @@ class AgentTestBase: XCTestCase, @unchecked Sendable {
         }
 
         do {
-            try await client?.shutdownGracefully().get()
+            try await client?.shutdownGracefully()
         } catch {
             let message = error.localizedDescription
             if !message.contains("Already closed") && !message.contains("ChannelError error 6") {
                 throw error
             }
         }
-
-        try await group?.shutdownGracefully()
     }
 
     @discardableResult

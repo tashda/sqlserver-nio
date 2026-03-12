@@ -1,39 +1,34 @@
 import XCTest
-import NIO
 @testable import SQLServerKit
 import SQLServerKitTesting
 
 final class SQLServerServerSecurityVariantsTests: XCTestCase, @unchecked Sendable {
     private var client: SQLServerClient!
-    private var group: EventLoopGroup!
 
-    override func setUpWithError() throws {
-        try super.setUpWithError()
-        TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
-              group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        client = try SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).wait()
+    override func setUp() async throws {
+        try await super.setUp()
+        TestEnvironmentManager.loadEnvironmentVariables()
+        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
     }
 
-    override func tearDownWithError() throws {
-        try? client?.shutdownGracefully().wait()
-        try? group?.syncShutdownGracefully()
+    override func tearDown() async throws {
+        try? await client?.shutdownGracefully()
         client = nil
-        group = nil
-        try super.tearDownWithError()
+        try await super.tearDown()
     }
 
-    func testExternalLoginCreate() throws {
+    func testExternalLoginCreate() async throws {
         let serverSec = SQLServerServerSecurityClient(client: client)
         // This requires EXTERNAL PROVIDER support and elevated permissions; expect success only when enabled.
         do {
-            try serverSec.createExternalLogin(name: "nio_ext_login_test").wait()
+            try await serverSec.createExternalLogin(name: "nio_ext_login_test").get()
         } catch {
             // Expected to fail unless EXTERNAL PROVIDER is configured
             print("External login creation failed as expected: \(error)")
         }
 
         do {
-            try serverSec.dropLogin(name: "nio_ext_login_test").wait()
+            try await serverSec.dropLogin(name: "nio_ext_login_test").get()
         } catch {
             // Expected to fail unless login exists or EXTERNAL PROVIDER is configured
             print("External login drop failed as expected: \(error)")

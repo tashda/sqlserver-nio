@@ -93,7 +93,7 @@ public func makeSchemaQualifiedName(prefix: String, schema: String = "dbo") -> (
 
 public func makeClient(
     forDatabase database: String,
-    using group: EventLoopGroup,
+    using _: Any? = nil,
     maxConnections: Int = 4
 ) async throws -> SQLServerClient {
     var config = makeSQLServerConnectionConfiguration()

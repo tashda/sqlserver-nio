@@ -1,25 +1,20 @@
 @testable import SQLServerKit
 import SQLServerKitTesting
 import XCTest
-import NIO
 import Logging
 
 final class SQLServerRoutineParameterMatrixTests: XCTestCase, @unchecked Sendable {
-    var group: EventLoopGroup!
     var client: SQLServerClient!
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
         TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
-        group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).get()
-        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1").get() } } catch { throw error }
+        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
+        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1") } } catch { throw error }
     }
 
     override func tearDown() async throws {
-        try await client?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
+        try? await client?.shutdownGracefully()
         client = nil
-        group = nil
     }
 
     // A representative set of SQL types to exercise parameter metadata
@@ -47,7 +42,7 @@ final class SQLServerRoutineParameterMatrixTests: XCTestCase, @unchecked Sendabl
     @available(macOS 12.0, *)
     func testProcedureParameterMatrix() async throws {
         try await withTemporaryDatabase(client: self.client, prefix: "pmx") { db in
-            try await withDbClient(for: db, using: self.group) { dbClient in
+            try await withDbClient(for: db) { dbClient in
                 let routineClient = SQLServerRoutineClient(client: dbClient)
                 let typeClient = SQLServerTypeClient(client: dbClient)
 
@@ -226,7 +221,7 @@ final class SQLServerRoutineParameterMatrixTests: XCTestCase, @unchecked Sendabl
     @available(macOS 12.0, *)
     func testFunctionParameterMatrix() async throws {
         try await withTemporaryDatabase(client: self.client, prefix: "fmx") { db in
-            try await withDbClient(for: db, using: self.group) { dbClient in
+            try await withDbClient(for: db) { dbClient in
                 let routineClient = SQLServerRoutineClient(client: dbClient)
 
                 // Scalar function with default

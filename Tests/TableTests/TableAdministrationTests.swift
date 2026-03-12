@@ -1,10 +1,8 @@
 import XCTest
-import NIO
 @testable import SQLServerKit
 import SQLServerKitTesting
 
 final class SQLServerTableAdministrationTests: XCTestCase, @unchecked Sendable {
-    var group: EventLoopGroup!
     var baseClient: SQLServerClient!
     var client: SQLServerClient!
     private var adminClient: SQLServerAdministrationClient!
@@ -13,27 +11,27 @@ final class SQLServerTableAdministrationTests: XCTestCase, @unchecked Sendable {
         continueAfterFailure = false
         TestEnvironmentManager.loadEnvironmentVariables()
         _ = isLoggingConfigured
-        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         self.baseClient = try await SQLServerClient.connect(
             configuration: makeSQLServerClientConfiguration(),
-            eventLoopGroupProvider: .shared(group)
-        ).get()
+            numberOfThreads: 1
+        )
         do {
-            _ = try await withTimeout(5) { try await self.baseClient.query("SELECT 1").get() }
+            _ = try await withTimeout(5) { try await self.baseClient.query("SELECT 1") }
         } catch {
             throw error
         }
         testDatabase = try await createTemporaryDatabase(client: baseClient, prefix: "adm")
-        self.client = try await makeClient(forDatabase: testDatabase, using: group)
+        self.client = try await makeClient(forDatabase: testDatabase)
         self.adminClient = SQLServerAdministrationClient(client: self.client)
     }
 
     override func tearDown() async throws {
-        try? await client?.shutdownGracefully().get()
+        try? await client?.shutdownGracefully()
         if let db = testDatabase { try? await dropTemporaryDatabase(client: baseClient, name: db) }
-        try await baseClient?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
-        testDatabase = nil; group = nil
+        try? await baseClient?.shutdownGracefully()
+        testDatabase = nil
+        client = nil
+        baseClient = nil
     }
 
     // MARK: - Tests
@@ -303,7 +301,7 @@ final class SQLServerTableAdministrationTests: XCTestCase, @unchecked Sendable {
     }
 
     private func getRowCount(client: SQLServerClient, table: String) async throws -> Int {
-        let rows = try await client.query("SELECT COUNT(*) AS count FROM [dbo].[\(table)]").get()
+        let rows = try await client.query("SELECT COUNT(*) AS count FROM [dbo].[\(table)]")
         return rows.first?.column("count")?.int ?? 0
     }
 }

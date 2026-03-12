@@ -295,17 +295,13 @@ final class AgentEnhancedAPITests: AgentTestBase, @unchecked Sendable {
 
     override func tearDown() async throws {
         do {
-            try await client?.shutdownGracefully().get()
+            try await client?.shutdownGracefully()
         } catch {
-            // Silently ignore "Already closed" errors during shutdown - they're expected under stress
             if error.localizedDescription.contains("Already closed") ||
                error.localizedDescription.contains("ChannelError error 6") {
-                // Both errors are expected during EventLoop shutdown
             } else {
                 throw error
             }
         }
-
-        try await group?.shutdownGracefully()
     }
 }

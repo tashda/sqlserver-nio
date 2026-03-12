@@ -1,5 +1,4 @@
 import XCTest
-import NIO
 import Logging
 @testable import SQLServerKit
 import SQLServerKitTesting
@@ -9,24 +8,20 @@ import SQLServerKitTesting
 /// These tests exercise the full stack:
 ///   SQL Server → TDS RETURNVALUE token → TDSTokenOperations → SQLServerConnection.call() → SQLServerReturnValue
 final class OutputParameterTests: XCTestCase, @unchecked Sendable {
-    var group: EventLoopGroup!
     var client: SQLServerClient!
 
     override func setUp() async throws {
         TestEnvironmentManager.loadEnvironmentVariables()
         _ = isLoggingConfigured
-        group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         client = try await SQLServerClient.connect(
             configuration: makeSQLServerClientConfiguration(),
-            eventLoopGroupProvider: .shared(group)
-        ).get()
+            numberOfThreads: 1
+        )
     }
 
     override func tearDown() async throws {
-        try await client?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
+        try? await client?.shutdownGracefully()
         client = nil
-        group = nil
     }
 
     // MARK: - Basic output parameter types
@@ -34,7 +29,7 @@ final class OutputParameterTests: XCTestCase, @unchecked Sendable {
     func testIntOutputParameter() async throws {
         try await withTimeout(20) {
             try await withTemporaryDatabase(client: self.client, prefix: "outp") { db in
-                try await withDbClient(for: db, using: self.group) { dbClient in
+                try await withDbClient(for: db) { dbClient in
                     let routineClient = SQLServerRoutineClient(client: dbClient)
                     try await routineClient.createStoredProcedure(
                         name: "usp_DoubleInt",
@@ -68,7 +63,7 @@ final class OutputParameterTests: XCTestCase, @unchecked Sendable {
     func testNVarCharOutputParameter() async throws {
         try await withTimeout(20) {
             try await withTemporaryDatabase(client: self.client, prefix: "outp") { db in
-                try await withDbClient(for: db, using: self.group) { dbClient in
+                try await withDbClient(for: db) { dbClient in
                     let routineClient = SQLServerRoutineClient(client: dbClient)
                     try await routineClient.createStoredProcedure(
                         name: "usp_Greet",
@@ -102,7 +97,7 @@ final class OutputParameterTests: XCTestCase, @unchecked Sendable {
     func testMultipleOutputParameters() async throws {
         try await withTimeout(20) {
             try await withTemporaryDatabase(client: self.client, prefix: "outp") { db in
-                try await withDbClient(for: db, using: self.group) { dbClient in
+                try await withDbClient(for: db) { dbClient in
                     let routineClient = SQLServerRoutineClient(client: dbClient)
                     try await routineClient.createStoredProcedure(
                         name: "usp_Divmod",
@@ -144,7 +139,7 @@ final class OutputParameterTests: XCTestCase, @unchecked Sendable {
     func testOutputParameterAlongsideResultSet() async throws {
         try await withTimeout(20) {
             try await withTemporaryDatabase(client: self.client, prefix: "outp") { db in
-                try await withDbClient(for: db, using: self.group) { dbClient in
+                try await withDbClient(for: db) { dbClient in
                     let routineClient = SQLServerRoutineClient(client: dbClient)
                     try await routineClient.createStoredProcedure(
                         name: "usp_GetRange",
@@ -184,7 +179,7 @@ final class OutputParameterTests: XCTestCase, @unchecked Sendable {
     func testNullOutputParameter() async throws {
         try await withTimeout(20) {
             try await withTemporaryDatabase(client: self.client, prefix: "outp") { db in
-                try await withDbClient(for: db, using: self.group) { dbClient in
+                try await withDbClient(for: db) { dbClient in
                     let routineClient = SQLServerRoutineClient(client: dbClient)
                     try await routineClient.createStoredProcedure(
                         name: "usp_NullOut",
@@ -219,7 +214,7 @@ final class OutputParameterTests: XCTestCase, @unchecked Sendable {
     func testClientLevelCallConvenience() async throws {
         try await withTimeout(20) {
             try await withTemporaryDatabase(client: self.client, prefix: "outp") { db in
-                try await withDbClient(for: db, using: self.group) { dbClient in
+                try await withDbClient(for: db) { dbClient in
                     let routineClient = SQLServerRoutineClient(client: dbClient)
                     try await routineClient.createStoredProcedure(
                         name: "usp_Add",

@@ -167,38 +167,37 @@ final class AppIntegrationTests: AgentTestBase, @unchecked Sendable {
 
         print("🔍 [AppIntegration] Testing operations on job: \(testJob.jobName)")
 
-        // Test start job
+        print("🔍 [AppIntegration] Testing startJob...")
         do {
-            print("🔍 [AppIntegration] Testing startJob...")
             try await agent.startJob(named: testJob.jobName)
             print("✅ [AppIntegration] startJob succeeded")
         } catch {
-            print("⚠️ [AppIntegration] startJob failed (may be normal if job is already running): \(error.localizedDescription)")
+            XCTFail("startJob failed unexpectedly: \(error.localizedDescription)")
         }
 
-        // Test stop job
+        print("🔍 [AppIntegration] Testing stopJob...")
         do {
-            print("🔍 [AppIntegration] Testing stopJob...")
             try await agent.stopJob(named: testJob.jobName)
             print("✅ [AppIntegration] stopJob succeeded")
         } catch {
-            print("⚠️ [AppIntegration] stopJob failed: \(error.localizedDescription)")
+            let message = error.localizedDescription
+            let acceptable = message.contains("not currently running")
+            XCTAssertTrue(acceptable, "stopJob failed unexpectedly: \(message)")
+            print("ℹ️ [AppIntegration] stopJob reported non-running job, which is acceptable for a fast test job")
         }
 
-        // Test enable/disable job
+        print("🔍 [AppIntegration] Testing enableJob...")
         do {
-            print("🔍 [AppIntegration] Testing enableJob...")
             try await agent.enableJob(named: testJob.jobName, enabled: true)
             print("✅ [AppIntegration] enableJob succeeded")
 
             try await agent.enableJob(named: testJob.jobName, enabled: false)
             print("✅ [AppIntegration] disableJob succeeded")
 
-            // Restore original state
             try await agent.enableJob(named: testJob.jobName, enabled: true)
             print("✅ [AppIntegration] restored original state")
         } catch {
-            print("❌ [AppIntegration] enable/disable job failed: \(error.localizedDescription)")
+            XCTFail("enable/disable job failed: \(error.localizedDescription)")
         }
     }
 
@@ -226,17 +225,13 @@ final class AppIntegrationTests: AgentTestBase, @unchecked Sendable {
 
     override func tearDown() async throws {
         do {
-            try await client?.shutdownGracefully().get()
+            try await client?.shutdownGracefully()
         } catch {
-            // Silently ignore "Already closed" errors during shutdown - they're expected under stress
             if error.localizedDescription.contains("Already closed") ||
                error.localizedDescription.contains("ChannelError error 6") {
-                // Both errors are expected during EventLoop shutdown
             } else {
                 throw error
             }
         }
-
-        try await group?.shutdownGracefully()
     }
 }

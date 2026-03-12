@@ -1,10 +1,8 @@
 import XCTest
-import NIO
 @testable import SQLServerKit
 import SQLServerKitTesting
 
 final class SQLServerSecurityParityTests: XCTestCase, @unchecked Sendable {
-    private var group: EventLoopGroup!
     private var client: SQLServerClient!
     private let TIMEOUT: TimeInterval = 60
 
@@ -17,18 +15,16 @@ final class SQLServerSecurityParityTests: XCTestCase, @unchecked Sendable {
         // Configure logging
         _ = isLoggingConfigured
 
-    
+
         // Create connection
-        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         self.client = try await SQLServerClient.connect(
             configuration: makeSQLServerClientConfiguration(),
-            eventLoopGroupProvider: .shared(group)
-        ).get()
+            numberOfThreads: 1
+        )
     }
 
     override func tearDown() async throws {
-        try await client?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
+        try? await client?.shutdownGracefully()
         try await super.tearDown()
     }
 

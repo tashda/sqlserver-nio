@@ -2,28 +2,24 @@
 @testable import SQLServerTDS
 import SQLServerKitTesting
 import XCTest
-import NIO
 
 final class SQLServerRPCTests: XCTestCase, @unchecked Sendable {
-    var group: EventLoopGroup!
     var client: SQLServerClient!
 
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
         TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
-        group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).get()
+        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
     }
 
     override func tearDown() async throws {
-        try await client?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
+        try? await client?.shutdownGracefully()
     }
 
     func testRPCWithOutParamAndReturnCode() async throws {
         try await withTemporaryDatabase(client: self.client, prefix: "rpc") { db in
             let procName = "usp_rpc_test_\(UUID().uuidString.prefix(6))"
-            try await withDbClient(for: db, using: self.group) { dbClient in
+            try await withDbClient(for: db) { dbClient in
 
             let routineClient = SQLServerRoutineClient(client: dbClient)
             try await routineClient.createStoredProcedure(
@@ -60,7 +56,7 @@ final class SQLServerRPCTests: XCTestCase, @unchecked Sendable {
         #endif
         try await withTemporaryDatabase(client: self.client, prefix: "rpcd") { db in
             let procName = "usp_rpc_dec_\(UUID().uuidString.prefix(6))"
-            try await withDbClient(for: db, using: self.group) { dbClient in
+            try await withDbClient(for: db) { dbClient in
 
             let routineClient = SQLServerRoutineClient(client: dbClient)
             try await routineClient.createStoredProcedure(
