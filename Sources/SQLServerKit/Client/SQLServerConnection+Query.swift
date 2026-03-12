@@ -4,6 +4,31 @@ import NIOConcurrencyHelpers
 import SQLServerTDS
 
 extension SQLServerConnection {
+    @available(macOS 12.0, *)
+    public func queryPaged(_ sql: String, limit: Int, offset: Int = 0) async throws -> [SQLServerRow] {
+        precondition(limit > 0, "limit must be positive")
+        precondition(offset >= 0, "offset must be non-negative")
+
+        let trimmedSQL = sql
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: ";"))
+
+        let pagedSQL = """
+        SELECT paged_result.*
+        FROM (
+            SELECT inner_query.*, ROW_NUMBER() OVER (ORDER BY (SELECT 1)) AS __sqlserver_nio_rownum
+            FROM (
+                \(trimmedSQL)
+            ) AS inner_query
+        ) AS paged_result
+        WHERE paged_result.__sqlserver_nio_rownum > \(offset)
+          AND paged_result.__sqlserver_nio_rownum <= \(offset + limit)
+        ORDER BY paged_result.__sqlserver_nio_rownum;
+        """
+
+        return try await execute(pagedSQL).rows.map { $0.droppingLastColumn() }
+    }
+
     @available(*, deprecated, message: "Use async execute(_:) instead.")
     public func execute(_ sql: String) -> EventLoopFuture<SQLServerExecutionResult> {
         let future = executeWithRetry(operationName: "execute") {

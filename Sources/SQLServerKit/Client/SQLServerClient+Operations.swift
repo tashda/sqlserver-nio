@@ -2,6 +2,17 @@ import Foundation
 import NIO
 
 extension SQLServerClient {
+    @available(macOS 12.0, *)
+    public func objectDefinition(
+        database: String? = nil,
+        schema: String,
+        name: String,
+        kind: SQLServerMetadataObjectIdentifier.Kind,
+        on eventLoop: EventLoop? = nil
+    ) async throws -> ObjectDefinition? {
+        try await fetchObjectDefinition(database: database, schema: schema, name: name, kind: kind, on: eventLoop)
+    }
+
     public func fetchObjectDefinitions(
         _ identifiers: [SQLServerMetadataObjectIdentifier],
         on eventLoop: EventLoop? = nil
@@ -278,6 +289,40 @@ extension SQLServerClient {
         let loop = eventLoop ?? eventLoopGroup.next()
         return withConnection(on: loop) { connection in
             connection.serverVersion()
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func renameTable(
+        name: String,
+        newName: String,
+        schema: String = "dbo",
+        database: String? = nil
+    ) async throws {
+        try await withConnection { connection in
+            try await connection.renameTable(name: name, newName: newName, schema: schema, database: database)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func dropTable(
+        name: String,
+        schema: String = "dbo",
+        database: String? = nil
+    ) async throws {
+        try await withConnection { connection in
+            try await connection.dropTable(name: name, schema: schema, database: database)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func truncateTable(
+        name: String,
+        schema: String = "dbo",
+        database: String? = nil
+    ) async throws {
+        try await withConnection { connection in
+            try await connection.truncateTable(name: name, schema: schema, database: database)
         }
     }
 }

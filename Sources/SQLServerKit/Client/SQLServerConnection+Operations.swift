@@ -4,6 +4,16 @@ import NIO
 extension SQLServerConnection {
     // MARK: - Metadata Operations
 
+    @available(macOS 12.0, *)
+    public func objectDefinition(
+        database: String? = nil,
+        schema: String,
+        name: String,
+        kind: SQLServerMetadataObjectIdentifier.Kind
+    ) async throws -> ObjectDefinition? {
+        try await fetchObjectDefinition(database: database, schema: schema, name: name, kind: kind).get()
+    }
+
     public func listDatabases() -> EventLoopFuture<[DatabaseMetadata]> {
         metadataClient.listDatabases()
     }
