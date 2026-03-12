@@ -1,10 +1,8 @@
 import XCTest
-import NIO
 @testable import SQLServerKit
 import SQLServerKitTesting
 
 class TriggerTestBase: XCTestCase, @unchecked Sendable {
-    var group: EventLoopGroup!
     var client: SQLServerClient!
     var triggerClient: SQLServerTriggerClient!
     var adminClient: SQLServerAdministrationClient!
@@ -13,18 +11,17 @@ class TriggerTestBase: XCTestCase, @unchecked Sendable {
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
         TestEnvironmentManager.loadEnvironmentVariables()
-        
+
         // Ensure Docker is started if requested
         if envFlagEnabled("USE_DOCKER") {
             try SQLServerDockerManager.shared.startIfNeeded()
         }
-        
-        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+
         let config = makeSQLServerClientConfiguration()
-        self.client = try await SQLServerClient.connect(configuration: config, eventLoopGroupProvider: .shared(group)).get()
+        self.client = try await SQLServerClient.connect(configuration: config, numberOfThreads: 1)
         self.triggerClient = SQLServerTriggerClient(client: client)
         self.adminClient = SQLServerAdministrationClient(client: client)
-        do { _ = try await withTimeout(10) { try await self.client.query("SELECT 1").get() } } catch { throw error }
+        do { _ = try await withTimeout(10) { try await self.client.query("SELECT 1") } } catch { throw error }
     }
 
     override func tearDown() async throws {
@@ -38,9 +35,7 @@ class TriggerTestBase: XCTestCase, @unchecked Sendable {
         }
         tablesToDrop.removeAll()
 
-        try? await self.client?.shutdownGracefully().get()
-        try? await self.group?.shutdownGracefully()
-        self.group = nil
+        try? await self.client?.shutdownGracefully()
     }
 
     // MARK: - Helper Methods
@@ -53,7 +48,7 @@ class TriggerTestBase: XCTestCase, @unchecked Sendable {
             SQLServerColumnDefinition(name: "created_date", definition: .standard(.init(dataType: .datetime2(precision: 3)))),
             SQLServerColumnDefinition(name: "modified_date", definition: .standard(.init(dataType: .datetime2(precision: 3))))
         ]
-        
+
         try await adminClient.createTable(name: name, columns: columns)
         tablesToDrop.append(name)
     }
@@ -68,7 +63,7 @@ class TriggerTestBase: XCTestCase, @unchecked Sendable {
             SQLServerColumnDefinition(name: "new_values", definition: .standard(.init(dataType: .nvarchar(length: .max), isNullable: true))),
             SQLServerColumnDefinition(name: "audit_date", definition: .standard(.init(dataType: .datetime2(precision: 3), defaultValue: "GETDATE()")))
         ]
-        
+
         try await adminClient.createTable(name: name, columns: columns)
         tablesToDrop.append(name)
     }

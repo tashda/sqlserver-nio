@@ -1,5 +1,4 @@
 import XCTest
-import NIOCore
 import Logging
 @testable import SQLServerTDS
 @testable import SQLServerKit
@@ -11,9 +10,6 @@ import SQLServerKitTesting
 open class StandardTestBase: XCTestCase, @unchecked Sendable {
 
     // MARK: - Properties
-
-    /// Shared event loop group for the test
-    public var group: EventLoopGroup!
 
     /// Shared SQLServer client for the test
     public var client: SQLServerClient!
@@ -33,30 +29,20 @@ open class StandardTestBase: XCTestCase, @unchecked Sendable {
         config.poolConfiguration.connectionIdleTimeout = nil
         config.poolConfiguration.minimumIdleConnections = 0
 
-        // Create event loop group
-        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-
-        // Create client using shared event loop group (this is the key!)
+        // Create client
         self.client = try await SQLServerClient.connect(
             configuration: config,
-            eventLoopGroupProvider: .shared(group)
-        ).get()
+            numberOfThreads: 1
+        )
 
         logger.info("✅ Test setup completed successfully")
     }
 
     override open func tearDown() async throws {
-        // Shutdown client first
+        // Shutdown client
         if let client = client {
-            try await client.shutdownGracefully().get()
+            try? await client.shutdownGracefully()
             self.client = nil
-        }
-
-        // Then shutdown the event loop group
-        if let group = group {
-            // Use async shutdown to avoid Swift 6 warnings
-            try await group.shutdownGracefully()
-            self.group = nil
         }
 
         logger.info("✅ Test teardown completed successfully")

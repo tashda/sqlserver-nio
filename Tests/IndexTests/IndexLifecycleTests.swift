@@ -1,40 +1,36 @@
 import XCTest
 import Logging
-import NIO
 @testable import SQLServerKit
 import SQLServerKitTesting
 
 final class SQLServerIndexTests: XCTestCase, @unchecked Sendable {
-    private var group: EventLoopGroup!
     private var baseClient: SQLServerClient!
     private var client: SQLServerClient!
     private var indexClient: SQLServerIndexClient!
     private var adminClient: SQLServerAdministrationClient!
     private var testDatabase: String!
-    private var eventLoop: EventLoop { self.group.next() }
 
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
         TestEnvironmentManager.loadEnvironmentVariables()
-        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        self.baseClient = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).get()
-        do {
-            _ = try await withTimeout(5) { try await self.baseClient.query("SELECT 1").get() }
-        } catch {
-            throw error
-        }
+        self.baseClient = try await SQLServerClient.connect(
+            configuration: makeSQLServerClientConfiguration(),
+            numberOfThreads: 1
+        )
+        _ = try await withTimeout(5) { try await self.baseClient.query("SELECT 1") }
         testDatabase = try await createTemporaryDatabase(client: baseClient, prefix: "idx")
-        self.client = try await makeClient(forDatabase: testDatabase, using: group)
+        self.client = try await makeClient(forDatabase: testDatabase)
         self.adminClient = SQLServerAdministrationClient(client: self.client)
         self.indexClient = SQLServerIndexClient(client: self.client)
     }
 
     override func tearDown() async throws {
-        try? await client?.shutdownGracefully().get()
+        try? await client?.shutdownGracefully()
         if let db = testDatabase { try? await dropTemporaryDatabase(client: baseClient, name: db) }
-        try await baseClient?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
-        testDatabase = nil; group = nil
+        try? await baseClient?.shutdownGracefully()
+        testDatabase = nil
+        client = nil
+        baseClient = nil
     }
 
     // MARK: - Helper Methods

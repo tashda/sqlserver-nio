@@ -1,38 +1,33 @@
 import XCTest
 import Logging
-import NIO
 @testable import SQLServerKit
 import SQLServerKitTesting
 
 final class SQLServerRoutineTests: XCTestCase, @unchecked Sendable {
-    private var group: EventLoopGroup!
     private var baseClient: SQLServerClient!
     private var client: SQLServerClient!
     private var routineClient: SQLServerRoutineClient!
     private var testDatabase: String!
-    private var eventLoop: EventLoop { self.group.next() }
 
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
         TestEnvironmentManager.loadEnvironmentVariables()
-        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        self.baseClient = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).get()
+        self.baseClient = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
         do {
-            _ = try await withTimeout(5) { try await self.baseClient.query("SELECT 1").get() }
+            _ = try await withTimeout(5) { try await self.baseClient.query("SELECT 1") }
         } catch {
             throw error
         }
         testDatabase = try await createTemporaryDatabase(client: baseClient, prefix: "rtn")
-        self.client = try await makeClient(forDatabase: testDatabase, using: group)
+        self.client = try await makeClient(forDatabase: testDatabase)
         self.routineClient = SQLServerRoutineClient(client: self.client)
     }
 
     override func tearDown() async throws {
-        try? await client?.shutdownGracefully().get()
+        try? await client?.shutdownGracefully()
         if let db = testDatabase { try? await dropTemporaryDatabase(client: baseClient, name: db) }
-        try await baseClient?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
-        testDatabase = nil; group = nil
+        try? await baseClient?.shutdownGracefully()
+        testDatabase = nil
     }
 
     // MARK: - Stored Procedure Tests

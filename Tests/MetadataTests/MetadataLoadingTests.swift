@@ -1,10 +1,8 @@
 @testable import SQLServerKit
 import SQLServerKitTesting
 import XCTest
-import NIO
 
 final class SQLServerAppMetadataLoadingTests: XCTestCase, @unchecked Sendable {
-    private var group: EventLoopGroup!
     private var client: SQLServerClient!
 
     private var operationTimeout: TimeInterval {
@@ -20,8 +18,6 @@ final class SQLServerAppMetadataLoadingTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(isLoggingConfigured)
         TestEnvironmentManager.loadEnvironmentVariables()
 
-        group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-
         var config = makeSQLServerClientConfiguration()
         // Per-query timeout: 60s is enough for any single catalog query, while
         // still sending an attention token to prevent infinite stalls if the
@@ -32,17 +28,12 @@ final class SQLServerAppMetadataLoadingTests: XCTestCase, @unchecked Sendable {
         config.connection.metadataConfiguration.includeRoutineDefinitions = false
         config.connection.metadataConfiguration.includeTriggerDefinitions = true
 
-        client = try await SQLServerClient.connect(
-            configuration: config,
-            eventLoopGroupProvider: .shared(group)
-        ).get()
+        client = try await SQLServerClient.connect(configuration: config, numberOfThreads: 1)
     }
 
     override func tearDown() async throws {
-        try await client?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
+        try? await client?.shutdownGracefully()
         client = nil
-        group = nil
     }
 
     @available(macOS 12.0, *)
@@ -54,7 +45,7 @@ final class SQLServerAppMetadataLoadingTests: XCTestCase, @unchecked Sendable {
 
         try await withTimeout(operationTimeout) {
             try await self.client.withConnection { connection in
-                _ = try await connection.changeDatabase(dbName).get()
+                _ = try await connection.changeDatabase(dbName)
 
                 let structure = try await connection.loadDatabaseStructure(database: dbName)
                 let schemaNames = Set(structure.schemas.map(\.name))

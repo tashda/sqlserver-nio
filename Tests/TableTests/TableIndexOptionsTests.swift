@@ -1,39 +1,22 @@
 @testable import SQLServerKit
 import SQLServerKitTesting
 import XCTest
-import NIO
 import Logging
 
 final class SQLServerTableIndexOptionsTests: XCTestCase, @unchecked Sendable {
-    var group: EventLoopGroup!
     var client: SQLServerClient!
 
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
         TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
 
-        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         let config = makeSQLServerClientConfiguration()
-        self.client = try await SQLServerClient.connect(configuration: config, eventLoopGroupProvider: .shared(group)).get()
+        self.client = try await SQLServerClient.connect(configuration: config, numberOfThreads: 1)
     }
 
     override func tearDown() async throws {
-        // Suppress "Already closed" errors during shutdown - they're expected under stress
-        do {
-            try await client?.shutdownGracefully().get()
-        } catch {
-            // Silently ignore "Already closed" errors - they happen during EventLoop shutdown
-            if error.localizedDescription.contains("Already closed") ||
-               error.localizedDescription.contains("ChannelError error 6") {
-                // Both "Already closed" string and ChannelError error 6 are expected during shutdown
-            } else {
-                throw error
-            }
-        }
-
-        if let g = group {
-            _ = try? await SQLServerClient.shutdownEventLoopGroup(g).get()
-        }
+        try? await client?.shutdownGracefully()
+        client = nil
     }
 
     func testIndexOptionsAreScripted() async throws {
@@ -41,7 +24,7 @@ final class SQLServerTableIndexOptionsTests: XCTestCase, @unchecked Sendable {
         let idx = "IX_\(table)_Options"
         do {
         try await withTemporaryDatabase(client: self.client, prefix: "idx") { db in
-            try await withDbClient(for: db, using: self.group) { dbClient in
+            try await withDbClient(for: db) { dbClient in
                 let adminClient = SQLServerAdministrationClient(client: dbClient)
                 let indexClient = SQLServerIndexClient(client: dbClient)
 
@@ -68,7 +51,7 @@ final class SQLServerTableIndexOptionsTests: XCTestCase, @unchecked Sendable {
                 )
             }
 
-        try await withDbClient(for: db, using: self.group) { dbClient in
+        try await withDbClient(for: db) { dbClient in
             guard let def = try await withRetry(attempts: 5, operation: {
                 try await withTimeout(60, operation: {
                     try await dbClient.withConnection { conn in

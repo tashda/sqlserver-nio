@@ -5,11 +5,26 @@
       "name" : "SQL Server 2008 R2",
       "options" : {
         "environmentVariableEntries" : [
-          { "key" : "USE_DOCKER", "value" : "1" },
-          { "key" : "TDS_DOCKER_PORT", "value" : "14331" },
-          { "key" : "TDS_VERSION", "value" : "2008R2" },
-          { "key" : "TDS_LOAD_ADVENTUREWORKS", "value" : "1" },
-          { "key" : "TDS_AW_DATABASE", "value" : "AdventureWorks" }
+          {
+            "key" : "USE_DOCKER",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_DOCKER_PORT",
+            "value" : "14331"
+          },
+          {
+            "key" : "TDS_VERSION",
+            "value" : "2008R2"
+          },
+          {
+            "key" : "TDS_LOAD_ADVENTUREWORKS",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_AW_DATABASE",
+            "value" : "AdventureWorks"
+          }
         ]
       }
     },
@@ -18,11 +33,26 @@
       "name" : "SQL Server 2012",
       "options" : {
         "environmentVariableEntries" : [
-          { "key" : "USE_DOCKER", "value" : "1" },
-          { "key" : "TDS_DOCKER_PORT", "value" : "14331" },
-          { "key" : "TDS_VERSION", "value" : "2012" },
-          { "key" : "TDS_LOAD_ADVENTUREWORKS", "value" : "1" },
-          { "key" : "TDS_AW_DATABASE", "value" : "AdventureWorks" }
+          {
+            "key" : "USE_DOCKER",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_DOCKER_PORT",
+            "value" : "14331"
+          },
+          {
+            "key" : "TDS_VERSION",
+            "value" : "2012"
+          },
+          {
+            "key" : "TDS_LOAD_ADVENTUREWORKS",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_AW_DATABASE",
+            "value" : "AdventureWorks"
+          }
         ]
       }
     },
@@ -31,11 +61,26 @@
       "name" : "SQL Server 2014",
       "options" : {
         "environmentVariableEntries" : [
-          { "key" : "USE_DOCKER", "value" : "1" },
-          { "key" : "TDS_DOCKER_PORT", "value" : "14331" },
-          { "key" : "TDS_VERSION", "value" : "2014" },
-          { "key" : "TDS_LOAD_ADVENTUREWORKS", "value" : "1" },
-          { "key" : "TDS_AW_DATABASE", "value" : "AdventureWorks" }
+          {
+            "key" : "USE_DOCKER",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_DOCKER_PORT",
+            "value" : "14331"
+          },
+          {
+            "key" : "TDS_VERSION",
+            "value" : "2014"
+          },
+          {
+            "key" : "TDS_LOAD_ADVENTUREWORKS",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_AW_DATABASE",
+            "value" : "AdventureWorks"
+          }
         ]
       }
     },
@@ -44,11 +89,26 @@
       "name" : "SQL Server 2016",
       "options" : {
         "environmentVariableEntries" : [
-          { "key" : "USE_DOCKER", "value" : "1" },
-          { "key" : "TDS_DOCKER_PORT", "value" : "14331" },
-          { "key" : "TDS_VERSION", "value" : "2016" },
-          { "key" : "TDS_LOAD_ADVENTUREWORKS", "value" : "1" },
-          { "key" : "TDS_AW_DATABASE", "value" : "AdventureWorks" }
+          {
+            "key" : "USE_DOCKER",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_DOCKER_PORT",
+            "value" : "14331"
+          },
+          {
+            "key" : "TDS_VERSION",
+            "value" : "2016"
+          },
+          {
+            "key" : "TDS_LOAD_ADVENTUREWORKS",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_AW_DATABASE",
+            "value" : "AdventureWorks"
+          }
         ]
       }
     },
@@ -57,11 +117,26 @@
       "name" : "SQL Server 2017",
       "options" : {
         "environmentVariableEntries" : [
-          { "key" : "USE_DOCKER", "value" : "1" },
-          { "key" : "TDS_DOCKER_PORT", "value" : "14331" },
-          { "key" : "TDS_VERSION", "value" : "2017-latest" },
-          { "key" : "TDS_LOAD_ADVENTUREWORKS", "value" : "1" },
-          { "key" : "TDS_AW_DATABASE", "value" : "AdventureWorks" }
+          {
+            "key" : "USE_DOCKER",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_DOCKER_PORT",
+            "value" : "14331"
+          },
+          {
+            "key" : "TDS_VERSION",
+            "value" : "2017-latest"
+          },
+          {
+            "key" : "TDS_LOAD_ADVENTUREWORKS",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_AW_DATABASE",
+            "value" : "AdventureWorks"
+          }
         ]
       }
     },
@@ -70,11 +145,26 @@
       "name" : "SQL Server 2019",
       "options" : {
         "environmentVariableEntries" : [
-          { "key" : "USE_DOCKER", "value" : "1" },
-          { "key" : "TDS_DOCKER_PORT", "value" : "14331" },
-          { "key" : "TDS_VERSION", "value" : "2019-latest" },
-          { "key" : "TDS_LOAD_ADVENTUREWORKS", "value" : "1" },
-          { "key" : "TDS_AW_DATABASE", "value" : "AdventureWorks" }
+          {
+            "key" : "USE_DOCKER",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_DOCKER_PORT",
+            "value" : "14331"
+          },
+          {
+            "key" : "TDS_VERSION",
+            "value" : "2019-latest"
+          },
+          {
+            "key" : "TDS_LOAD_ADVENTUREWORKS",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_AW_DATABASE",
+            "value" : "AdventureWorks"
+          }
         ]
       }
     },
@@ -83,11 +173,26 @@
       "name" : "SQL Server 2022",
       "options" : {
         "environmentVariableEntries" : [
-          { "key" : "USE_DOCKER", "value" : "1" },
-          { "key" : "TDS_DOCKER_PORT", "value" : "14331" },
-          { "key" : "TDS_VERSION", "value" : "2022-latest" },
-          { "key" : "TDS_LOAD_ADVENTUREWORKS", "value" : "1" },
-          { "key" : "TDS_AW_DATABASE", "value" : "AdventureWorks" }
+          {
+            "key" : "USE_DOCKER",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_DOCKER_PORT",
+            "value" : "14331"
+          },
+          {
+            "key" : "TDS_VERSION",
+            "value" : "2022-latest"
+          },
+          {
+            "key" : "TDS_LOAD_ADVENTUREWORKS",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_AW_DATABASE",
+            "value" : "AdventureWorks"
+          }
         ]
       }
     },
@@ -96,11 +201,26 @@
       "name" : "SQL Server 2025",
       "options" : {
         "environmentVariableEntries" : [
-          { "key" : "USE_DOCKER", "value" : "1" },
-          { "key" : "TDS_DOCKER_PORT", "value" : "14331" },
-          { "key" : "TDS_VERSION", "value" : "2025-latest" },
-          { "key" : "TDS_LOAD_ADVENTUREWORKS", "value" : "1" },
-          { "key" : "TDS_AW_DATABASE", "value" : "AdventureWorks" }
+          {
+            "key" : "USE_DOCKER",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_DOCKER_PORT",
+            "value" : "14331"
+          },
+          {
+            "key" : "TDS_VERSION",
+            "value" : "2025-latest"
+          },
+          {
+            "key" : "TDS_LOAD_ADVENTUREWORKS",
+            "value" : "1"
+          },
+          {
+            "key" : "TDS_AW_DATABASE",
+            "value" : "AdventureWorks"
+          }
         ]
       }
     }

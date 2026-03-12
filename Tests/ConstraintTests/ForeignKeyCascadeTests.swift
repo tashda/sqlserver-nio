@@ -1,42 +1,25 @@
 @testable import SQLServerKit
 import SQLServerKitTesting
 import XCTest
-import NIO
 import Logging
 
 final class SQLServerForeignKeyCascadeMatrixTests: XCTestCase, @unchecked Sendable {
-    var group: EventLoopGroup!
     var client: SQLServerClient!
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
-        group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).get()
-        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1").get() } } catch { throw error }
+        TestEnvironmentManager.loadEnvironmentVariables()
+        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
+        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1") } } catch { throw error }
     }
 
     override func tearDown() async throws {
-        do {
-            try await client?.shutdownGracefully().get()
-        } catch {
-            // Silently ignore "Already closed" errors during shutdown - they're expected under stress
-            if error.localizedDescription.contains("Already closed") ||
-               error.localizedDescription.contains("ChannelError error 6") {
-                // Both errors are expected during EventLoop shutdown
-            } else {
-                throw error
-            }
-        }
-
-        if let g = group {
-            _ = try? await SQLServerClient.shutdownEventLoopGroup(g).get()
-        }
+        try? await client?.shutdownGracefully()
     }
 
     @available(macOS 12.0, *)
     func testForeignKeyCascadeMatrix() async throws {
         try await withTemporaryDatabase(client: self.client, prefix: "fkmx") { db in
-            try await withDbClient(for: db, using: self.group) { dbClient in
+            try await withDbClient(for: db) { dbClient in
                 let parent = "fk_parent_\(UUID().uuidString.prefix(6))"
                 let child = "fk_child_\(UUID().uuidString.prefix(6))"
 

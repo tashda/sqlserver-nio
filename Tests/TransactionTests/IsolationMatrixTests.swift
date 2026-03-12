@@ -1,37 +1,26 @@
 @testable import SQLServerKit
 import SQLServerKitTesting
 import XCTest
-import NIO
 import Logging
 
 final class SQLServerTransactionIsolationMatrixTests: XCTestCase, @unchecked Sendable {
-    var group: EventLoopGroup!
     var client: SQLServerClient!
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
         TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
-        group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).get()
-        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1").get() } } catch { throw error }
+        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
+        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1") } } catch { throw error }
     }
 
     override func tearDown() async throws {
-        _ = try await client?.shutdownGracefully().get()
-        if let group = group {
-            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-                group.shutdownGracefully { error in
-                    if let error { cont.resume(throwing: error) } else { cont.resume(returning: ()) }
-                }
-            }
-        }
+        try? await client?.shutdownGracefully()
         client = nil
-        group = nil
     }
 
     @available(macOS 12.0, *)
     func testSerializableRangeLockBlocksInsert() async throws {
         try await withTemporaryDatabase(client: self.client, prefix: "txmx") { db in
-            try await withDbClient(for: db, using: self.group) { dbClient in
+            try await withDbClient(for: db) { dbClient in
                 let adminClient = SQLServerAdministrationClient(client: dbClient)
 
                 // Create table using SQLServerAdministrationClient
@@ -78,7 +67,7 @@ final class SQLServerTransactionIsolationMatrixTests: XCTestCase, @unchecked Sen
     @available(macOS 12.0, *)
     func testReadCommittedSelectBlocksOnWriter() async throws {
         try await withTemporaryDatabase(client: self.client, prefix: "txmx") { db in
-            try await withDbClient(for: db, using: self.group) { dbClient in
+            try await withDbClient(for: db) { dbClient in
                 let adminClient = SQLServerAdministrationClient(client: dbClient)
 
                 // Create table using SQLServerAdministrationClient

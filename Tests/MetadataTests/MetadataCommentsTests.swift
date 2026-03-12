@@ -1,12 +1,9 @@
 import XCTest
-import NIO
-import NIOPosix
 @testable import SQLServerKit
 import SQLServerKitTesting
 import Foundation
 
 final class SQLServerMetadataCommentsTests: XCTestCase, @unchecked Sendable {
-    var group: EventLoopGroup!
     var client: SQLServerClient!
 
     private var adminClient: SQLServerAdministrationClient!
@@ -21,19 +18,14 @@ final class SQLServerMetadataCommentsTests: XCTestCase, @unchecked Sendable {
         _ = isLoggingConfigured
 
         // Create connection
-        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        self.client = try await SQLServerClient.connect(
-            configuration: makeSQLServerClientConfiguration(),
-            eventLoopGroupProvider: .shared(group)
-        ).get()
+        self.client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
 
         self.adminClient = SQLServerAdministrationClient(client: client)
     }
 
     override func tearDown() async throws {
         // Clean up connections first
-        try await client?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
+        try? await client?.shutdownGracefully()
 
         self.adminClient = nil
         try await super.tearDown()
@@ -48,7 +40,7 @@ final class SQLServerMetadataCommentsTests: XCTestCase, @unchecked Sendable {
                 .init(name: "flag", definition: .standard(.init(dataType: .bit)))
             ]
             let tableName = "t_\(UUID().uuidString.prefix(8))"
-            try await withDbClient(for: db, using: self.group) { dbClient in
+            try await withDbClient(for: db) { dbClient in
                 let admin = SQLServerAdministrationClient(client: dbClient)
                 if try await dbClient.queryScalar("SELECT OBJECT_ID(N'dbo.\(tableName)', N'U')", as: Int.self) != nil {
                     try await admin.dropTable(name: tableName)
@@ -94,7 +86,7 @@ final class SQLServerMetadataCommentsTests: XCTestCase, @unchecked Sendable {
         try await withTemporaryDatabase(client: self.client, prefix: "cmtv") { db in
             let table = "src_\(UUID().uuidString.prefix(8))"
             let view = "v_\(UUID().uuidString.prefix(8))"
-            try await withDbClient(for: db, using: self.group) { dbClient in
+            try await withDbClient(for: db) { dbClient in
                 let admin = SQLServerAdministrationClient(client: dbClient)
                 let views = SQLServerViewClient(client: dbClient)
                 try await admin.createTable(
@@ -131,7 +123,7 @@ final class SQLServerMetadataCommentsTests: XCTestCase, @unchecked Sendable {
             let funcName = "f_\(UUID().uuidString.prefix(8))"
             let trig = "tr_\(UUID().uuidString.prefix(8))"
 
-            try await withDbClient(for: db, using: self.group) { dbClient in
+            try await withDbClient(for: db) { dbClient in
                 let admin = SQLServerAdministrationClient(client: dbClient)
                 let routines = SQLServerRoutineClient(client: dbClient)
                 let triggers = SQLServerTriggerClient(client: dbClient)

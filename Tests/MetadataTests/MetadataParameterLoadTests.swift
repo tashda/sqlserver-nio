@@ -1,43 +1,25 @@
 @testable import SQLServerKit
 import SQLServerKitTesting
-import NIO
 import XCTest
 
 final class SQLServerMetadataParameterLoadTests: XCTestCase, @unchecked Sendable {
-    var group: EventLoopGroup!
     var client: SQLServerClient!
 
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
         TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
-        group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).get()
+        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
     }
 
     override func tearDown() async throws {
-        do {
-            try await client?.shutdownGracefully().get()
-        } catch {
-            // Silently ignore "Already closed" errors during shutdown - they're expected under stress
-            if error.localizedDescription.contains("Already closed") ||
-               error.localizedDescription.contains("ChannelError error 6") {
-                // Both errors are expected during EventLoop shutdown
-            } else {
-                throw error
-            }
-        }
-
-        if let g = group {
-            _ = try? await SQLServerClient.shutdownEventLoopGroup(g).get()
-        }
+        try? await client?.shutdownGracefully()
         client = nil
-        group = nil
     }
 
     @available(macOS 12.0, *)
     func testRepeatedParameterIntrospectionStaysStable() async throws {
         try await withTemporaryDatabase(client: self.client, prefix: "paramload") { database in
-            try await withDbClient(for: database, using: self.group) { dbClient in
+            try await withDbClient(for: database) { dbClient in
                 let typeClient = SQLServerTypeClient(client: dbClient)
                 let routineClient = SQLServerRoutineClient(client: dbClient)
 
@@ -103,7 +85,7 @@ final class SQLServerMetadataParameterLoadTests: XCTestCase, @unchecked Sendable
 
             try await withDbConnection(client: self.client, database: database) { connection in
                 // Clear any connection cache/pool state by running a simple query first
-                _ = try await connection.query("SELECT 1 AS test;").get()
+                _ = try await connection.query("SELECT 1 AS test;")
 
                 for iteration in 0..<3 {
                     for (name, expectedCount) in objects {

@@ -1,23 +1,20 @@
 @testable import SQLServerKit
 import SQLServerKitTesting
 import XCTest
-import NIO
 import Logging
 
 final class SQLServerPlpChunkingTests: XCTestCase, @unchecked Sendable {
-    var group: EventLoopGroup!
     var client: SQLServerClient!
 
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
         TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
-        group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).get()
+        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
     }
 
     override func tearDown() async throws {
-        try await client?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
+        try? await client?.shutdownGracefully()
+        client = nil
     }
 
     @available(macOS 12.0, *)
@@ -26,7 +23,7 @@ final class SQLServerPlpChunkingTests: XCTestCase, @unchecked Sendable {
             try await withTemporaryDatabase(client: self.client, prefix: "plp2") { db in
                 let table = "plp2_tbl_\(UUID().uuidString.prefix(6))"
 
-                try await withDbClient(for: db, using: self.group) { dbClient in
+                try await withDbClient(for: db) { dbClient in
                     let dbAdminClient = SQLServerAdministrationClient(client: dbClient)
 
                     // Create table using SQLServerKit APIs with MAX data types

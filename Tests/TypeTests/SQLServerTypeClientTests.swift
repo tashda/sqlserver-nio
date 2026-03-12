@@ -2,12 +2,9 @@
 import SQLServerKitTesting
 import Foundation
 import XCTest
-import NIO
 import Logging
-import Foundation
 
 final class SQLServerTypeClientTests: XCTestCase, @unchecked Sendable {
-    var group: EventLoopGroup!
     var client: SQLServerClient!
 
     override func setUp() async throws {
@@ -20,26 +17,24 @@ final class SQLServerTypeClientTests: XCTestCase, @unchecked Sendable {
         _ = isLoggingConfigured
 
         // Create connection
-        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         self.client = try await SQLServerClient.connect(
             configuration: makeSQLServerClientConfiguration(),
-            eventLoopGroupProvider: .shared(group)
-        ).get()
+            numberOfThreads: 1
+        )
 
         // Test connection stability
-        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1").get() } } catch { throw error }
+        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1") } } catch { throw error }
     }
 
     override func tearDown() async throws {
-        try await client?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
+        try? await client?.shutdownGracefully()
         try await super.tearDown()
     }
 
     @available(macOS 12.0, *)
     func testCreateUserDefinedTableType() async throws {
         try await withTemporaryDatabase(client: self.client, prefix: "udtt") { db in
-            try await withDbClient(for: db, using: self.group) { dbClient in
+            try await withDbClient(for: db) { dbClient in
                 let typeClient = SQLServerTypeClient(client: dbClient)
 
                 // Generate unique name to avoid collisions
@@ -84,7 +79,7 @@ final class SQLServerTypeClientTests: XCTestCase, @unchecked Sendable {
     @available(macOS 12.0, *)
     func testDropUserDefinedTableType() async throws {
         try await withTemporaryDatabase(client: self.client, prefix: "udtt_drop") { db in
-            try await withDbClient(for: db, using: self.group) { dbClient in
+            try await withDbClient(for: db) { dbClient in
                 let typeClient = SQLServerTypeClient(client: dbClient)
 
                 let tableType = UserDefinedTableTypeDefinition(
@@ -115,7 +110,7 @@ final class SQLServerTypeClientTests: XCTestCase, @unchecked Sendable {
     @available(macOS 12.0, *)
     func testListUserDefinedTableTypesWithSchema() async throws {
         try await withTemporaryDatabase(client: self.client, prefix: "udtt_list") { db in
-            try await withDbClient(for: db, using: self.group) { dbClient in
+            try await withDbClient(for: db) { dbClient in
                 let typeClient = SQLServerTypeClient(client: dbClient)
                 let securityClient = SQLServerSecurityClient(client: dbClient)
 
@@ -168,7 +163,7 @@ final class SQLServerTypeClientTests: XCTestCase, @unchecked Sendable {
     @available(macOS 12.0, *)
     func testUserDefinedTableTypeWithAllDataTypes() async throws {
         try await withTemporaryDatabase(client: self.client, prefix: "udtt_alldata") { db in
-            try await withDbClient(for: db, using: self.group) { dbClient in
+            try await withDbClient(for: db) { dbClient in
                 let typeClient = SQLServerTypeClient(client: dbClient)
 
                 // Generate unique name to avoid collisions

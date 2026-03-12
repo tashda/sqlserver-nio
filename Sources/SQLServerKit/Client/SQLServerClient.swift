@@ -216,7 +216,31 @@ public final class SQLServerClient: @unchecked Sendable {
     }
 
     public func shutdownGracefully() async throws {
-        try await shutdownGracefully().get()
+        var already = false
+        stateLock.withLock {
+            if _isShutdown { already = true } else { _isShutdown = true }
+        }
+        if already { return }
+
+        while true {
+            let pending = stateLock.withLock { inFlightOperations }
+            if pending == 0 { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        try await pool.shutdownGracefully().get()
+
+        if ownsEventLoopGroup {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                eventLoopGroup.shutdownGracefully { error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume()
+                    }
+                }
+            }
+        }
     }
 
     public func close() async throws {

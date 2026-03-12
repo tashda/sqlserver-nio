@@ -1,5 +1,4 @@
 import XCTest
-import NIOCore
 import Logging
 @testable import SQLServerTDS
 @testable import SQLServerKit
@@ -8,7 +7,6 @@ import SQLServerKitTesting
 /// Simple performance tests for SQLServerNIO
 /// Tests basic performance characteristics
 final class PerformanceTests: XCTestCase, @unchecked Sendable {
-    private var group: EventLoopGroup!
     private var client: SQLServerClient!
     private let logger = Logger(label: "PerformanceTests")
 
@@ -19,16 +17,14 @@ final class PerformanceTests: XCTestCase, @unchecked Sendable {
         config.poolConfiguration.connectionIdleTimeout = nil
         config.poolConfiguration.minimumIdleConnections = 0
 
-        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         self.client = try await SQLServerClient.connect(
             configuration: config,
-            eventLoopGroupProvider: .shared(group)
-        ).get()
+            numberOfThreads: 1
+        )
     }
 
     override func tearDown() async throws {
-        try await client?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
+        try? await client?.shutdownGracefully()
     }
 
     // MARK: - Connection Performance Tests
@@ -38,7 +34,6 @@ final class PerformanceTests: XCTestCase, @unchecked Sendable {
 
         let connectionCount = 3
         var connectionTimes: [TimeInterval] = []
-        var createdEventLoopGroups: [EventLoopGroup] = []
 
         for i in 1...connectionCount {
             let startTime = Date()
@@ -47,13 +42,10 @@ final class PerformanceTests: XCTestCase, @unchecked Sendable {
             config.poolConfiguration.connectionIdleTimeout = nil
             config.poolConfiguration.minimumIdleConnections = 0
 
-            let testGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-            createdEventLoopGroups.append(testGroup)
-
             let testClient = try await SQLServerClient.connect(
                 configuration: config,
-                eventLoopGroupProvider: .shared(testGroup)
-            ).get()
+                numberOfThreads: 1
+            )
 
             let connectionTime = Date().timeIntervalSince(startTime)
             connectionTimes.append(connectionTime)
@@ -63,17 +55,10 @@ final class PerformanceTests: XCTestCase, @unchecked Sendable {
 
             // Properly shutdown the client with timeout and error handling
             try await withTimeout(10.0) {
-                try await testClient.shutdownGracefully().get()
+                try await testClient.shutdownGracefully()
             }
 
             logger.info("   Connection \(i): \(String(format: "%.3f", connectionTime))s")
-        }
-
-        // Clean up all created EventLoopGroups
-        for group in createdEventLoopGroups {
-            try await withTimeout(5.0) {
-                try await group.shutdownGracefully()
-            }
         }
 
         let averageConnectionTime = connectionTimes.reduce(0, +) / Double(connectionTimes.count)

@@ -1,5 +1,4 @@
 import XCTest
-import NIO
 import Logging
 @testable import SQLServerKit
 import SQLServerKitTesting
@@ -8,7 +7,6 @@ import SQLServerKitTesting
 /// This test enumerates all schemas, tables, and views in a database and tests
 /// all metadata operations on each to identify exactly what's working and what's failing
 final class SQLServerMetadataAnalysisTests: XCTestCase, @unchecked Sendable {
-    var group: EventLoopGroup!
     var client: SQLServerClient!
     var testDatabase: String = "AdventureWorks"
     private let maxSchemasToInspect = Int.max
@@ -21,27 +19,19 @@ final class SQLServerMetadataAnalysisTests: XCTestCase, @unchecked Sendable {
         testDatabase = env("TDS_TEST_DB") ?? env("TDS_AW_DATABASE") ?? env("TDS_DATABASE") ?? "AdventureWorks"
 
         let threadCount = max(2, min(ProcessInfo.processInfo.processorCount, 8))
-        group = MultiThreadedEventLoopGroup(numberOfThreads: threadCount)
 
         var configuration = makeSQLServerClientConfiguration()
         configuration.poolConfiguration.maximumConcurrentConnections = max(64, configuration.poolConfiguration.maximumConcurrentConnections)
         configuration.poolConfiguration.minimumIdleConnections = min(16, configuration.poolConfiguration.maximumConcurrentConnections)
 
-        client = try await SQLServerClient.connect(configuration: configuration, eventLoopGroupProvider: .shared(group)).get()
+        client = try await SQLServerClient.connect(configuration: configuration, numberOfThreads: threadCount)
 
         print("🔍 Starting metadata analysis for database: \(testDatabase)")
     }
 
     override func tearDown() async throws {
-        if let client = client {
-            try await client.shutdownGracefully().get()
-            self.client = nil
-        }
-        if let group = group {
-            try? await Task.sleep(nanoseconds: 50_000_000)
-            try await shutdownEventLoopGroup(group)
-            self.group = nil
-        }
+        try? await client?.shutdownGracefully()
+        self.client = nil
     }
 
     /// Main analysis test - systematically tests all metadata operations
@@ -422,18 +412,6 @@ private func runObjectChecks<T: Sendable>(
         index = upperBound
     }
     return aggregated
-}
-
-private func shutdownEventLoopGroup(_ group: EventLoopGroup) async throws {
-    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-        group.shutdownGracefully { error in
-            if let error {
-                continuation.resume(throwing: error)
-            } else {
-                continuation.resume(returning: ())
-            }
-        }
-    }
 }
 
 // MARK: - Analysis Data Structures
