@@ -49,6 +49,31 @@ extension TDSData {
         case .date:
             return value.readDateAsDate()
 
+        case .datetimen:
+            // datetimen is variable-length: 4 bytes = smalldatetime, 8 bytes = datetime
+            switch value.readableBytes {
+            case 0:
+                return nil
+            case 4:
+                guard let daysSince1900 = value.readInteger(endianness: .little, as: UInt16.self),
+                      let minutesElapsed = value.readInteger(endianness: .little, as: UInt16.self)
+                else { return nil }
+                let secondsSinceUnixEpoch =
+                    Int64(daysSince1900) * _secondsInDay +
+                    Int64(minutesElapsed) * 60 -
+                    _secondsBetween1900AndUnixEpoch
+                return Date(timeIntervalSince1970: Double(secondsSinceUnixEpoch))
+            case 8:
+                guard let daysSince1900 = value.readInteger(endianness: .little, as: Int32.self),
+                      let ticks300 = value.readInteger(endianness: .little, as: UInt32.self)
+                else { return nil }
+                let dayPart = Double(Int64(daysSince1900) * _secondsInDay) - Double(_secondsBetween1900AndUnixEpoch)
+                let timePart = Double(ticks300) / 300.0
+                return Date(timeIntervalSince1970: dayPart + timePart)
+            default:
+                return nil
+            }
+
         case .time:
             // time alone cannot be accurately represented with Swift's Date type
             return nil
@@ -76,7 +101,7 @@ extension TDSData {
 }
 
 extension ByteBuffer {
-    fileprivate mutating func readByteLengthInteger<T: FixedWidthInteger>(length: Int) -> T? {
+    mutating func readByteLengthInteger<T: FixedWidthInteger>(length: Int) -> T? {
         guard length > 0, let bytes = readBytes(length: length) else { return nil }
         return bytes.enumerated().reduce(T.zero) { partial, pair in
             partial | (T(pair.element) << T(pair.offset * 8))
