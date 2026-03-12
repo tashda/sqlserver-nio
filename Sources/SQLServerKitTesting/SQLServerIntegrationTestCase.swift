@@ -6,6 +6,7 @@ import SQLServerKit
 
 /// Base class for SQL Server integration tests.
 /// Handles boilerplate setUp and tearDown for a live server-backed client.
+@available(macOS 12.0, *)
 open class SQLServerIntegrationTestCase: XCTestCase {
     public var group: EventLoopGroup!
     public var client: SQLServerClient!
@@ -21,16 +22,16 @@ open class SQLServerIntegrationTestCase: XCTestCase {
         group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         client = try await SQLServerClient.connect(
             configuration: makeSQLServerClientConfiguration(),
-            eventLoopGroupProvider: .shared(group)
-        ).get()
+            numberOfThreads: 1
+        )
         do {
             let client = self.client!
-            _ = try await withTimeout(10) { try await client.query("SELECT 1").get() }
+            _ = try await withTimeout(10) { try await client.query("SELECT 1") }
         } catch { throw error }
     }
 
     open override func tearDown() async throws {
-        try? await client?.shutdownGracefully().get()
+        try? await client?.shutdownGracefully()
         try? await group?.shutdownGracefully()
         client = nil
         group = nil

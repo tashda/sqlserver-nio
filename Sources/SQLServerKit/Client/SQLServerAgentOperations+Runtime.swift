@@ -5,7 +5,7 @@ import SQLServerTDS
 extension SQLServerAgentOperations {
     // MARK: - Runtime Activity
 
-    public func listRunningJobs() -> EventLoopFuture<[SQLServerAgentRunningJob]> {
+    internal func listRunningJobs() -> EventLoopFuture<[SQLServerAgentRunningJob]> {
         let sql = """
         SELECT j.name,
                s.session_id,
@@ -25,7 +25,7 @@ extension SQLServerAgentOperations {
         }
     }
 
-    public func listJobHistory(jobName: String, top: Int = 20) -> EventLoopFuture<[SQLServerAgentJobHistoryEntry]> {
+    internal func listJobHistory(jobName: String, top: Int = 20) -> EventLoopFuture<[SQLServerAgentJobHistoryEntry]> {
         @Sendable
         func fetchRows() -> EventLoopFuture<[TDSRow]> {
             let sql = """

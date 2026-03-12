@@ -183,6 +183,25 @@ extension SQLServerAgentOperations {
     }
 
     @available(macOS 12.0, *)
+    public func updateOperator(
+        name: String,
+        emailAddress: String? = nil,
+        enabled: Bool? = nil,
+        pagerAddress: String? = nil,
+        weekdayPagerStartTime: Int? = nil,
+        weekdayPagerEndTime: Int? = nil
+    ) async throws {
+        _ = try await updateOperator(
+            name: name,
+            emailAddress: emailAddress,
+            enabled: enabled,
+            pagerAddress: pagerAddress,
+            weekdayPagerStartTime: weekdayPagerStartTime,
+            weekdayPagerEndTime: weekdayPagerEndTime
+        ).get()
+    }
+
+    @available(macOS 12.0, *)
     public func deleteOperator(name: String) async throws {
         _ = try await deleteOperator(name: name).get()
     }
@@ -200,8 +219,48 @@ extension SQLServerAgentOperations {
     }
 
     @available(macOS 12.0, *)
+    public func createAlert(
+        name: String,
+        severity: Int? = nil,
+        messageId: Int? = nil,
+        databaseName: String? = nil,
+        eventDescriptionKeyword: String? = nil,
+        performanceCondition: String? = nil,
+        wmiNamespace: String? = nil,
+        wmiQuery: String? = nil,
+        enabled: Bool = true
+    ) async throws {
+        _ = try await createAlert(
+            name: name,
+            severity: severity,
+            messageId: messageId,
+            databaseName: databaseName,
+            eventDescriptionKeyword: eventDescriptionKeyword,
+            performanceCondition: performanceCondition,
+            wmiNamespace: wmiNamespace,
+            wmiQuery: wmiQuery,
+            enabled: enabled
+        ).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func deleteAlert(name: String) async throws {
+        _ = try await deleteAlert(name: name).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func listAlerts() async throws -> [SQLServerAgentAlertInfo] {
+        try await listAlerts().get()
+    }
+
+    @available(macOS 12.0, *)
     public func addNotification(alertName: String, operatorName: String, method: Int = 1) async throws {
         _ = try await addNotification(alertName: alertName, operatorName: operatorName, method: method).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func deleteNotification(alertName: String, operatorName: String) async throws {
+        _ = try await deleteNotification(alertName: alertName, operatorName: operatorName).get()
     }
 
     @available(macOS 12.0, *)
@@ -227,12 +286,48 @@ extension SQLServerAgentOperations {
     // MARK: - Async Proxies
 
     @available(macOS 12.0, *)
+    public func createProxy(name: String, credentialName: String, description: String? = nil, enabled: Bool = true) async throws {
+        _ = try await createProxy(name: name, credentialName: credentialName, description: description, enabled: enabled).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func deleteProxy(name: String) async throws {
+        _ = try await deleteProxy(name: name).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func grantLoginToProxy(proxyName: String, loginName: String) async throws {
+        _ = try await grantLoginToProxy(proxyName: proxyName, loginName: loginName).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func revokeLoginFromProxy(proxyName: String, loginName: String) async throws {
+        _ = try await revokeLoginFromProxy(proxyName: proxyName, loginName: loginName).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func grantProxyToSubsystem(proxyName: String, subsystem: String) async throws {
+        _ = try await grantProxyToSubsystem(proxyName: proxyName, subsystem: subsystem).get()
+    }
+
+    @available(macOS 12.0, *)
     public func listProxies() async throws -> [SQLServerAgentProxyInfo] {
         try await listProxies().get()
     }
 
     @available(macOS 12.0, *)
+    public func listJobHistory(jobName: String, top: Int = 20) async throws -> [SQLServerAgentJobHistoryEntry] {
+        try await listJobHistory(jobName: jobName, top: top).get()
+    }
+
+    @available(macOS 12.0, *)
     public func getJobHistory(jobName: String? = nil, top: Int = 100) async throws -> [SQLServerAgentJobHistoryDetail] {
         try await getJobHistory(jobName: jobName, top: top).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func fetchProxyAndCredentialPermissions() async throws -> SQLServerAgentPermissionReport {
+        let future: EventLoopFuture<SQLServerAgentPermissionReport> = self.fetchProxyAndCredentialPermissions()
+        return try await future.get()
     }
 }

@@ -1,8 +1,9 @@
+import Foundation
 import NIOCore
 
 public struct SQLServerRetryConfiguration {
     public typealias ShouldRetryHandler = @Sendable (Swift.Error) -> Bool
-    public typealias BackoffStrategy = @Sendable (_ attempt: Int) -> TimeAmount
+    public typealias BackoffStrategy = @Sendable (_ attempt: Int) -> TimeInterval
 
     public var maximumAttempts: Int
     public var backoffStrategy: BackoffStrategy
@@ -27,7 +28,7 @@ public struct SQLServerRetryConfiguration {
 
     public init(
         maximumAttempts: Int = 3,
-        backoffStrategy: @escaping BackoffStrategy = { _ in .milliseconds(100) },
+        backoffStrategy: @escaping BackoffStrategy = { _ in 0.1 },
         shouldRetry: ShouldRetryHandler? = nil
     ) {
         precondition(maximumAttempts >= 1, "maximumAttempts must be at least 1")
@@ -38,3 +39,9 @@ public struct SQLServerRetryConfiguration {
 }
 
 extension SQLServerRetryConfiguration: Sendable {}
+
+extension TimeInterval {
+    internal var nioTimeAmount: NIOCore.TimeAmount {
+        .nanoseconds(Int64(self * 1_000_000_000))
+    }
+}

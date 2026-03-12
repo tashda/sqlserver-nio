@@ -5,7 +5,7 @@ import SQLServerTDS
 extension SQLServerAgentOperations {
     // MARK: - Proxy & Credential Management
 
-    public func createProxy(name: String, credentialName: String, description: String? = nil, enabled: Bool = true) -> EventLoopFuture<Void> {
+    internal func createProxy(name: String, credentialName: String, description: String? = nil, enabled: Bool = true) -> EventLoopFuture<Void> {
         return assertCanManageProxiesAndCredentials().flatMap { (_: Void) -> EventLoopFuture<[TDSRow]> in
             var sql = "EXEC msdb.dbo.sp_add_proxy @proxy_name = N'\(Self.escapeLiteral(name))', @credential_name = N'\(Self.escapeLiteral(credentialName))', @enabled = \(enabled ? 1 : 0)"
             if let description, !description.isEmpty { sql += ", @description = N'\(Self.escapeLiteral(description))'" }
@@ -21,27 +21,27 @@ extension SQLServerAgentOperations {
         }
     }
 
-    public func deleteProxy(name: String) -> EventLoopFuture<Void> {
+    internal func deleteProxy(name: String) -> EventLoopFuture<Void> {
         run("EXEC msdb.dbo.sp_delete_proxy @proxy_name = N'\(Self.escapeLiteral(name))';").map { _ in () }
     }
 
-    public func grantLoginToProxy(proxyName: String, loginName: String) -> EventLoopFuture<Void> {
+    internal func grantLoginToProxy(proxyName: String, loginName: String) -> EventLoopFuture<Void> {
         return assertCanManageProxiesAndCredentials().flatMap { (_: Void) -> EventLoopFuture<Void> in
             self.run("EXEC msdb.dbo.sp_grant_login_to_proxy @proxy_name = N'\(Self.escapeLiteral(proxyName))', @login_name = N'\(Self.escapeLiteral(loginName))';").map { _ in () }
         }
     }
 
-    public func revokeLoginFromProxy(proxyName: String, loginName: String) -> EventLoopFuture<Void> {
+    internal func revokeLoginFromProxy(proxyName: String, loginName: String) -> EventLoopFuture<Void> {
         run("EXEC msdb.dbo.sp_revoke_login_from_proxy @proxy_name = N'\(Self.escapeLiteral(proxyName))', @login_name = N'\(Self.escapeLiteral(loginName))';").map { _ in () }
     }
 
-    public func grantProxyToSubsystem(proxyName: String, subsystem: String) -> EventLoopFuture<Void> {
+    internal func grantProxyToSubsystem(proxyName: String, subsystem: String) -> EventLoopFuture<Void> {
         return assertCanManageProxiesAndCredentials().flatMap { (_: Void) -> EventLoopFuture<Void> in
             self.run("EXEC msdb.dbo.sp_grant_proxy_to_subsystem @proxy_name = N'\(Self.escapeLiteral(proxyName))', @subsystem_id = NULL, @subsystem_name = N'\(Self.escapeLiteral(subsystem))';").map { _ in () }
         }
     }
 
-    public func listProxies() -> EventLoopFuture<[SQLServerAgentProxyInfo]> {
+    internal func listProxies() -> EventLoopFuture<[SQLServerAgentProxyInfo]> {
         let sql = """
         SELECT p.name, c.name AS credential_name, p.enabled
         FROM msdb.dbo.sysproxies AS p

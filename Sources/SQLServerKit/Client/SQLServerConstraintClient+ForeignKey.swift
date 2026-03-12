@@ -87,7 +87,7 @@ extension SQLServerConstraintClient {
         _ = try await client.execute(sql)
     }
     
-    public func dropForeignKey(name: String, table: String, schema: String = "dbo") -> EventLoopFuture<Void> {
+    internal func dropForeignKey(name: String, table: String, schema: String = "dbo") -> EventLoopFuture<Void> {
         let promise = client.eventLoopGroup.next().makePromise(of: Void.self)
         if #available(macOS 12.0, *) {
             promise.completeWithTask {

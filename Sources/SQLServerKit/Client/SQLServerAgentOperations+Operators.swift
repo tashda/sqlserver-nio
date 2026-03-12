@@ -5,7 +5,7 @@ import SQLServerTDS
 extension SQLServerAgentOperations {
     // MARK: - Operator Management
 
-    public func createOperator(name: String, emailAddress: String? = nil, enabled: Bool = true) -> EventLoopFuture<Void> {
+    internal func createOperator(name: String, emailAddress: String? = nil, enabled: Bool = true) -> EventLoopFuture<Void> {
         var sql = "EXEC msdb.dbo.sp_add_operator @name = N'\(Self.escapeLiteral(name))', @enabled = \(enabled ? 1 : 0)"
         if let emailAddress, !emailAddress.isEmpty { sql += ", @email_address = N'\(Self.escapeLiteral(emailAddress))'" }
         sql += ";"
@@ -19,7 +19,7 @@ extension SQLServerAgentOperations {
         }
     }
 
-    public func updateOperator(name: String, emailAddress: String? = nil, enabled: Bool? = nil, pagerAddress: String? = nil, weekdayPagerStartTime: Int? = nil, weekdayPagerEndTime: Int? = nil) -> EventLoopFuture<Void> {
+    internal func updateOperator(name: String, emailAddress: String? = nil, enabled: Bool? = nil, pagerAddress: String? = nil, weekdayPagerStartTime: Int? = nil, weekdayPagerEndTime: Int? = nil) -> EventLoopFuture<Void> {
         var sql = "EXEC msdb.dbo.sp_update_operator @name = N'\(Self.escapeLiteral(name))'"
         if let emailAddress { sql += ", @email_address = N'\(Self.escapeLiteral(emailAddress))'" }
         if let enabled { sql += ", @enabled = \(enabled ? 1 : 0)" }
@@ -30,11 +30,11 @@ extension SQLServerAgentOperations {
         return run(sql).map { _ in () }
     }
 
-    public func deleteOperator(name: String) -> EventLoopFuture<Void> {
+    internal func deleteOperator(name: String) -> EventLoopFuture<Void> {
         run("EXEC msdb.dbo.sp_delete_operator @name = N'\(Self.escapeLiteral(name))';").map { _ in () }
     }
 
-    public func listOperators() -> EventLoopFuture<[SQLServerAgentOperatorInfo]> {
+    internal func listOperators() -> EventLoopFuture<[SQLServerAgentOperatorInfo]> {
         run("SELECT name, email_address, enabled FROM msdb.dbo.sysoperators ORDER BY name;").map { rows in
             rows.compactMap { row in
                 guard let name = row.column("name")?.string else { return nil }
@@ -45,11 +45,11 @@ extension SQLServerAgentOperations {
 
     // MARK: - Notifications
 
-    public func addNotification(alertName: String, operatorName: String, method: Int = 1) -> EventLoopFuture<Void> {
+    internal func addNotification(alertName: String, operatorName: String, method: Int = 1) -> EventLoopFuture<Void> {
         run("EXEC msdb.dbo.sp_add_notification @alert_name = N'\(Self.escapeLiteral(alertName))', @operator_name = N'\(Self.escapeLiteral(operatorName))', @notification_method = \(method);").map { _ in () }
     }
 
-    public func deleteNotification(alertName: String, operatorName: String) -> EventLoopFuture<Void> {
+    internal func deleteNotification(alertName: String, operatorName: String) -> EventLoopFuture<Void> {
         run("EXEC msdb.dbo.sp_delete_notification @alert_name = N'\(Self.escapeLiteral(alertName))', @operator_name = N'\(Self.escapeLiteral(operatorName))';").map { _ in () }
     }
 }
