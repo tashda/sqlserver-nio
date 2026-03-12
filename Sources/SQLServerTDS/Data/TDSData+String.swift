@@ -89,27 +89,44 @@ extension TDSData {
             let d4a = [bytes[8], bytes[9]].map(hex).joined()
             let d4b = bytes[10...15].map(hex).joined()
             return "\(d1)-\(d2)-\(d3)-\(d4a)-\(d4b)"
-        case .smallDateTime, .datetime, .date, .time, .datetime2, .datetimeOffset:
+        case .smallDateTime, .datetime, .date, .datetime2, .datetimeOffset, .datetimen:
             return self.date.map { ISO8601DateFormatter().string(from: $0) }
-        default:
-            if let bytes = value.readBytes(length: value.readableBytes), !bytes.isEmpty {
-                if bytes.count.isMultiple(of: 2), let utf16 = String(bytes: bytes, encoding: .utf16LittleEndian) {
-                    return utf16
-                }
-                if bytes.count > 2,
-                   (bytes.count - 2).isMultiple(of: 2),
-                   let utf16 = String(bytes: Array(bytes.dropFirst(2)), encoding: .utf16LittleEndian) {
-                    return utf16
-                }
-                if bytes.count > 1,
-                   (bytes.count - 1).isMultiple(of: 2),
-                   let utf16 = String(bytes: Array(bytes.dropFirst(1)), encoding: .utf16LittleEndian) {
-                    return utf16
-                }
-                if let utf8 = String(bytes: bytes, encoding: .utf8) {
-                    return utf8
-                }
+        case .time:
+            // time-only cannot be represented as a Date; format the raw ticks directly
+            let scale = Int(self.metadata.scale)
+            guard let rawTicks: Int = value.readByteLengthInteger(length: value.readableBytes) else {
+                return nil
             }
+            var ticks = rawTicks
+            if scale < 7 {
+                for _ in scale..<7 { ticks *= 10 }
+            }
+            let totalSeconds = Double(ticks) / 10_000_000.0
+            let hours = Int(totalSeconds) / 3600
+            let minutes = (Int(totalSeconds) % 3600) / 60
+            let seconds = Int(totalSeconds) % 60
+            let fractional = totalSeconds - Double(Int(totalSeconds))
+            if fractional > 0 && scale > 0 {
+                let frac = String(format: "%.\(scale)f", fractional).dropFirst(1) // drop leading "0"
+                return String(format: "%02d:%02d:%02d%@", hours, minutes, seconds, String(frac))
+            }
+            return String(format: "%02d:%02d:%02d", hours, minutes, seconds)
+        case .binaryLegacy, .varbinaryLegacy, .varbinary, .binary, .image:
+            return self.bytes.map { $0.map { String(format: "0x%02X", $0) }.joined() }
+        case .xml, .json:
+            // xml and json are stored as UTF-16LE on the wire
+            guard value.readableBytes.isMultiple(of: 2) else {
+                return nil
+            }
+            return value.readUTF16String(length: value.readableBytes)
+        case .vector:
+            return nil
+        case .clrUdt:
+            return nil
+        case .null:
+            return nil
+        case .sqlVariant:
+            // handled above before the switch
             return nil
         }
     }

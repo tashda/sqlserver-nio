@@ -58,15 +58,13 @@ final class TDSDataTypeRoundTripTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(Float.tdsMetadata.dataType, .real)
     }
 
-    /// floatn with a 4-byte payload must be readable via .double (the correct path).
-    /// The .float accessor does NOT handle .floatn — only .real and .float types.
-    /// This test documents that gap so it becomes visible if the accessor is later extended.
+    /// floatn with a 4-byte payload must be readable via both .double and .float.
     func testFloatnFourByteReadableAsDouble() {
         var buf = ByteBufferAllocator().buffer(capacity: 4)
         buf.writeInteger(Float(1.5).bitPattern, endianness: .little)
         let data = TDSData(metadata: TypeMetadata(dataType: .floatn), value: buf)
         XCTAssertEqual(data.double!, Double(Float(1.5)), accuracy: 1e-6)
-        XCTAssertNil(data.float, "floatn(4) is not handled by the .float accessor — use .double")
+        XCTAssertEqual(data.float!, Float(1.5), accuracy: 1e-6)
     }
 
     /// floatn with an 8-byte payload is readable as Double.
