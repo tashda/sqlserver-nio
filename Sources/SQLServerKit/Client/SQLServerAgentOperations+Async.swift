@@ -3,6 +3,11 @@ import NIO
 import SQLServerTDS
 
 extension SQLServerAgentOperations {
+    @available(macOS 12.0, *)
+    public func preflightAgentEnvironment(requireProxyPrereqs: Bool = false) async throws {
+        _ = try await preflightAgentEnvironment(requireProxyPrereqs: requireProxyPrereqs).get()
+    }
+
     // MARK: - Async Jobs
 
     @available(macOS 12.0, *)
