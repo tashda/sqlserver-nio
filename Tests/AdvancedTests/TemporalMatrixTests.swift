@@ -29,7 +29,7 @@ final class SQLServerTemporalMatrixTests: XCTestCase, @unchecked Sendable {
                 try await conn.createSystemVersionedTable(name: String(table), schema: "dbo", database: db)
             }
             let def = try await withDbConnection(client: self.client, database: db) { conn in
-                try await conn.fetchObjectDefinition(schema: "dbo", name: table, kind: .table).get()
+                try await conn.objectDefinition(schema: "dbo", name: table, kind: .table)
             }
             guard let def, let ddl = def.definition else { XCTFail("No DDL returned"); return }
             XCTAssertTrue(ddl.contains("PERIOD FOR SYSTEM_TIME"))
@@ -51,7 +51,7 @@ final class SQLServerTemporalMatrixTests: XCTestCase, @unchecked Sendable {
                 try await conn.createSystemVersionedTable(name: String(table), historyTableName: String(hist), schema: "dbo", database: db)
             }
             let def = try await withDbConnection(client: self.client, database: db) { conn in
-                try await conn.fetchObjectDefinition(schema: "dbo", name: table, kind: .table).get()
+                try await conn.objectDefinition(schema: "dbo", name: table, kind: .table)
             }
             guard let def, let ddl = def.definition else { XCTFail("No DDL returned"); return }
             XCTAssertTrue(ddl.contains("PERIOD FOR SYSTEM_TIME"))

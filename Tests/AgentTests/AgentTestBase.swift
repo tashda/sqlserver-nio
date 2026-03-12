@@ -31,7 +31,7 @@ class AgentTestBase: XCTestCase, @unchecked Sendable {
         }
 
         let agentStatus = try await withTimeout(operationTimeout) {
-            try await self.client.fetchAgentStatus().get()
+            try await self.client.metadata.fetchAgentStatus()
         }
 
         if agentStatus.isSqlAgentRunning && !agentStatus.isSqlAgentEnabled {

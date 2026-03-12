@@ -54,7 +54,7 @@ final class SQLServerViewIndexMatrixTests: XCTestCase, @unchecked Sendable {
 
                 // Fetch view scripting and assert index appears
                 guard let def = try await withDbConnection(client: self.client, database: db, operation: { conn in
-                    try await conn.fetchObjectDefinition(schema: "dbo", name: viewName, kind: .view).get()
+                    try await conn.objectDefinition(schema: "dbo", name: viewName, kind: .view)
                 }), let ddl = def.definition else { XCTFail("No view DDL returned"); return }
                 XCTAssertTrue(ddl.contains("CREATE UNIQUE CLUSTERED INDEX [\(indexName)]"), "Scripted view should include clustered index DDL")
             }

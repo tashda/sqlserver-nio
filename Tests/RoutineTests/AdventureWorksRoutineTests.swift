@@ -29,7 +29,7 @@ final class SQLServerAdventureWorksRoutineTests: XCTestCase, @unchecked Sendable
         let dbName = env("TDS_AW_DATABASE")!
         try await client.withConnection { connection in
             _ = try await connection.changeDatabase(dbName).get()
-            let parameters = try await connection.listParameters(schema: "dbo", object: "ufnGetAccountingEndDate").get()
+            let parameters = try await connection.listParameters(schema: "dbo", object: "ufnGetAccountingEndDate")
             XCTAssertFalse(parameters.isEmpty, "Expected parameters for dbo.ufnGetAccountingEndDate")
         }
     }
@@ -58,7 +58,7 @@ final class SQLServerAdventureWorksRoutineTests: XCTestCase, @unchecked Sendable
             for (schema, view) in problemViews {
                 do {
                     // This should not cause TDS protocol parsing errors after our fixes
-                    let columns = try await connection.listColumns(schema: schema, table: view).get()
+                    let columns = try await connection.listColumns(schema: schema, table: view)
                     XCTAssertFalse(columns.isEmpty, "Expected columns for \(schema).\(view)")
 
                     // Verify critical metadata fields are loaded correctly
@@ -82,11 +82,11 @@ final class SQLServerAdventureWorksRoutineTests: XCTestCase, @unchecked Sendable
 
             for (schema, table) in criticalTables {
                 do {
-                    let columns = try await connection.listColumns(schema: schema, table: table).get()
+                    let columns = try await connection.listColumns(schema: schema, table: table)
                     XCTAssertFalse(columns.isEmpty, "Expected columns for \(schema).\(table)")
 
                     // Test extended properties and comments - use listTables with includeComments
-                    let tablesWithComments = try await connection.listTables(database: dbName, schema: schema, includeComments: true).get()
+                    let tablesWithComments = try await connection.listTables(database: dbName, schema: schema, includeComments: true)
                     let targetTable = tablesWithComments.first { $0.name == table }
                     XCTAssertNotNil(targetTable, "Should find table \(schema).\(table)")
 
@@ -143,7 +143,7 @@ final class SQLServerAdventureWorksRoutineTests: XCTestCase, @unchecked Sendable
 
             for (schema, routine) in criticalRoutines {
                 do {
-                    let parameters = try await connection.listParameters(schema: schema, object: routine).get()
+                    let parameters = try await connection.listParameters(schema: schema, object: routine)
                     // Should load parameters without TDS parsing errors
 
                     // If we get here, the TDS fixes for stored procedures work

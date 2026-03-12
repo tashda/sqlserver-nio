@@ -89,7 +89,7 @@ final class SQLServerTableScriptingMatrixTests: XCTestCase, @unchecked Sendable 
                         try await dbAdminClient.createTable(name: String(table), columns: columns)
                     }
 
-                    let def = try await dbClient.fetchObjectDefinition(schema: "dbo", name: String(table), kind: .table).get()
+                    let def = try await dbClient.metadata.objectDefinition(schema: "dbo", name: String(table), kind: .table)
                     guard let def, let ddl = def.definition else { XCTFail("No DDL returned for \(table)"); continue }
 
                     // Golden re-exec: disable temporal if needed, drop, then recreate from DDL
@@ -115,7 +115,7 @@ final class SQLServerTableScriptingMatrixTests: XCTestCase, @unchecked Sendable 
                         XCTFail("Failed to recreate \(table) from scripted DDL: \(error)\nDDL=\n\(ddl)")
                         continue
                     }
-                    let columns = try await dbClient.listColumns(schema: "dbo", table: String(table)).get()
+                    let columns = try await dbClient.metadata.listColumns(schema: "dbo", table: String(table))
                     XCTAssertEqual(columns.count, combo.cols.count, "Column count mismatch after re-exec for \(table)")
 
                     if combo.name.contains("lob_textimage") {

@@ -73,7 +73,7 @@ final class SQLServerSecurityParityTests: XCTestCase, @unchecked Sendable {
         let schema = "nio_ops"
         _ = try? await dbSec.dropSchema(name: schema).get()
         _ = try await dbSec.createSchema(name: schema, authorization: "dbo").get()
-        let schemas = try await dbSec.listSchemas().get()
+        let schemas = try await dbSec.listSchemas()
         XCTAssertTrue(schemas.contains(where: { $0.name.caseInsensitiveCompare(schema) == .orderedSame }))
         // Transfer a simple object
         let table = makeSchemaQualifiedName(prefix: "xfer")

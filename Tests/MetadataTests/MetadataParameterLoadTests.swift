@@ -107,7 +107,7 @@ final class SQLServerMetadataParameterLoadTests: XCTestCase, @unchecked Sendable
 
                 for iteration in 0..<3 {
                     for (name, expectedCount) in objects {
-                        let metadata = try await connection.listParameters(database: database, schema: "dbo", object: name).get()
+                        let metadata = try await connection.listParameters(database: database, schema: "dbo", object: name)
                         let inputParameters = metadata.filter { !$0.isReturnValue }
                         XCTAssertEqual(inputParameters.count, expectedCount, "Unexpected parameter count for \(name) on iteration \(iteration)")
 

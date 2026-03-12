@@ -73,7 +73,7 @@ final class SQLServerTableIndexOptionsTests: XCTestCase, @unchecked Sendable {
                 try await withTimeout(60, operation: {
                     try await dbClient.withConnection { conn in
                         do {
-                            return try await conn.fetchObjectDefinition(schema: "dbo", name: table, kind: .table).get()
+                            return try await conn.objectDefinition(schema: "dbo", name: table, kind: .table)
                         } catch {
                             if error.localizedDescription == "Already closed" {
                                 throw SQLServerError.connectionClosed // Convert to retryable error

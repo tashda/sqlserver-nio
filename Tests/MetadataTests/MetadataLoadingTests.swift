@@ -56,7 +56,7 @@ final class SQLServerAppMetadataLoadingTests: XCTestCase, @unchecked Sendable {
             try await self.client.withConnection { connection in
                 _ = try await connection.changeDatabase(dbName).get()
 
-                let structure = try await connection.loadDatabaseStructure(database: dbName).get()
+                let structure = try await connection.loadDatabaseStructure(database: dbName)
                 let schemaNames = Set(structure.schemas.map(\.name))
 
                 if schemaNames.contains("Production") {
@@ -80,7 +80,7 @@ final class SQLServerAppMetadataLoadingTests: XCTestCase, @unchecked Sendable {
                 }
 
                 if schemaNames.contains("HumanResources") {
-                    let schema = try await connection.loadSchemaStructure(database: dbName, schema: "HumanResources").get()
+                    let schema = try await connection.loadSchemaStructure(database: dbName, schema: "HumanResources")
                     let shift = schema.tables.first { $0.table.name.caseInsensitiveCompare("Shift") == .orderedSame }
                     XCTAssertNotNil(shift, "Expected HumanResources.Shift table")
                     XCTAssertFalse(shift?.columns.isEmpty ?? true, "Expected columns for HumanResources.Shift")
