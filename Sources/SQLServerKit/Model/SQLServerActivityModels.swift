@@ -103,6 +103,7 @@ public struct SQLServerWaitStat: Sendable {
 
 public struct SQLServerWaitStatDelta: Sendable, Identifiable {
     public var id: String { waitType }
+    public var waitEventType: String { waitType } // Added for consistency with Postgres usage in UI
     
     public let waitType: String
     public let waitingTasksCountDelta: Int
