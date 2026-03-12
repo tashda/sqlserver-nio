@@ -48,6 +48,36 @@ public final class SQLServerClient: @unchecked Sendable {
         ).get()
     }
 
+    public static func connect(
+        hostname: String,
+        port: Int = 1433,
+        database: String = "master",
+        authentication: SQLServerAuthentication,
+        tlsEnabled: Bool = true,
+        numberOfThreads: Int = System.coreCount,
+        poolConfiguration: SQLServerConnectionPool.Configuration = .init(),
+        metadataConfiguration: SQLServerMetadataOperations.Configuration = .init(),
+        retryConfiguration: SQLServerRetryConfiguration = .init(),
+        transparentNetworkIPResolution: Bool = true,
+        logger: Logger = Logger(label: "tds.sqlserver.client")
+    ) async throws -> SQLServerClient {
+        try await connect(
+            configuration: .init(
+                hostname: hostname,
+                port: port,
+                database: database,
+                authentication: authentication,
+                tlsEnabled: tlsEnabled,
+                poolConfiguration: poolConfiguration,
+                metadataConfiguration: metadataConfiguration,
+                retryConfiguration: retryConfiguration,
+                transparentNetworkIPResolution: transparentNetworkIPResolution
+            ),
+            numberOfThreads: numberOfThreads,
+            logger: logger
+        )
+    }
+
     @available(*, deprecated, message: "Use async connect(configuration:logger:) instead.")
     public static func connect(
         configuration: Configuration,
