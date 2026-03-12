@@ -59,13 +59,13 @@ final class SQLServerMetadataCommentsTests: XCTestCase, @unchecked Sendable {
 
             // Verify listTables without comments does not hydrate
             let noCommentTables = try await withDbConnection(client: self.client, database: db) { conn in
-                try await conn.listTables(schema: "dbo").get()
+                try await conn.listTables(schema: "dbo")
             }
             XCTAssertTrue(noCommentTables.contains { $0.name == tableName && $0.comment == nil })
 
             // Verify listTables with comments includes table comment
             let tables = try await withDbConnection(client: self.client, database: db) { conn in
-                try await conn.listTables(schema: "dbo", includeComments: true).get()
+                try await conn.listTables(schema: "dbo", includeComments: true)
             }
             guard let t = tables.first(where: { $0.name == tableName }) else {
                 XCTFail("Expected table returned by listTables")
@@ -75,7 +75,7 @@ final class SQLServerMetadataCommentsTests: XCTestCase, @unchecked Sendable {
 
             // Verify listColumns returns column comments when requested
             let colsWithComments = try await withDbConnection(client: self.client, database: db) { conn in
-                try await conn.listColumns(schema: "dbo", table: tableName, includeComments: true).get()
+                try await conn.listColumns(schema: "dbo", table: tableName, includeComments: true)
             }
             XCTAssertEqual(colsWithComments.count, 3)
             XCTAssertEqual(colsWithComments.first(where: { $0.name == "id" })?.comment, "Primary key")
@@ -84,7 +84,7 @@ final class SQLServerMetadataCommentsTests: XCTestCase, @unchecked Sendable {
 
             // And without includeComments they should be nil
             let colsNoComments = try await withDbConnection(client: self.client, database: db) { conn in
-                try await conn.listColumns(schema: "dbo", table: tableName).get()
+                try await conn.listColumns(schema: "dbo", table: tableName)
             }
             XCTAssertTrue(colsNoComments.allSatisfy { $0.comment == nil })
         }
@@ -115,7 +115,7 @@ final class SQLServerMetadataCommentsTests: XCTestCase, @unchecked Sendable {
             _ = try await executeInDb(client: self.client, database: db, addViewComment)
 
             let cols = try await withDbConnection(client: self.client, database: db) { conn in
-                try await conn.listColumns(schema: "dbo", table: view, includeComments: true).get()
+                try await conn.listColumns(schema: "dbo", table: view, includeComments: true)
             }
             XCTAssertEqual(cols.first(where: { $0.name == "id" })?.comment, "Identifier")
             // name column not annotated
@@ -160,9 +160,9 @@ final class SQLServerMetadataCommentsTests: XCTestCase, @unchecked Sendable {
 
             // Use single connection for all operations to prevent thread switching
             let results = try await withDbConnection(client: self.client, database: db) { conn in
-                let procs = try await conn.listProcedures(schema: "dbo", includeComments: true).get()
-                let funcs = try await conn.listFunctions(schema: "dbo", includeComments: true).get()
-                let trigs = try await conn.listTriggers(schema: "dbo", table: table, includeComments: true).get()
+                let procs = try await conn.listProcedures(schema: "dbo", includeComments: true)
+                let funcs = try await conn.listFunctions(schema: "dbo", includeComments: true)
+                let trigs = try await conn.listTriggers(schema: "dbo", table: table, includeComments: true)
                 return (procs: procs, funcs: funcs, trigs: trigs)
             }
 

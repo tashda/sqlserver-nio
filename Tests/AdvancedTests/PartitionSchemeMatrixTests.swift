@@ -52,7 +52,7 @@ final class SQLServerPartitionSchemeMatrixTests: XCTestCase, @unchecked Sendable
             }
 
             let def = try await withDbConnection(client: self.client, database: db) { conn in
-                try await conn.fetchObjectDefinition(schema: "dbo", name: table, kind: .table).get()
+                try await conn.objectDefinition(schema: "dbo", name: table, kind: .table)
             }
             guard let def, let ddl = def.definition else { XCTFail("No DDL returned"); return }
             XCTAssertTrue(ddl.contains("ON [\(ps)]([Id])"), "Table storage clause should target partition scheme")

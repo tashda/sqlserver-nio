@@ -99,7 +99,7 @@ final class SQLServerIndexMatrixTests: XCTestCase, @unchecked Sendable {
                     }
 
                     guard let def = try await withDbConnection(client: self.client, database: db, operation: { conn in
-                        try await conn.fetchObjectDefinition(schema: "dbo", name: table, kind: .table).get()
+                        try await conn.objectDefinition(schema: "dbo", name: table, kind: .table)
                     }), let ddl = def.definition else { XCTFail("No DDL returned"); continue }
 
                     // Check the scripted DDL contains our index with key features
@@ -130,7 +130,7 @@ final class SQLServerIndexMatrixTests: XCTestCase, @unchecked Sendable {
                 )
 
                 guard let def2 = try await withDbConnection(client: self.client, database: db, operation: { conn in
-                    try await conn.fetchObjectDefinition(schema: "dbo", name: table, kind: .table).get()
+                    try await conn.objectDefinition(schema: "dbo", name: table, kind: .table)
                 }), let ddl2 = def2.definition else { XCTFail("No DDL returned"); return }
                 XCTAssertTrue(ddl2.contains("DATA_COMPRESSION"), "Scripted index should include DATA_COMPRESSION when present")
             }

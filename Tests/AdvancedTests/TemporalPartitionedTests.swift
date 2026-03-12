@@ -36,7 +36,7 @@ final class SQLServerTemporalPartitionedTests: XCTestCase, @unchecked Sendable {
 
             // Fetch definition using a DB-scoped connection
             let def = try await withDbConnection(client: self.client, database: db) { conn in
-                try await conn.fetchObjectDefinition(schema: "dbo", name: table, kind: .table).get()
+                try await conn.objectDefinition(schema: "dbo", name: table, kind: .table)
             }
             guard let def, let ddl = def.definition else { XCTFail("No definition returned"); return }
             XCTAssertTrue(ddl.contains("PERIOD FOR SYSTEM_TIME"))
@@ -72,7 +72,7 @@ final class SQLServerTemporalPartitionedTests: XCTestCase, @unchecked Sendable {
                         partitionColumn: "Id"
                     )
 
-                    guard let def = try await withTimeout(10, operation: { try await conn.fetchObjectDefinition(schema: "dbo", name: table, kind: .table).get() }), let ddl = def.definition else {
+                    guard let def = try await withTimeout(10, operation: { try await conn.objectDefinition(schema: "dbo", name: table, kind: .table) }), let ddl = def.definition else {
                         XCTFail("No definition returned")
                         return
                     }

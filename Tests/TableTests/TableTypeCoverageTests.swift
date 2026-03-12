@@ -89,7 +89,7 @@ final class SQLServerTableDefinitionCoverageTests: XCTestCase, @unchecked Sendab
             guard let def = try await withRetry(attempts: 5, operation: {
                 try await withTimeout(60, operation: {
                     try await dbClient.withConnection { conn in
-                        try await conn.fetchObjectDefinition(schema: "dbo", name: child, kind: .table).get()
+                        try await conn.objectDefinition(schema: "dbo", name: child, kind: .table)
                     }
                 })
             }), let ddl = def.definition else {

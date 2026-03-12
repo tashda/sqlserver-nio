@@ -55,11 +55,11 @@ final class SQLServerMetadataViewColumnsTests: XCTestCase, @unchecked Sendable {
             }
 
             let tableColumns = try await withDbConnection(client: self.client, database: database) { connection in
-                try await connection.listColumns(database: database, schema: "dbo", table: tableName).get()
+                try await connection.listColumns(database: database, schema: "dbo", table: tableName)
             }
 
             let viewColumns = try await withDbConnection(client: self.client, database: database) { connection in
-                try await connection.listColumns(database: database, schema: "dbo", table: viewName).get()
+                try await connection.listColumns(database: database, schema: "dbo", table: viewName)
             }
 
             // Expect the view to project: id, displayName, lastUpdated, phoneNumber
@@ -90,7 +90,7 @@ final class SQLServerMetadataViewColumnsTests: XCTestCase, @unchecked Sendable {
                 (schema: "HumanResources", name: "vEmployeeDepartmentHistory")
             ]
             for (schema, name) in viewNames {
-                let columns = try await connection.listColumns(database: db, schema: schema, table: name).get()
+                let columns = try await connection.listColumns(database: db, schema: schema, table: name)
                 XCTAssertFalse(columns.isEmpty, "Expected columns for \(schema).\(name)")
             }
         }
@@ -102,7 +102,7 @@ final class SQLServerMetadataViewColumnsTests: XCTestCase, @unchecked Sendable {
         let db = env("TDS_AW_DATABASE")!
         let start = DispatchTime.now()
         try await withDbConnection(client: self.client, database: db) { connection in
-            let columns = try await connection.listColumns(database: db, schema: "HumanResources", table: "vJobCandidate").get()
+            let columns = try await connection.listColumns(database: db, schema: "HumanResources", table: "vJobCandidate")
             XCTAssertFalse(columns.isEmpty, "Expected metadata for HumanResources.vJobCandidate")
         }
         let elapsedMs = Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000

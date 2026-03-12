@@ -96,7 +96,7 @@ final class SQLServerRoutineParameterMatrixTests: XCTestCase, @unchecked Sendabl
                     )
 
                     let ps = try await withDbConnection(client: dbClient, database: db) { conn in
-                        try await conn.listParameters(schema: "dbo", object: procName).get()
+                        try await conn.listParameters(schema: "dbo", object: procName)
                     }
                     // We expect exactly 3 parameters, no return value for procedures
                     XCTAssertEqual(ps.filter { !$0.isReturnValue }.count, 3, "Expected 3 parameters for \(procName)")
@@ -133,7 +133,7 @@ final class SQLServerRoutineParameterMatrixTests: XCTestCase, @unchecked Sendabl
                     """
                 )
                 let tvpParams = try await withDbConnection(client: dbClient, database: db) { conn in
-                    try await conn.listParameters(schema: "dbo", object: tvpProc).get()
+                    try await conn.listParameters(schema: "dbo", object: tvpProc)
                 }
                 guard let tvp = tvpParams.first(where: { $0.name.caseInsensitiveCompare("@T") == .orderedSame }) else {
                     XCTFail("Missing TVP param metadata")
@@ -247,7 +247,7 @@ final class SQLServerRoutineParameterMatrixTests: XCTestCase, @unchecked Sendabl
                 )
 
                 let sParams = try await withDbConnection(client: dbClient, database: db) { conn in
-                    try await conn.listParameters(schema: "dbo", object: scalar).get()
+                    try await conn.listParameters(schema: "dbo", object: scalar)
                 }
                 // Expect a return value plus two inputs
                 XCTAssertTrue(sParams.contains(where: { $0.isReturnValue }))
@@ -276,7 +276,7 @@ final class SQLServerRoutineParameterMatrixTests: XCTestCase, @unchecked Sendabl
                 )
 
                 let tParams = try await withDbConnection(client: dbClient, database: db) { conn in
-                    try await conn.listParameters(schema: "dbo", object: tvf).get()
+                    try await conn.listParameters(schema: "dbo", object: tvf)
                 }
                 XCTAssertEqual(tParams.filter { !$0.isReturnValue }.count, 2)
                 XCTAssertTrue(
