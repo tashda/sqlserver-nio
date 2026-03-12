@@ -13,19 +13,18 @@ extension SQLServerConnection {
         transparentResolution: Bool,
         on eventLoop: EventLoop
     ) -> EventLoopFuture<[SocketAddress]> {
-        // Fallback to simpler resolution via bootstrap or just return a dummy for now
-        // since we want to avoid complex resolver management in this refactor turn
-        let bootstrap = ClientBootstrap(group: eventLoop)
-        return bootstrap.connect(host: hostname, port: port).flatMap { channel in
-            let address = channel.remoteAddress
-            return channel.close().map { _ in
-                if let address = address { return [address] }
-                return []
+        let promise = eventLoop.makePromise(of: [SocketAddress].self)
+        // Resolve off the event loop to avoid blocking it
+        DispatchQueue.global().async {
+            do {
+                // Try parsing as an IP literal first (no DNS needed)
+                let address = try SocketAddress.makeAddressResolvingHost(hostname, port: port)
+                promise.succeed([address])
+            } catch {
+                promise.succeed([])
             }
-        }.flatMapError { _ in
-            // Try resolving via standard library if bootstrap fails (though it shouldn't for resolution)
-            return eventLoop.makeSucceededFuture([])
         }
+        return promise.futureResult
     }
 
     internal static func establishTDSConnection(

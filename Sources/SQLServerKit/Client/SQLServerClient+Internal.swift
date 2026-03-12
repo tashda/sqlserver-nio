@@ -89,13 +89,4 @@ extension SQLServerClient {
         return connection.underlying.send(request, logger: connection.logger).map { _ in () }
     }
 
-    internal static func shutdownEventLoopGroup(_ group: EventLoopGroup) -> EventLoopFuture<Void> {
-        let tempLoop = MultiThreadedEventLoopGroup(numberOfThreads: 1).next()
-        let p = tempLoop.makePromise(of: Void.self)
-        group.shutdownGracefully { error in
-            if let error { p.fail(error) } else { p.succeed(()) }
-            tempLoop.shutdownGracefully { _ in }
-        }
-        return p.futureResult
-    }
 }
