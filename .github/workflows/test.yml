@@ -51,4 +51,5 @@ jobs:
           TDS_VERSION: ${{ matrix.sqlserver-version }}
           TDS_LOAD_ADVENTUREWORKS: "1"
           TDS_AW_DATABASE: "AdventureWorks"
-        run: swift test
+        run: |
+          timeout --signal=TERM 30m swift test
