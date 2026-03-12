@@ -272,6 +272,64 @@ public final class SQLServerMetadataNamespace: @unchecked Sendable {
         }
     }
 
+    // MARK: - Per-Type Search
+
+    @available(macOS 12.0, *)
+    public func searchTables(query: String, database: String? = nil, limit: Int = 50) async throws -> [TableSearchResult] {
+        try await client.withConnection { connection in
+            try await connection.searchTables(query: query, database: database, limit: limit)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func searchViews(query: String, database: String? = nil, limit: Int = 50) async throws -> [ViewSearchResult] {
+        try await client.withConnection { connection in
+            try await connection.searchViews(query: query, database: database, limit: limit)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func searchFunctions(query: String, database: String? = nil, limit: Int = 50) async throws -> [RoutineSearchResult] {
+        try await client.withConnection { connection in
+            try await connection.searchFunctions(query: query, database: database, limit: limit)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func searchProcedures(query: String, database: String? = nil, limit: Int = 50) async throws -> [RoutineSearchResult] {
+        try await client.withConnection { connection in
+            try await connection.searchProcedures(query: query, database: database, limit: limit)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func searchTriggers(query: String, database: String? = nil, limit: Int = 50) async throws -> [TriggerSearchResult] {
+        try await client.withConnection { connection in
+            try await connection.searchTriggers(query: query, database: database, limit: limit)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func searchColumns(query: String, database: String? = nil, limit: Int = 50) async throws -> [ColumnSearchResult] {
+        try await client.withConnection { connection in
+            try await connection.searchColumns(query: query, database: database, limit: limit)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func searchIndexes(query: String, database: String? = nil, limit: Int = 50) async throws -> [IndexSearchResult] {
+        try await client.withConnection { connection in
+            try await connection.searchIndexes(query: query, database: database, limit: limit)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func searchForeignKeys(query: String, database: String? = nil, limit: Int = 50) async throws -> [ForeignKeySearchResult] {
+        try await client.withConnection { connection in
+            try await connection.searchForeignKeys(query: query, database: database, limit: limit)
+        }
+    }
+
     // MARK: - Search
 
     @available(macOS 12.0, *)
