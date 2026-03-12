@@ -118,7 +118,7 @@ public final class SQLServerConnection: @unchecked Sendable {
             }
             .flatMapError { error in
                 if ownsGroup {
-                    _ = SQLServerClient.shutdownEventLoopGroup(group)
+                    group.shutdownGracefully { _ in }
                 }
                 return loop.makeFailedFuture(error)
             }
@@ -281,9 +281,9 @@ public final class SQLServerConnection: @unchecked Sendable {
             } else {
                 releaseFuture = self.release(false)
             }
-            return releaseFuture.flatMap { _ in self.shutdownGroupIfNeeded() }
+            return releaseFuture.map { _ in self.fireAndForgetGroupShutdown() }
         } else {
-            return release(true).flatMap { _ in self.shutdownGroupIfNeeded() }
+            return release(true).map { _ in self.fireAndForgetGroupShutdown() }
         }
     }
 

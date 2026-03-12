@@ -12,7 +12,7 @@ public final class SQLServerClient: @unchecked Sendable {
 
     public let configuration: Configuration
     internal let eventLoopGroup: EventLoopGroup
-    internal let ownsEventLoopGroup: Bool
+    internal private(set) var ownsEventLoopGroup: Bool
     internal let pool: SQLServerConnectionPool
     public let logger: Logger
     internal let retryConfiguration: SQLServerRetryConfiguration
@@ -39,11 +39,31 @@ public final class SQLServerClient: @unchecked Sendable {
         numberOfThreads: Int,
         logger: Logger = Logger(label: "tds.sqlserver.client")
     ) async throws -> SQLServerClient {
-        try await connect(
-            configuration: configuration,
-            eventLoopGroupProvider: .createNew(numberOfThreads: numberOfThreads),
-            logger: logger
-        ).get()
+        let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: numberOfThreads)
+        do {
+            // Use .shared so the ELF connect does NOT own or shut down the ELG on error.
+            // We manage the ELG lifecycle here in async code instead.
+            let client = try await connect(
+                configuration: configuration,
+                eventLoopGroupProvider: .shared(eventLoopGroup),
+                logger: logger
+            ).get()
+            // Transfer ELG ownership to the client so it shuts down the group on close.
+            client.transferEventLoopGroupOwnership(eventLoopGroup)
+            return client
+        } catch {
+            // Clean up the ELG using pure async — no ELF hopping race.
+            try? await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                eventLoopGroup.shutdownGracefully { shutdownError in
+                    if let shutdownError {
+                        continuation.resume(throwing: shutdownError)
+                    } else {
+                        continuation.resume()
+                    }
+                }
+            }
+            throw SQLServerError.normalize(error)
+        }
     }
 
     public static func connect(
@@ -202,14 +222,12 @@ public final class SQLServerClient: @unchecked Sendable {
                 )
             }
         }.flatMapError { error in
-            let cleanup = pool.shutdownGracefully().flatMap { _ -> EventLoopFuture<Void> in
-                guard ownsGroup else {
-                    return eventLoopGroup.next().makeSucceededFuture(())
+            pool.shutdownGracefully().flatMapThrowing { _ -> SQLServerClient in
+                // Fire-and-forget ELG shutdown — returning a future from shutdownEventLoopGroup
+                // would require NIO to hop back to this event loop which is being shut down.
+                if ownsGroup {
+                    eventLoopGroup.shutdownGracefully { _ in }
                 }
-                return shutdownEventLoopGroup(eventLoopGroup)
-            }
-
-            return cleanup.flatMapThrowing {
                 throw SQLServerError.normalize(error)
             }
         }
@@ -277,11 +295,12 @@ public final class SQLServerClient: @unchecked Sendable {
             stateLock.withLock { drainWaiters.append(p) }
             drained = p.futureResult
         }
-        return drained.flatMap { self.pool.shutdownGracefully() }.flatMap { _ in
+        return drained.flatMap { self.pool.shutdownGracefully() }.map { _ in
+            // Fire-and-forget the ELG shutdown. We cannot return a future that depends on
+            // the ELG shutdown completing, because NIO would need to hop the result back to
+            // this event loop — which is the one being shut down — causing a race.
             if self.ownsEventLoopGroup {
-                return Self.shutdownEventLoopGroup(self.eventLoopGroup)
-            } else {
-                return loop.makeSucceededFuture(())
+                self.eventLoopGroup.shutdownGracefully { _ in }
             }
         }
     }
@@ -360,6 +379,12 @@ public final class SQLServerClient: @unchecked Sendable {
         } else {
             self.metadataCache = nil
         }
+    }
+
+    internal func transferEventLoopGroupOwnership(_ group: EventLoopGroup) {
+        assert(!ownsEventLoopGroup, "Client already owns an EventLoopGroup")
+        assert(group === eventLoopGroup, "Transferred group must match the client's group")
+        ownsEventLoopGroup = true
     }
 
     internal var isClientShutdown: Bool {
