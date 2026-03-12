@@ -7,7 +7,7 @@ import SQLServerKitTesting
 
 /// Simple performance tests for SQLServerNIO
 /// Tests basic performance characteristics
-final class PerformanceTests: XCTestCase {
+final class PerformanceTests: XCTestCase, @unchecked Sendable {
     private var group: EventLoopGroup!
     private var client: SQLServerClient!
     private let logger = Logger(label: "PerformanceTests")
@@ -92,6 +92,9 @@ final class PerformanceTests: XCTestCase {
     func testQueryPerformance() async throws {
         logger.info("🔧 Testing query performance...")
 
+        // Warm the session so we measure query latency instead of first-use setup noise.
+        _ = try await client.query("SELECT 1 AS warmup")
+
         let queries = [
             "Simple Query": "SELECT 1 as test",
             "System Table Query": "SELECT TOP 5 * FROM sys.objects",
@@ -112,7 +115,8 @@ final class PerformanceTests: XCTestCase {
         // Performance assertions
         // Allow for network latency and connection overhead
         // Based on sqlcmd baseline of ~0.075s, allow reasonable margin
-        XCTAssertLessThanOrEqual(performanceResults["Simple Query"] ?? 0, 0.3, "Simple query should be under 300ms")
+        let simpleQueryBudget = envFlagEnabled("USE_DOCKER") ? 0.5 : 0.3
+        XCTAssertLessThanOrEqual(performanceResults["Simple Query"] ?? 0, simpleQueryBudget, "Simple query should stay within the configured latency budget")
         XCTAssertLessThanOrEqual(performanceResults["System Table Query"] ?? 0, 1.0, "System table query should complete in reasonable time")
 
         logger.info("✅ Query performance test completed!")

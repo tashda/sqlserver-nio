@@ -7,8 +7,8 @@ import SQLServerKitTesting
 /// Integration tests for stored procedure output parameters (RPC RETURNVALUE token path).
 ///
 /// These tests exercise the full stack:
-///   SQL Server → TDS RETURNVALUE token → TDSTokenParser → SQLServerConnection.call() → SQLServerReturnValue
-final class OutputParameterTests: XCTestCase {
+///   SQL Server → TDS RETURNVALUE token → TDSTokenOperations → SQLServerConnection.call() → SQLServerReturnValue
+final class OutputParameterTests: XCTestCase, @unchecked Sendable {
     var group: EventLoopGroup!
     var client: SQLServerClient!
 
@@ -35,15 +35,20 @@ final class OutputParameterTests: XCTestCase {
         try await withTimeout(20) {
             try await withTemporaryDatabase(client: self.client, prefix: "outp") { db in
                 try await withDbClient(for: db, using: self.group) { dbClient in
-                    _ = try await dbClient.execute("""
-                        CREATE PROCEDURE [dbo].[usp_DoubleInt]
-                            @input INT,
-                            @result INT OUTPUT
-                        AS BEGIN
+                    let routineClient = SQLServerRoutineClient(client: dbClient)
+                    try await routineClient.createStoredProcedure(
+                        name: "usp_DoubleInt",
+                        parameters: [
+                            .init(name: "input", dataType: .int),
+                            .init(name: "result", dataType: .int, direction: .output)
+                        ],
+                        body: """
+                        BEGIN
                             SET NOCOUNT ON;
                             SET @result = @input * 2;
                         END
-                    """).get()
+                        """
+                    )
 
                     let result = try await dbClient.call(
                         procedure: "dbo.usp_DoubleInt",
@@ -64,15 +69,20 @@ final class OutputParameterTests: XCTestCase {
         try await withTimeout(20) {
             try await withTemporaryDatabase(client: self.client, prefix: "outp") { db in
                 try await withDbClient(for: db, using: self.group) { dbClient in
-                    _ = try await dbClient.execute("""
-                        CREATE PROCEDURE [dbo].[usp_Greet]
-                            @name NVARCHAR(50),
-                            @greeting NVARCHAR(100) OUTPUT
-                        AS BEGIN
+                    let routineClient = SQLServerRoutineClient(client: dbClient)
+                    try await routineClient.createStoredProcedure(
+                        name: "usp_Greet",
+                        parameters: [
+                            .init(name: "name", dataType: .nvarchar(length: .length(50))),
+                            .init(name: "greeting", dataType: .nvarchar(length: .length(100)), direction: .output)
+                        ],
+                        body: """
+                        BEGIN
                             SET NOCOUNT ON;
                             SET @greeting = N'Hello, ' + @name + N'!';
                         END
-                    """).get()
+                        """
+                    )
 
                     let result = try await dbClient.call(
                         procedure: "dbo.usp_Greet",
@@ -93,18 +103,23 @@ final class OutputParameterTests: XCTestCase {
         try await withTimeout(20) {
             try await withTemporaryDatabase(client: self.client, prefix: "outp") { db in
                 try await withDbClient(for: db, using: self.group) { dbClient in
-                    _ = try await dbClient.execute("""
-                        CREATE PROCEDURE [dbo].[usp_Divmod]
-                            @dividend INT,
-                            @divisor  INT,
-                            @quotient INT OUTPUT,
-                            @remainder INT OUTPUT
-                        AS BEGIN
+                    let routineClient = SQLServerRoutineClient(client: dbClient)
+                    try await routineClient.createStoredProcedure(
+                        name: "usp_Divmod",
+                        parameters: [
+                            .init(name: "dividend", dataType: .int),
+                            .init(name: "divisor", dataType: .int),
+                            .init(name: "quotient", dataType: .int, direction: .output),
+                            .init(name: "remainder", dataType: .int, direction: .output)
+                        ],
+                        body: """
+                        BEGIN
                             SET NOCOUNT ON;
                             SET @quotient  = @dividend / @divisor;
                             SET @remainder = @dividend % @divisor;
                         END
-                    """).get()
+                        """
+                    )
 
                     let result = try await dbClient.call(
                         procedure: "dbo.usp_Divmod",
@@ -130,18 +145,23 @@ final class OutputParameterTests: XCTestCase {
         try await withTimeout(20) {
             try await withTemporaryDatabase(client: self.client, prefix: "outp") { db in
                 try await withDbClient(for: db, using: self.group) { dbClient in
-                    _ = try await dbClient.execute("""
-                        CREATE PROCEDURE [dbo].[usp_GetRange]
-                            @count    INT,
-                            @total    INT OUTPUT
-                        AS BEGIN
+                    let routineClient = SQLServerRoutineClient(client: dbClient)
+                    try await routineClient.createStoredProcedure(
+                        name: "usp_GetRange",
+                        parameters: [
+                            .init(name: "count", dataType: .int),
+                            .init(name: "total", dataType: .int, direction: .output)
+                        ],
+                        body: """
+                        BEGIN
                             SET NOCOUNT OFF;
                             SELECT n = number
                             FROM master..spt_values
                             WHERE type = 'P' AND number BETWEEN 1 AND @count;
                             SET @total = @count * (@count + 1) / 2;
                         END
-                    """).get()
+                        """
+                    )
 
                     let result = try await dbClient.call(
                         procedure: "dbo.usp_GetRange",
@@ -165,14 +185,19 @@ final class OutputParameterTests: XCTestCase {
         try await withTimeout(20) {
             try await withTemporaryDatabase(client: self.client, prefix: "outp") { db in
                 try await withDbClient(for: db, using: self.group) { dbClient in
-                    _ = try await dbClient.execute("""
-                        CREATE PROCEDURE [dbo].[usp_NullOut]
-                            @out NVARCHAR(50) OUTPUT
-                        AS BEGIN
+                    let routineClient = SQLServerRoutineClient(client: dbClient)
+                    try await routineClient.createStoredProcedure(
+                        name: "usp_NullOut",
+                        parameters: [
+                            .init(name: "out", dataType: .nvarchar(length: .length(50)), direction: .output)
+                        ],
+                        body: """
+                        BEGIN
                             SET NOCOUNT ON;
                             SET @out = NULL;
                         END
-                    """).get()
+                        """
+                    )
 
                     let result = try await dbClient.call(
                         procedure: "dbo.usp_NullOut",
@@ -195,11 +220,21 @@ final class OutputParameterTests: XCTestCase {
         try await withTimeout(20) {
             try await withTemporaryDatabase(client: self.client, prefix: "outp") { db in
                 try await withDbClient(for: db, using: self.group) { dbClient in
-                    _ = try await dbClient.execute("""
-                        CREATE PROCEDURE [dbo].[usp_Add]
-                            @a INT, @b INT, @sum INT OUTPUT
-                        AS BEGIN SET NOCOUNT ON; SET @sum = @a + @b; END
-                    """).get()
+                    let routineClient = SQLServerRoutineClient(client: dbClient)
+                    try await routineClient.createStoredProcedure(
+                        name: "usp_Add",
+                        parameters: [
+                            .init(name: "a", dataType: .int),
+                            .init(name: "b", dataType: .int),
+                            .init(name: "sum", dataType: .int, direction: .output)
+                        ],
+                        body: """
+                        BEGIN
+                            SET NOCOUNT ON;
+                            SET @sum = @a + @b;
+                        END
+                        """
+                    )
 
                     let result = try await dbClient.call(
                         procedure: "dbo.usp_Add",

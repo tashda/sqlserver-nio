@@ -1,8 +1,9 @@
 import XCTest
+import NIO
 @testable import SQLServerKit
 import SQLServerKitTesting
 
-final class SQLServerServerSecurityVariantsTests: XCTestCase {
+final class SQLServerServerSecurityVariantsTests: XCTestCase, @unchecked Sendable {
     private var client: SQLServerClient!
     private var group: EventLoopGroup!
 
@@ -39,4 +40,3 @@ final class SQLServerServerSecurityVariantsTests: XCTestCase {
         }
     }
 }
-

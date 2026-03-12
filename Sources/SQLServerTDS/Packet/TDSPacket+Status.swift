@@ -3,7 +3,7 @@ import NIO
 /// Message Type. A 1-byte unsigned char
 /// https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/ce398f9a-7d47-4ede-8f36-9dd6fc21ca43
 extension TDSPacket {
-    public struct Status: ExpressibleByIntegerLiteral, Equatable, CustomStringConvertible {
+    public struct Status: ExpressibleByIntegerLiteral, Equatable, CustomStringConvertible, Sendable {
         /// Normal message
         public static let normal: Status = 0x00
         /// End of message

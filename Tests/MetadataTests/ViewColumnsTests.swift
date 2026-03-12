@@ -3,7 +3,7 @@ import SQLServerKitTesting
 import NIO
 import XCTest
 
-final class SQLServerMetadataViewColumnsTests: XCTestCase {
+final class SQLServerMetadataViewColumnsTests: XCTestCase, @unchecked Sendable {
     var group: EventLoopGroup!
     var client: SQLServerClient!
 
@@ -27,30 +27,32 @@ final class SQLServerMetadataViewColumnsTests: XCTestCase {
             let tableName = "tbl_" + UUID().uuidString.prefix(8)
             let viewName = "vw_" + UUID().uuidString.prefix(8)
 
-            let tableSQL = """
-            CREATE TABLE dbo.[\(tableName)] (
-                id INT NOT NULL PRIMARY KEY,
-                displayName NVARCHAR(200) NOT NULL,
-                extra XML NULL,
-                lastUpdated DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
-            );
-            """
-            _ = try await executeInDb(client: self.client, database: database, tableSQL)
-
-            let viewSQL = """
-            CREATE VIEW dbo.[\(viewName)] AS
-            SELECT
-                t.id,
-                t.displayName,
-                t.lastUpdated,
-                COALESCE(
-                    bcast.Phone.value('(./number/text())[1]', 'nvarchar(32)'),
-                    '(none)'
-                ) AS phoneNumber
-            FROM dbo.[\(tableName)] AS t
-            OUTER APPLY t.extra.nodes('/broadcast') AS bcast(Phone);
-            """
-            _ = try await executeInDb(client: self.client, database: database, viewSQL)
+            try await withDbConnection(client: self.client, database: database) { connection in
+                try await connection.createTable(
+                    name: String(tableName),
+                    columns: [
+                        SQLServerColumnDefinition(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
+                        SQLServerColumnDefinition(name: "displayName", definition: .standard(.init(dataType: .nvarchar(length: .length(200))))),
+                        SQLServerColumnDefinition(name: "extra", definition: .standard(.init(dataType: .xml, isNullable: true))),
+                        SQLServerColumnDefinition(name: "lastUpdated", definition: .standard(.init(dataType: .datetime2(precision: 7), defaultValue: "SYSUTCDATETIME()")))
+                    ]
+                )
+                try await connection.createView(
+                    name: String(viewName),
+                    query: """
+                    SELECT
+                        t.id,
+                        t.displayName,
+                        t.lastUpdated,
+                        COALESCE(
+                            bcast.Phone.value('(./number/text())[1]', 'nvarchar(32)'),
+                            '(none)'
+                        ) AS phoneNumber
+                    FROM dbo.[\(tableName)] AS t
+                    OUTER APPLY t.extra.nodes('/broadcast') AS bcast(Phone)
+                    """
+                )
+            }
 
             let tableColumns = try await withDbConnection(client: self.client, database: database) { connection in
                 try await connection.listColumns(database: database, schema: "dbo", table: tableName).get()

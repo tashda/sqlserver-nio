@@ -2,7 +2,7 @@ import XCTest
 @testable import SQLServerTDS
 import NIO
 
-final class TDSTokenParserReturnValueTests: XCTestCase {
+final class TDSTokenOperationsReturnValueTests: XCTestCase, @unchecked Sendable {
 
     func testParseReturnValueInt() throws {
         var buffer = ByteBufferAllocator().buffer(capacity: 64)
@@ -26,7 +26,7 @@ final class TDSTokenParserReturnValueTests: XCTestCase {
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
 
         let tokens = try parser.parse()
 
@@ -68,7 +68,7 @@ final class TDSTokenParserReturnValueTests: XCTestCase {
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
 
         let tokens = try parser.parse()
 

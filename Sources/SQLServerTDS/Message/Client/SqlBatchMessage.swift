@@ -19,7 +19,7 @@ extension TDSMessages {
         }
 
         public func serialize(into buffer: inout ByteBuffer) throws {
-            TDSMessage.serializeAllHeaders(&buffer, transactionDescriptor: transactionDescriptor, outstandingRequestCount: outstandingRequestCount)
+            SQLServerTDS.TDSMessage.serializeAllHeaders(&buffer, transactionDescriptor: transactionDescriptor, outstandingRequestCount: outstandingRequestCount)
             buffer.writeUTF16String(sqlText)
             return
         }

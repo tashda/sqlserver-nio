@@ -28,7 +28,7 @@ public struct SavepointInfo: Sendable {
 
 // MARK: - SQLServerTransactionClient
 
-public final class SQLServerTransactionClient {
+public final class SQLServerTransactionClient: @unchecked Sendable {
     private let client: SQLServerClient
     private var activeSavepoints: [String] = []
 
@@ -273,7 +273,7 @@ public final class SQLServerTransactionClient {
     // MARK: - Advanced Transaction Operations
 
     /// Executes a closure within a transaction context, automatically handling commit/rollback
-    public func executeInTransaction<T>(_ operation: @escaping () -> EventLoopFuture<T>) -> EventLoopFuture<T> {
+    public func executeInTransaction<T: Sendable>(_ operation: @Sendable @escaping () -> EventLoopFuture<T>) -> EventLoopFuture<T> {
         return beginTransaction()
             .flatMap { _ in
                 operation()
@@ -291,7 +291,7 @@ public final class SQLServerTransactionClient {
 
     /// Executes a closure within a transaction context, automatically handling commit/rollback (async version)
     @available(macOS 12.0, *)
-    public func executeInTransaction<T>(_ operation: @escaping () async throws -> T) async throws -> T {
+    public func executeInTransaction<T: Sendable>(_ operation: @Sendable @escaping () async throws -> T) async throws -> T {
         try await beginTransaction()
         do {
             let result = try await operation()
@@ -304,9 +304,9 @@ public final class SQLServerTransactionClient {
     }
 
     /// Executes a closure within a savepoint context, automatically handling rollback on error
-    public func executeInSavepoint<T>(
+    public func executeInSavepoint<T: Sendable>(
         named name: String,
-        operation: @escaping () -> EventLoopFuture<T>
+        operation: @Sendable @escaping () -> EventLoopFuture<T>
     ) -> EventLoopFuture<T> {
         return createSavepoint(name: name)
             .flatMap { _ in

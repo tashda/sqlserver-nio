@@ -1,5 +1,6 @@
 import Foundation
 import Logging
+import NIOConcurrencyHelpers
 
 public enum SQLServerBulkCopyError: Error {
     case columnCountMismatch(expected: Int, actual: Int)
@@ -68,7 +69,7 @@ public final class SQLServerBulkCopyClient {
     public func copy(
         rows: [SQLServerBulkCopyRow],
         options: SQLServerBulkCopyOptions,
-        afterBatch: ((SQLServerConnection, Int) async throws -> Void)? = nil
+        afterBatch: (@Sendable (SQLServerConnection, Int) async throws -> Void)? = nil
     ) async throws -> SQLServerBulkCopySummary {
         guard !rows.isEmpty else {
             logger.debug("SQLServerBulkCopyClient skipping copy because no rows were provided.")
@@ -102,12 +103,19 @@ public final class SQLServerBulkCopyClient {
         }
         
         let start = Date()
-        var batchesExecuted = 0
-        var insertedRows: Int = 0
+        struct CopyState: Sendable {
+            var batchesExecuted = 0
+            var insertedRows = 0
+        }
+
+        let state = NIOLockedValueBox(CopyState())
         
         try await client.withConnection { connection in
             for chunk in rows.chunked(into: options.batchSize) {
-                batchesExecuted += 1
+                let batchNumber = state.withLockedValue { current -> Int in
+                    current.batchesExecuted += 1
+                    return current.batchesExecuted
+                }
                 let valuesClause = chunk.map { row in
                     let literals = row.values.map { $0.sqlLiteral() }.joined(separator: ", ")
                     return "(\(literals))"
@@ -129,25 +137,26 @@ public final class SQLServerBulkCopyClient {
                 
                 let result = try await connection.execute(statement)
                 if let rowCount = result.rowCount, rowCount > 0 {
-                    insertedRows += Int(rowCount)
+                    state.withLockedValue { $0.insertedRows += Int(rowCount) }
                 } else if result.totalRowCount > 0 {
-                    insertedRows += Int(result.totalRowCount)
+                    state.withLockedValue { $0.insertedRows += Int(result.totalRowCount) }
                 } else {
-                    insertedRows += chunk.count
+                    state.withLockedValue { $0.insertedRows += chunk.count }
                 }
                 
                 if let afterBatch {
-                    try await afterBatch(connection, batchesExecuted)
+                    try await afterBatch(connection, batchNumber)
                 }
             }
         }
         
         let duration = Date().timeIntervalSince(start)
+        let summaryState = state.withLockedValue { $0 }
         return SQLServerBulkCopySummary(
             schema: options.schema,
             table: options.table,
-            totalRows: insertedRows,
-            batchesExecuted: batchesExecuted,
+            totalRows: summaryState.insertedRows,
+            batchesExecuted: summaryState.batchesExecuted,
             batchSize: options.batchSize,
             identityInsert: options.identityInsert,
             duration: duration

@@ -4,50 +4,14 @@ import NIO
 import SQLServerKitTesting
 import XCTest
 
-/// Tests for the enhanced SQLServerAgentClient APIs that provide comprehensive job management data
-final class AgentEnhancedAPITests: XCTestCase {
-    var group: EventLoopGroup!
-    var client: SQLServerClient!
-
-    let TIMEOUT: TimeInterval = Double(env("TDS_TEST_OPERATION_TIMEOUT_SECONDS") ?? "30") ?? 30
-
-    override func setUp() async throws {
-        guard envFlagEnabled("TDS_ENABLE_AGENT_TESTS") else {
-            throw XCTSkip("Skipping agent tests. Set TDS_ENABLE_AGENT_TESTS=1 to enable.")
-        }
-        XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables()
-
-        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        let config = makeSQLServerClientConfiguration()
-        self.client = try await SQLServerClient.connect(configuration: config, eventLoopGroupProvider: .shared(group)).get()
-
-        // Ensure Agent XPs are enabled for these tests
-        let metadata = try await withTimeout(TIMEOUT) {
-            try await self.client.withConnection { connection in
-                return SQLServerMetadataClient(connection: connection)
-            }
-        }
-
-        let agentStatus = try await withTimeout(TIMEOUT) {
-            try await metadata.fetchAgentStatus().get()
-        }
-
-        if agentStatus.isSqlAgentRunning && !agentStatus.isSqlAgentEnabled {
-            _ = try await client.query("EXEC sp_configure 'show advanced options', 1; RECONFIGURE;").get()
-            _ = try await client.query("EXEC sp_configure 'Agent XPs', 1; RECONFIGURE;").get()
-        }
-    }
+/// Tests for the enhanced SQLServerAgentOperations APIs that provide comprehensive job management data
+final class AgentEnhancedAPITests: AgentTestBase, @unchecked Sendable {
 
     func testListJobsDetailedReturnsComprehensiveData() async throws {
-        let agent = try await withTimeout(TIMEOUT) {
-            try await self.client.withConnection { connection in
-                SQLServerAgentClient(connection: connection)
-            }
-        }
+        let agent = SQLServerAgentOperations(client: self.client)
 
         // Test the enhanced API
-        let jobs = try await withTimeout(TIMEOUT) {
+        let jobs = try await withTimeout(operationTimeout) {
             try await agent.listJobsDetailed()
         }
 
@@ -74,54 +38,28 @@ final class AgentEnhancedAPITests: XCTestCase {
     }
 
     func testGetJobDetailForSpecificJob() async throws {
-        let agent = try await withTimeout(TIMEOUT) {
-            try await self.client.withConnection { connection in
-                SQLServerAgentClient(connection: connection)
-            }
-        }
-
-        // First get a list of all jobs to find one to test with
-        let jobs = try await withTimeout(TIMEOUT) {
-            try await agent.listJobsDetailed()
-        }
-
-        guard let testJob = jobs.first else {
-            // Skip test if no jobs exist
-            throw XCTSkip("No jobs found to test with")
-        }
+        let agent = SQLServerAgentOperations(client: self.client)
+        let managedJob = try await createManagedJob()
 
         // Test getting detailed info for a specific job
-        let jobDetail = try await withTimeout(TIMEOUT) {
-            try await agent.getJobDetail(jobName: testJob.name)
+        let jobDetail = try await withTimeout(operationTimeout) {
+            try await agent.getJobDetail(jobName: managedJob.jobName)
         }
 
         XCTAssertNotNil(jobDetail, "Should get job detail for existing job")
-        XCTAssertEqual(jobDetail?.name, testJob.name, "Job name should match")
-        XCTAssertEqual(jobDetail?.jobId, testJob.jobId, "Job ID should match")
-        XCTAssertEqual(jobDetail?.enabled, testJob.enabled, "Enabled status should match")
+        XCTAssertEqual(jobDetail?.name, managedJob.jobName, "Job name should match")
+        XCTAssertEqual(jobDetail?.enabled, true, "Enabled status should match")
 
-        print("✅ Successfully retrieved detailed info for job: \(testJob.name)")
+        print("✅ Successfully retrieved detailed info for job: \(managedJob.jobName)")
     }
 
     func testGetJobStepsForSpecificJob() async throws {
-        let agent = try await withTimeout(TIMEOUT) {
-            try await self.client.withConnection { connection in
-                SQLServerAgentClient(connection: connection)
-            }
-        }
-
-        // First get a list of jobs to find one with steps
-        let jobs = try await withTimeout(TIMEOUT) {
-            try await agent.listJobsDetailed()
-        }
-
-        guard let testJob = jobs.first else {
-            throw XCTSkip("No jobs found to test with")
-        }
+        let agent = SQLServerAgentOperations(client: self.client)
+        let managedJob = try await createManagedJob()
 
         // Test getting steps for the job
-        let steps = try await withTimeout(TIMEOUT) {
-            try await agent.getJobSteps(jobName: testJob.name)
+        let steps = try await withTimeout(operationTimeout) {
+            try await agent.getJobSteps(jobName: managedJob.jobName)
         }
 
         XCTAssertNotNil(steps, "Should get steps array (may be empty)")
@@ -138,29 +76,16 @@ final class AgentEnhancedAPITests: XCTestCase {
             XCTAssertNotNil(firstStep.databaseName, "Database name should be present (even if nil)")
         }
 
-        print("✅ Found \(steps.count) steps for job: \(testJob.name)")
+        print("✅ Found \(steps.count) steps for job: \(managedJob.jobName)")
     }
 
     func testGetJobSchedulesForSpecificJob() async throws {
-        let agent = try await withTimeout(TIMEOUT) {
-            try await self.client.withConnection { connection in
-                SQLServerAgentClient(connection: connection)
-            }
-        }
-
-        // First get a list of jobs to find one with schedules
-        let jobs = try await withTimeout(TIMEOUT) {
-            try await agent.listJobsDetailed()
-        }
-
-        // Find a job that has schedules
-        guard let testJob = jobs.first(where: { $0.hasSchedule }) else {
-            throw XCTSkip("No jobs with schedules found to test with")
-        }
+        let agent = SQLServerAgentOperations(client: self.client)
+        let managedJob = try await createManagedJob(includeSchedule: true)
 
         // Test getting schedules for the job
-        let schedules = try await withTimeout(TIMEOUT) {
-            try await agent.getJobSchedules(jobName: testJob.name)
+        let schedules = try await withTimeout(operationTimeout) {
+            try await agent.getJobSchedules(jobName: managedJob.jobName)
         }
 
         XCTAssertNotNil(schedules, "Should get schedules array (may be empty)")
@@ -172,23 +97,20 @@ final class AgentEnhancedAPITests: XCTestCase {
             XCTAssertFalse(firstSchedule.scheduleId.isEmpty, "Schedule ID should not be empty")
             XCTAssertTrue(firstSchedule.freqType > 0, "Frequency type should be positive")
 
-            // Verify optional fields are properly handled
-            XCTAssertNotNil(firstSchedule.freqInterval, "Frequency interval should be present (even if nil)")
-            XCTAssertNotNil(firstSchedule.nextRunDate, "Next run date should be present (even if nil)")
+            // Optional schedule fields may be absent depending on the frequency type.
+            _ = firstSchedule.freqInterval
+            _ = firstSchedule.nextRunDate
         }
 
-        print("✅ Found \(schedules.count) schedules for job: \(testJob.name)")
+        XCTAssertTrue(schedules.contains { $0.name == managedJob.scheduleName }, "Expected managed schedule to be attached")
+        print("✅ Found \(schedules.count) schedules for job: \(managedJob.jobName)")
     }
 
     func testGetJobHistoryComprehensive() async throws {
-        let agent = try await withTimeout(TIMEOUT) {
-            try await self.client.withConnection { connection in
-                SQLServerAgentClient(connection: connection)
-            }
-        }
+        let agent = SQLServerAgentOperations(client: self.client)
 
         // Test getting comprehensive job history
-        let history = try await withTimeout(TIMEOUT) {
+        let history = try await withTimeout(operationTimeout) {
             try await agent.getJobHistory(top: 50)
         }
 
@@ -218,24 +140,12 @@ final class AgentEnhancedAPITests: XCTestCase {
     }
 
     func testGetJobHistoryForSpecificJob() async throws {
-        let agent = try await withTimeout(TIMEOUT) {
-            try await self.client.withConnection { connection in
-                SQLServerAgentClient(connection: connection)
-            }
-        }
-
-        // First get a list of jobs to find one to test with
-        let jobs = try await withTimeout(TIMEOUT) {
-            try await agent.listJobsDetailed()
-        }
-
-        guard let testJob = jobs.first else {
-            throw XCTSkip("No jobs found to test with")
-        }
+        let agent = SQLServerAgentOperations(client: self.client)
+        let managedJob = try await createManagedJob()
 
         // Test getting history for a specific job
-        let history = try await withTimeout(TIMEOUT) {
-            try await agent.getJobHistory(jobName: testJob.name, top: 20)
+        let history = try await withTimeout(operationTimeout) {
+            try await agent.getJobHistory(jobName: managedJob.jobName, top: 20)
         }
 
         XCTAssertNotNil(history, "Should get history array for specific job (may be empty)")
@@ -244,22 +154,18 @@ final class AgentEnhancedAPITests: XCTestCase {
 
         // Verify that all entries are for the correct job
         for entry in history {
-            XCTAssertEqual(entry.jobName, testJob.name, "All history entries should be for the correct job")
+            XCTAssertEqual(entry.jobName, managedJob.jobName, "All history entries should be for the correct job")
         }
 
-        print("✅ Found \(history.count) history entries for job: \(testJob.name)")
+        print("✅ Found \(history.count) history entries for job: \(managedJob.jobName)")
     }
 
     func testEnhancedAPIsUseStoredProcedures() async throws {
-        let agent = try await withTimeout(TIMEOUT) {
-            try await self.client.withConnection { connection in
-                SQLServerAgentClient(connection: connection)
-            }
-        }
+        let agent = SQLServerAgentOperations(client: self.client)
 
         // Test that the enhanced APIs work without throwing errors
         // This implicitly tests that they're using stored procedures correctly
-        let jobs = try await withTimeout(TIMEOUT) {
+        let jobs = try await withTimeout(operationTimeout) {
             try await agent.listJobsDetailed()
         }
 
@@ -267,7 +173,7 @@ final class AgentEnhancedAPITests: XCTestCase {
         XCTAssertTrue(true, "Enhanced APIs should use stored procedures successfully")
 
         if !jobs.isEmpty {
-            let jobDetail = try await withTimeout(TIMEOUT) {
+            let jobDetail = try await withTimeout(operationTimeout) {
                 try await agent.getJobDetail(jobName: jobs.first!.name)
             }
             XCTAssertNotNil(jobDetail, "Job detail should be retrievable using stored procedures")
@@ -277,14 +183,10 @@ final class AgentEnhancedAPITests: XCTestCase {
     }
 
     func testDateConversionInEnhancedAPIs() async throws {
-        let agent = try await withTimeout(TIMEOUT) {
-            try await self.client.withConnection { connection in
-                SQLServerAgentClient(connection: connection)
-            }
-        }
+        let agent = SQLServerAgentOperations(client: self.client)
 
         // Test the enhanced history API which includes date conversion
-        let history = try await withTimeout(TIMEOUT) {
+        let history = try await withTimeout(operationTimeout) {
             try await agent.getJobHistory(top: 10)
         }
 
@@ -306,11 +208,7 @@ final class AgentEnhancedAPITests: XCTestCase {
 
     /// Test for the connectionClosed issue App is experiencing
     func testEnhancedAPIConnectionStability() async throws {
-        let agent = try await withTimeout(TIMEOUT) {
-            try await self.client.withConnection { connection in
-                SQLServerAgentClient(connection: connection)
-            }
-        }
+        let agent = SQLServerAgentOperations(client: self.client)
 
         print("🔍 [EnhancedAPI] Testing enhanced API connection stability...")
 

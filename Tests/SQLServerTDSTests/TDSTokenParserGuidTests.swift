@@ -2,7 +2,7 @@ import XCTest
 @testable import SQLServerTDS
 import NIO
 
-final class TDSTokenParserGuidTests: XCTestCase {
+final class TDSTokenOperationsGuidTests: XCTestCase, @unchecked Sendable {
     private func makeGuidMeta(colName: String = "uniqueidentifier_value") -> TDSTokens.ColMetadataToken {
         let col = TDSTokens.ColMetadataToken.ColumnData(
             userType: 0,
@@ -38,7 +38,7 @@ final class TDSTokenParserGuidTests: XCTestCase {
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
         parser.colMetadata = makeGuidMeta()
 
         let row = try XCTUnwrap(parser.parseRowToken())
@@ -58,7 +58,7 @@ final class TDSTokenParserGuidTests: XCTestCase {
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
         parser.colMetadata = makeGuidMeta()
 
         let row = try XCTUnwrap(parser.parseRowToken())
@@ -75,7 +75,7 @@ final class TDSTokenParserGuidTests: XCTestCase {
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
         parser.colMetadata = makeGuidMeta()
 
         let row = try XCTUnwrap(parser.parseRowToken())
@@ -96,7 +96,7 @@ final class TDSTokenParserGuidTests: XCTestCase {
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
         parser.colMetadata = makeGuidMeta()
 
         let tokens = try parser.parse()
@@ -126,7 +126,7 @@ final class TDSTokenParserGuidTests: XCTestCase {
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
         parser.colMetadata = makeGuidMeta()
 
         let tokens = try parser.parse()

@@ -7,18 +7,18 @@ import SQLServerKitTesting
 /// Comprehensive metadata analysis test to systematically identify failure patterns
 /// This test enumerates all schemas, tables, and views in a database and tests
 /// all metadata operations on each to identify exactly what's working and what's failing
-final class SQLServerMetadataAnalysisTests: XCTestCase {
+final class SQLServerMetadataAnalysisTests: XCTestCase, @unchecked Sendable {
     var group: EventLoopGroup!
     var client: SQLServerClient!
-    var testDatabase: String = "AdventureWorks2022"
+    var testDatabase: String = "AdventureWorks"
     private let maxSchemasToInspect = Int.max
     private let maxConcurrentObjectChecks = 6
     private let metadataTimeBudget: TimeInterval = 60
 
     override func setUp() async throws {
         TestEnvironmentManager.loadEnvironmentVariables()
-        // TDS_TEST_DB > TDS_DATABASE > AdventureWorks2022 fallback
-        testDatabase = env("TDS_TEST_DB") ?? env("TDS_DATABASE") ?? "AdventureWorks2022"
+        // Prefer the explicitly restored AdventureWorks database when running in Docker.
+        testDatabase = env("TDS_TEST_DB") ?? env("TDS_AW_DATABASE") ?? env("TDS_DATABASE") ?? "AdventureWorks"
 
         let threadCount = max(2, min(ProcessInfo.processInfo.processorCount, 8))
         group = MultiThreadedEventLoopGroup(numberOfThreads: threadCount)
@@ -128,6 +128,18 @@ final class SQLServerMetadataAnalysisTests: XCTestCase {
 
         // At minimum, we should be able to enumerate schemas without issues
         XCTAssertGreaterThan(analysisResults.totalSchemas, 0, "Should find at least one schema")
+        XCTAssertFalse(analysisResults.tableResults.isEmpty, "Metadata analysis should inspect at least one table")
+
+        let tableFailures = analysisResults.tableResults.filter { !$0.failedOperations.isEmpty }
+        let viewFailures = analysisResults.viewResults.filter { !$0.failedOperations.isEmpty }
+        XCTAssertTrue(
+            tableFailures.isEmpty,
+            "Table metadata analysis found failures: \(summarizeFailures(tableFailures, limit: 10))"
+        )
+        XCTAssertTrue(
+            viewFailures.isEmpty,
+            "View metadata analysis found failures: \(summarizeFailures(viewFailures, limit: 10))"
+        )
     }
 
     /// Test all metadata operations for a specific table
@@ -338,12 +350,19 @@ final class SQLServerMetadataAnalysisTests: XCTestCase {
         }
 
         // Show failures
-        print("\n❌ FAILURES DETECTED:")
-        var hasFailures = false
+        let hasFailures =
+            results.tableResults.contains { !$0.failedOperations.isEmpty } ||
+            results.viewResults.contains { !$0.failedOperations.isEmpty }
+
+        if hasFailures {
+            print("\n❌ FAILURE SUMMARY:")
+        } else {
+            print("\n✅ FAILURE SUMMARY:")
+            print("   No failures detected. All metadata operations are working correctly.")
+        }
 
         for result in results.tableResults {
             if !result.failedOperations.isEmpty {
-                hasFailures = true
                 print("   Table: \(result.objectName)")
                 for (operation, error) in result.failedOperations {
                     print("     \(operation): \(error)")
@@ -353,7 +372,6 @@ final class SQLServerMetadataAnalysisTests: XCTestCase {
 
         for result in results.viewResults {
             if !result.failedOperations.isEmpty {
-                hasFailures = true
                 print("   View: \(result.objectName)")
                 for (operation, error) in result.failedOperations {
                     print("     \(operation): \(error)")
@@ -361,17 +379,20 @@ final class SQLServerMetadataAnalysisTests: XCTestCase {
             }
         }
 
-        if !hasFailures {
-            print("   🎉 No failures detected! All metadata operations are working correctly.")
-        }
-
         print("\n" + "=" * 80)
         print("🏁 ANALYSIS COMPLETE")
         print("=" * 80)
     }
+
+    private func summarizeFailures(_ results: [ObjectMetadataResults], limit: Int) -> String {
+        results.prefix(limit).map { result in
+            let ops = result.failedOperations.map { "\($0.0)=\($0.1)" }.joined(separator: ", ")
+            return "\(result.objectName)[\(ops)]"
+        }.joined(separator: "; ")
+    }
 }
 
-private func runObjectChecks<T>(
+private func runObjectChecks<T: Sendable>(
     _ items: [T],
     concurrentLimit: Int,
     budgetDeadline: Date,
@@ -389,8 +410,9 @@ private func runObjectChecks<T>(
         let slice = items[index..<upperBound]
         try await withThrowingTaskGroup(of: ObjectMetadataResults.self) { group in
             for item in slice {
+                let currentItem = item
                 group.addTask {
-                    try await operation(item)
+                    try await operation(currentItem)
                 }
             }
             while let result = try await group.next() {

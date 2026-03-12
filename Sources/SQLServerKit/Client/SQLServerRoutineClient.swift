@@ -64,7 +64,7 @@ public struct RoutineOptions: Sendable {
 
 // MARK: - SQLServerRoutineClient
 
-public final class SQLServerRoutineClient {
+public final class SQLServerRoutineClient: @unchecked Sendable {
     private let client: SQLServerClient
     
     public init(client: SQLServerClient) {
@@ -107,11 +107,15 @@ public final class SQLServerRoutineClient {
         if !parameters.isEmpty {
             let paramStrings = parameters.map { param in
                 var paramStr = "@\(param.name) \(param.dataType.toSqlString())"
-                if !Self.formatParameterDirection(param.direction).isEmpty {
-                    paramStr += " \(Self.formatParameterDirection(param.direction))"
-                }
-                if let defaultValue = param.defaultValue {
-                    paramStr += " = \(defaultValue)"
+                if case .userDefinedTable = param.dataType {
+                    paramStr += " READONLY"
+                } else {
+                    if !Self.formatParameterDirection(param.direction).isEmpty {
+                        paramStr += " \(Self.formatParameterDirection(param.direction))"
+                    }
+                    if let defaultValue = param.defaultValue {
+                        paramStr += " = \(defaultValue)"
+                    }
                 }
                 return paramStr
             }
@@ -184,11 +188,15 @@ public final class SQLServerRoutineClient {
         if !parameters.isEmpty {
             let paramStrings = parameters.map { param in
                 var paramStr = "@\(param.name) \(param.dataType.toSqlString())"
-                if !Self.formatParameterDirection(param.direction).isEmpty {
-                    paramStr += " \(Self.formatParameterDirection(param.direction))"
-                }
-                if let defaultValue = param.defaultValue {
-                    paramStr += " = \(defaultValue)"
+                if case .userDefinedTable = param.dataType {
+                    paramStr += " READONLY"
+                } else {
+                    if !Self.formatParameterDirection(param.direction).isEmpty {
+                        paramStr += " \(Self.formatParameterDirection(param.direction))"
+                    }
+                    if let defaultValue = param.defaultValue {
+                        paramStr += " = \(defaultValue)"
+                    }
                 }
                 return paramStr
             }

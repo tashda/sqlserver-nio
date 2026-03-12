@@ -1,46 +1,47 @@
+import Foundation
+import NIOCore
+
 extension TDSData {
     public init(string: String) {
-        var buffer = ByteBufferAllocator().buffer(capacity: string.utf16.count)
-        buffer.writeUTF16String(string)
+        var buffer = ByteBufferAllocator().buffer(capacity: string.utf8.count)
+        buffer.writeString(string)
         self.init(metadata: String.tdsMetadata, value: buffer)
     }
-    
+
     public var string: String? {
         if self.metadata.dataType == .sqlVariant {
-            if let resolved = self.sqlVariantResolved(), let s = resolved.string {
-                return s
+            if let resolved = self.sqlVariantResolved(), let string = resolved.string {
+                return string
             }
-            // Fallback: attempt manual parse of sql_variant header and decode remaining payload
+
             if var payload = self.value, payload.readableBytes >= 2 {
-                // Skip base type + property length + property bytes
                 _ = payload.readInteger(as: UInt8.self)
-                if let propLen = payload.readInteger(as: UInt8.self) {
-                    if propLen > 0, payload.readableBytes >= Int(propLen) {
-                        _ = payload.readSlice(length: Int(propLen))
+                if let propertyLength = payload.readInteger(as: UInt8.self) {
+                    if propertyLength > 0, payload.readableBytes >= Int(propertyLength) {
+                        _ = payload.readSlice(length: Int(propertyLength))
                     }
-                    let remain = payload.readableBytes
-                    if remain > 0 {
-                        if remain % 2 == 0, let u16 = payload.readUTF16String(length: remain) {
-                            return u16
+                    let remaining = payload.readableBytes
+                    if remaining > 0 {
+                        if remaining.isMultiple(of: 2), let utf16 = payload.readUTF16String(length: remaining) {
+                            return utf16
                         }
-                        if let bytes = payload.readBytes(length: remain), let u8 = String(bytes: bytes, encoding: .utf8) {
-                            return u8
+                        if let bytes = payload.readBytes(length: remaining), let utf8 = String(bytes: bytes, encoding: .utf8) {
+                            return utf8
                         }
                     }
                 }
             }
+
             return nil
         }
+
         guard var value = self.value else {
             return nil
         }
-        
+
         switch self.metadata.dataType {
         case .bit, .bitn:
-            if let bool = self.bool {
-                return bool ? "1" : "0"
-            }
-            return nil
+            return self.bool.map { $0 ? "1" : "0" }
         case .tinyInt, .smallInt, .int, .bigInt, .intn:
             if let intValue = self.int64 {
                 return String(intValue)
@@ -50,12 +51,12 @@ extension TDSData {
             }
             return nil
         case .real:
-            return self.float.map { String($0) }
+            return self.double.map { String($0) }
         case .float, .floatn:
             return self.double.map { String($0) }
         case .numeric, .numericLegacy, .decimal, .decimalLegacy:
             if let decimalValue = self.decimal {
-                return "\(decimalValue)"
+                return NSDecimalNumber(decimal: decimalValue).stringValue
             }
             return self.double.map { String($0) }
         case .smallMoney, .money, .moneyn:
@@ -70,17 +71,17 @@ extension TDSData {
             if let utf8 = String(bytes: bytes, encoding: .utf8) {
                 return utf8
             }
-            if let cp1252 = String(bytes: bytes, encoding: .windowsCP1252) {
-                return cp1252
-            }
             return String(decoding: bytes, as: UTF8.self)
-        case .nvarchar, .nchar, .nText:
+        case .nchar, .nvarchar, .nText:
+            guard value.readableBytes.isMultiple(of: 2) else {
+                return nil
+            }
             return value.readUTF16String(length: value.readableBytes)
         case .guid:
-            // uniqueidentifier: 16 bytes in mixed-endian TDS format
             guard value.readableBytes == 16,
-                  let bytes = value.readBytes(length: 16) else { return nil }
-            // TDS sends Data1 (4 bytes LE), Data2 (2 bytes LE), Data3 (2 bytes LE), Data4 (8 bytes big-endian)
+                  let bytes = value.readBytes(length: 16) else {
+                return nil
+            }
             let hex: (UInt8) -> String = { String(format: "%02X", $0) }
             let d1 = [bytes[3], bytes[2], bytes[1], bytes[0]].map(hex).joined()
             let d2 = [bytes[5], bytes[4]].map(hex).joined()
@@ -89,29 +90,22 @@ extension TDSData {
             let d4b = bytes[10...15].map(hex).joined()
             return "\(d1)-\(d2)-\(d3)-\(d4a)-\(d4b)"
         default:
-            // Best-effort fallback: try to decode any remaining bytes as textual.
             if let bytes = value.readBytes(length: value.readableBytes), !bytes.isEmpty {
-                // Try UTF-16LE full buffer
-                if bytes.count % 2 == 0, let u16 = String(bytes: bytes, encoding: .utf16LittleEndian) {
-                    return u16
+                if bytes.count.isMultiple(of: 2), let utf16 = String(bytes: bytes, encoding: .utf16LittleEndian) {
+                    return utf16
                 }
-                // Try UTF-16LE skipping a 2-byte length prefix (common for length-prefixed payloads)
-                if bytes.count > 2, (bytes.count - 2) % 2 == 0,
-                   let u16 = String(bytes: Array(bytes.dropFirst(2)), encoding: .utf16LittleEndian) {
-                    return u16
+                if bytes.count > 2,
+                   (bytes.count - 2).isMultiple(of: 2),
+                   let utf16 = String(bytes: Array(bytes.dropFirst(2)), encoding: .utf16LittleEndian) {
+                    return utf16
                 }
-                // Try UTF-16LE skipping a 1-byte length prefix (some sql_variant short cases)
-                if bytes.count > 1, (bytes.count - 1) % 2 == 0,
-                   let u16 = String(bytes: Array(bytes.dropFirst(1)), encoding: .utf16LittleEndian) {
-                    return u16
+                if bytes.count > 1,
+                   (bytes.count - 1).isMultiple(of: 2),
+                   let utf16 = String(bytes: Array(bytes.dropFirst(1)), encoding: .utf16LittleEndian) {
+                    return utf16
                 }
-                // Try UTF-8
-                if let u8 = String(bytes: bytes, encoding: .utf8) {
-                    return u8
-                }
-                // Try Windows-1252
-                if let cp1252 = String(bytes: bytes, encoding: .windowsCP1252) {
-                    return cp1252
+                if let utf8 = String(bytes: bytes, encoding: .utf8) {
+                    return utf8
                 }
             }
             return nil
@@ -119,17 +113,11 @@ extension TDSData {
     }
 }
 
-extension TDSData: ExpressibleByStringLiteral {
-    public init(stringLiteral value: String) {
-        self.init(string: value)
-    }
-}
-
 extension String: TDSDataConvertible {
-    public static var tdsMetadata: Metadata {
-        return TypeMetadata(dataType: .varchar)
+    public static var tdsMetadata: any Metadata {
+        TypeMetadata(dataType: .varchar)
     }
-    
+
     public init?(tdsData: TDSData) {
         guard let string = tdsData.string else {
             return nil
@@ -138,6 +126,12 @@ extension String: TDSDataConvertible {
     }
 
     public var tdsData: TDSData? {
-        return .init(string: self)
+        .init(string: self)
+    }
+}
+
+extension TDSData: ExpressibleByStringLiteral {
+    public init(stringLiteral value: String) {
+        self.init(string: value)
     }
 }

@@ -4,7 +4,7 @@ import XCTest
 import NIO
 import Logging
 
-final class SQLServerNbcRowBitmapTests: XCTestCase {
+final class SQLServerNbcRowBitmapTests: XCTestCase, @unchecked Sendable {
     var group: EventLoopGroup!
     var client: SQLServerClient!
 

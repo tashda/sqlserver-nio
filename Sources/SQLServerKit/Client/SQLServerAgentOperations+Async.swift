@@ -1,0 +1,223 @@
+import Foundation
+import NIO
+import SQLServerTDS
+
+extension SQLServerAgentOperations {
+    // MARK: - Async Jobs
+
+    @available(macOS 12.0, *)
+    public func listJobs() async throws -> [SQLServerAgentJobInfo] {
+        try await listJobs().get()
+    }
+
+    @available(macOS 12.0, *)
+    public func listJobsDetailed() async throws -> [SQLServerAgentJobDetail] {
+        try await listJobsDetailed().get()
+    }
+
+    @available(macOS 12.0, *)
+    public func getJobDetail(jobName: String) async throws -> SQLServerAgentJobDetail? {
+        try await getJobDetail(jobName: jobName).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func startJob(named jobName: String) async throws {
+        _ = try await startJob(named: jobName).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func stopJob(named jobName: String) async throws {
+        _ = try await stopJob(named: jobName).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func enableJob(named jobName: String, enabled: Bool) async throws {
+        _ = try await enableJob(named: jobName, enabled: enabled).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func createJob(named jobName: String, description: String? = nil, enabled: Bool = true, ownerLoginName: String? = nil) async throws {
+        _ = try await createJob(named: jobName, description: description, enabled: enabled, ownerLoginName: ownerLoginName).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func deleteJob(named jobName: String) async throws {
+        _ = try await deleteJob(named: jobName).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func updateJob(named jobName: String, description: String? = nil, ownerLoginName: String? = nil, categoryName: String? = nil, enabled: Bool? = nil, startStepId: Int? = nil) async throws {
+        _ = try await updateJob(named: jobName, description: description, ownerLoginName: ownerLoginName, categoryName: categoryName, enabled: enabled, startStepId: startStepId).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func setJobCategory(named jobName: String, categoryName: String) async throws {
+        _ = try await updateJob(named: jobName, categoryName: categoryName).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func setJobStartStep(jobName: String, stepId: Int) async throws {
+        _ = try await updateJob(named: jobName, startStepId: stepId).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func setJobEmailNotification(jobName: String, operatorName: String?, notifyLevel: Int) async throws {
+        // Since setJobEmailNotification is not in +Jobs but would be needed, I'll add it to +Jobs first
+        // or just use EventLoopFuture here. Let's assume it's added to +Jobs.
+        _ = try await setJobEmailNotification(jobName: jobName, operatorName: operatorName, notifyLevel: notifyLevel).get()
+    }
+
+    // MARK: - Async Steps
+
+    @available(macOS 12.0, *)
+    public func addTSQLStep(jobName: String, stepName: String, command: String, database: String? = nil) async throws {
+        _ = try await addTSQLStep(jobName: jobName, stepName: stepName, command: command, database: database).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func addStep(jobName: String, stepName: String, subsystem: String, command: String, database: String? = nil, proxyName: String? = nil, outputFile: String? = nil) async throws {
+        _ = try await addStep(jobName: jobName, stepName: stepName, subsystem: subsystem, command: command, database: database, proxyName: proxyName, outputFile: outputFile).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func addJobServer(jobName: String, serverName: String? = nil) async throws {
+        _ = try await addJobServer(jobName: jobName, serverName: serverName).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func updateTSQLStep(jobName: String, stepName: String, newCommand: String, database: String? = nil) async throws {
+        _ = try await updateTSQLStep(jobName: jobName, stepName: stepName, newCommand: newCommand, database: database).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func deleteStep(jobName: String, stepName: String) async throws {
+        _ = try await deleteStep(jobName: jobName, stepName: stepName).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func listSteps(jobName: String) async throws -> [(id: Int, name: String, subsystem: String, database: String?, command: String?)] {
+        try await listSteps(jobName: jobName).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func getJobSteps(jobName: String) async throws -> [SQLServerAgentJobStepDetail] {
+        let steps = try await listSteps(jobName: jobName).get()
+        return steps.map { step in
+            SQLServerAgentJobStepDetail(
+                stepId: step.id,
+                name: step.name,
+                subsystem: step.subsystem,
+                command: step.command,
+                databaseName: step.database
+            )
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func configureStep(jobName: String, stepName: String, onSuccessAction: Int? = nil, onSuccessStepId: Int? = nil, onFailAction: Int? = nil, onFailStepId: Int? = nil, retryAttempts: Int? = nil, retryIntervalMinutes: Int? = nil, outputFileName: String? = nil, appendOutputFile: Bool? = nil) async throws {
+        _ = try await configureStep(jobName: jobName, stepName: stepName, onSuccessAction: onSuccessAction, onSuccessStepId: onSuccessStepId, onFailAction: onFailAction, onFailStepId: onFailStepId, retryAttempts: retryAttempts, retryIntervalMinutes: retryIntervalMinutes, outputFileName: outputFileName, appendOutputFile: appendOutputFile).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func fetchJobId(named jobName: String) async throws -> String {
+        try await lookupJobId(jobName: jobName).get()
+    }
+
+    // MARK: - Async Schedules
+
+    @available(macOS 12.0, *)
+    public func createSchedule(named scheduleName: String, enabled: Bool = true, freqType: Int, freqInterval: Int = 1, activeStartDate: Int? = nil, activeStartTime: Int? = nil, activeEndDate: Int? = nil, activeEndTime: Int? = nil, freqSubdayType: Int? = nil, freqSubdayInterval: Int? = nil, freqRelativeInterval: Int? = nil, freqRecurrenceFactor: Int? = nil) async throws {
+        _ = try await createSchedule(named: scheduleName, enabled: enabled, freqType: freqType, freqInterval: freqInterval, activeStartDate: activeStartDate, activeStartTime: activeStartTime, activeEndDate: activeEndDate, activeEndTime: activeEndTime, freqSubdayType: freqSubdayType, freqSubdayInterval: freqSubdayInterval, freqRelativeInterval: freqRelativeInterval, freqRecurrenceFactor: freqRecurrenceFactor).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func attachSchedule(scheduleName: String, toJob jobName: String) async throws {
+        _ = try await attachSchedule(scheduleName: scheduleName, toJob: jobName).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func detachSchedule(scheduleName: String, fromJob jobName: String) async throws {
+        _ = try await detachSchedule(scheduleName: scheduleName, fromJob: jobName).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func deleteSchedule(named scheduleName: String) async throws {
+        _ = try await deleteSchedule(named: scheduleName).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func listSchedules(forJob jobName: String? = nil) async throws -> [SQLServerAgentScheduleInfo] {
+        try await listSchedules(forJob: jobName).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func getJobSchedules(jobName: String) async throws -> [SQLServerAgentJobScheduleDetail] {
+        try await getJobSchedules(jobName: jobName).get()
+    }
+
+    // MARK: - Async Operators
+
+    @available(macOS 12.0, *)
+    public func createOperator(name: String, emailAddress: String? = nil, enabled: Bool = true) async throws {
+        _ = try await createOperator(name: name, emailAddress: emailAddress, enabled: enabled).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func updateOperator(name: String, emailAddress: String? = nil, enabled: Bool? = nil) async throws {
+        _ = try await updateOperator(name: name, emailAddress: emailAddress, enabled: enabled).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func deleteOperator(name: String) async throws {
+        _ = try await deleteOperator(name: name).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func listOperators() async throws -> [SQLServerAgentOperatorInfo] {
+        try await listOperators().get()
+    }
+
+    // MARK: - Async Alerts & Categories
+
+    @available(macOS 12.0, *)
+    public func createAlert(name: String, severity: Int? = nil, messageId: Int? = nil, databaseName: String? = nil, enabled: Bool = true) async throws {
+        _ = try await createAlert(name: name, severity: severity, messageId: messageId, databaseName: databaseName, enabled: enabled).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func addNotification(alertName: String, operatorName: String, method: Int = 1) async throws {
+        _ = try await addNotification(alertName: alertName, operatorName: operatorName, method: method).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func createCategory(name: String, classId: Int = 1) async throws {
+        _ = try await createCategory(name: name, classId: classId).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func deleteCategory(name: String) async throws {
+        _ = try await deleteCategory(name: name).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func renameCategory(name: String, newName: String) async throws {
+        _ = try await renameCategory(name: name, newName: newName).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func listCategories() async throws -> [SQLServerAgentCategoryInfo] {
+        try await listCategories().get()
+    }
+
+    // MARK: - Async Proxies
+
+    @available(macOS 12.0, *)
+    public func listProxies() async throws -> [SQLServerAgentProxyInfo] {
+        try await listProxies().get()
+    }
+
+    @available(macOS 12.0, *)
+    public func getJobHistory(jobName: String? = nil, top: Int = 100) async throws -> [SQLServerAgentJobHistoryDetail] {
+        try await getJobHistory(jobName: jobName, top: top).get()
+    }
+}

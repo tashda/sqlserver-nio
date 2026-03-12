@@ -6,7 +6,7 @@ import Logging
 
 /// Consolidated query tests for SQLServerNIO
 /// Covers basic SQL queries, parameters, and result handling
-final class QueryTests: StandardTestBase {
+final class QueryTests: StandardTestBase, @unchecked Sendable {
 
     // MARK: - Basic Query Tests
 
