@@ -4,6 +4,7 @@ import NIOConcurrencyHelpers
 import SQLServerTDS
 
 extension SQLServerConnection {
+    @available(*, deprecated, message: "Use async changeDatabase(_:) instead.")
     public func changeDatabase(_ database: String) -> EventLoopFuture<Void> {
         let current = stateLock.withLock { _currentDatabase }
         if Self.equalsIgnoreCase(current, database) {
@@ -100,6 +101,7 @@ extension SQLServerConnection {
         return attempt(1)
     }
 
+    @available(*, deprecated, message: "Use async invalidation through higher-level lifecycle APIs where possible.")
     public func invalidate() -> EventLoopFuture<Void> {
         self.release(true).flatMap { self.shutdownGroupIfNeeded() }
     }
