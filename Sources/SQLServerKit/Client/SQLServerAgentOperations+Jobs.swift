@@ -134,9 +134,10 @@ extension SQLServerAgentOperations {
         }.map { _ in () }
     }
 
-    public func updateJob(named jobName: String, description: String? = nil, ownerLoginName: String? = nil, categoryName: String? = nil, enabled: Bool? = nil, startStepId: Int? = nil) -> EventLoopFuture<Void> {
+    public func updateJob(named jobName: String, newName: String? = nil, description: String? = nil, ownerLoginName: String? = nil, categoryName: String? = nil, enabled: Bool? = nil, startStepId: Int? = nil) -> EventLoopFuture<Void> {
         return lookupJobId(jobName: jobName).flatMap { (jobId: String) -> EventLoopFuture<Void> in
             var parts: [String] = ["@job_id = N'\(jobId)'"]
+            if let newName, !newName.isEmpty { parts.append("@new_name = N'\(Self.escapeLiteral(newName))'") }
             if let desc = description { parts.append("@description = N'\(Self.escapeLiteral(desc))'") }
             if let owner = ownerLoginName { parts.append("@owner_login_name = N'\(Self.escapeLiteral(owner))'") }
             if let cat = categoryName { parts.append("@category_name = N'\(Self.escapeLiteral(cat))'") }
@@ -145,6 +146,10 @@ extension SQLServerAgentOperations {
             guard parts.count > 1 else { return self.run("SELECT 1").map { _ in () } }
             return self.run("EXEC msdb.dbo.sp_update_job \(parts.joined(separator: ", "));").map { _ in () }
         }
+    }
+
+    public func renameJob(named jobName: String, to newName: String) -> EventLoopFuture<Void> {
+        updateJob(named: jobName, newName: newName)
     }
 
     /// Sets or clears e-mail notification for a job. notifyLevel: 0=Never, 1=On Success, 2=On Failure, 3=On Completion
