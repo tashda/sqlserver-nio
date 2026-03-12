@@ -145,22 +145,22 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
 
     private func fetchOverview(on loop: EventLoop) -> EventLoopFuture<SQLServerActivityOverview?> {
         let cpuSql = """
-            SELECT TOP(1) [SQLProcessUtilization] AS cpu_usage
+        SELECT TOP(1) [SQLProcessUtilization] AS cpu_usage
+        FROM (
+            SELECT record.value('(./Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]', 'int') AS [SQLProcessUtilization],
+            [timestamp]
             FROM (
-                SELECT record.value('(./Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]', 'int') AS [SQLProcessUtilization],
-                [timestamp]
-                FROM (
-                    SELECT [timestamp], convert(xml, record) AS [record]
-                    FROM [sys].[dm_os_ring_buffers]
-                    WHERE ring_buffer_type = N'RING_BUFFER_SCHEDULER_MONITOR'
-                    AND record LIKE '%<SchedulerMonitorEvent>%'
-                ) AS x
-            ) AS y ORDER BY [timestamp] DESC;
-            """
-
+                SELECT [timestamp], convert(xml, record) AS [record]
+                FROM [sys].[dm_os_ring_buffers]
+                WHERE ring_buffer_type = N'RING_BUFFER_SCHEDULER_MONITOR'
+                AND record LIKE '%<SchedulerMonitorEvent>%'
+            ) AS x
+        ) AS y ORDER BY [timestamp] DESC;
+        """
+        
         let waitIgnoreCSV = waitIgnoreList.map { "'\($0)'" }.joined(separator: ", ")
         let waitsSql = "SELECT COUNT(*) AS waiting_tasks FROM [sys].[dm_os_waiting_tasks] WHERE wait_type NOT IN (\(waitIgnoreCSV));"
-
+        
         let batchSql = "SELECT cntr_value FROM [sys].[dm_os_performance_counters] WHERE counter_name = 'Batch Requests/sec' AND object_name LIKE '%SQL Statistics%';"
 
         // We wrap each query in its own future and handle them with timeouts if possible via client configuration
@@ -274,14 +274,14 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
     }
 
     private func fetchWaits(on loop: EventLoop) -> EventLoopFuture<[SQLServerWaitStat]> {
-        let ignoreCSV = waitIgnoreList.map { "'\($0)'" }.joined(separator: ", ")
+        let waitIgnoreCSV = waitIgnoreList.map { "'\($0)'" }.joined(separator: ", ")
         let sql = """
-            SELECT wait_type, waiting_tasks_count, wait_time_ms, signal_wait_time_ms
-            FROM [sys].[dm_os_wait_stats]
-            WHERE wait_type NOT IN (\(ignoreCSV))
-            AND wait_time_ms > 0
-            ORDER BY wait_time_ms DESC;
-            """
+        SELECT wait_type, waiting_tasks_count, wait_time_ms, signal_wait_time_ms
+        FROM [sys].[dm_os_wait_stats]
+        WHERE wait_type NOT IN (\(waitIgnoreCSV))
+        AND wait_time_ms > 0
+        ORDER BY wait_time_ms DESC;
+        """
         return client.query(sql, on: loop).map { rows in
             rows.compactMap { row in
                 guard let wt = row.column("wait_type")?.string,
