@@ -103,8 +103,39 @@ extension SQLServerIndexClient {
         let escapedTableName = Self.escapeIdentifier(table)
         let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
-        
+
         let sql = "ALTER INDEX \(escapedIndexName) ON \(fullTableName) REORGANIZE"
+        _ = try await client.execute(sql)
+    }
+
+    @available(macOS 12.0, *)
+    public func disableIndex(name: String, table: String, schema: String = "dbo") async throws {
+        let escapedIndexName = Self.escapeIdentifier(name)
+        let escapedTableName = Self.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let fullTableName = "\(schemaPrefix)\(escapedTableName)"
+
+        let sql = "ALTER INDEX \(escapedIndexName) ON \(fullTableName) DISABLE"
+        _ = try await client.execute(sql)
+    }
+
+    @available(macOS 12.0, *)
+    public func rebuildAllIndexes(table: String, schema: String = "dbo") async throws {
+        let escapedTableName = Self.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let fullTableName = "\(schemaPrefix)\(escapedTableName)"
+
+        let sql = "ALTER INDEX ALL ON \(fullTableName) REBUILD"
+        _ = try await client.execute(sql)
+    }
+
+    @available(macOS 12.0, *)
+    public func reorganizeAllIndexes(table: String, schema: String = "dbo") async throws {
+        let escapedTableName = Self.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let fullTableName = "\(schemaPrefix)\(escapedTableName)"
+
+        let sql = "ALTER INDEX ALL ON \(fullTableName) REORGANIZE"
         _ = try await client.execute(sql)
     }
 }
