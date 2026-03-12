@@ -99,6 +99,38 @@ final class QueryTests: StandardTestBase, @unchecked Sendable {
         }
     }
 
+    func testDedicatedConnectionCanChangeDatabaseAndRelease() async throws {
+        try await withTemporaryDatabase(client: client, prefix: "echo") { dbName in
+            let connection = try await self.client.connection()
+            do {
+                try await connection.use(database: dbName)
+
+                let currentDb = try await connection.queryScalar("SELECT DB_NAME() AS db", as: String.self)
+                XCTAssertEqual(currentDb?.lowercased(), dbName.lowercased())
+
+                _ = try await connection.execute("""
+                    CREATE TABLE [dbo].[connection_scope] (
+                        [id] INT NOT NULL PRIMARY KEY,
+                        [name] NVARCHAR(50) NOT NULL
+                    )
+                """)
+
+                try await connection.insertRow(into: "connection_scope", values: [
+                    "id": .int(1),
+                    "name": .nString("scoped")
+                ])
+
+                let rows = try await connection.query("SELECT name FROM [dbo].[connection_scope]")
+                XCTAssertEqual(rows.first?.column("name")?.string, "scoped")
+            } catch {
+                try? await connection.close()
+                throw error
+            }
+
+            try await connection.close()
+        }
+    }
+
     func testObjectDefinitionReturnsViewDefinition() async throws {
         try await withTemporaryDatabase(client: client, prefix: "echo") { dbName in
             try await self.client.withDatabase(dbName) { connection in

@@ -24,6 +24,11 @@ extension SQLServerConnection {
         try await changeDatabase(database).get()
     }
 
+    @available(macOS 12.0, *)
+    public func use(database: String) async throws {
+        try await changeDatabase(database)
+    }
+
     internal func bootstrapSession() -> EventLoopFuture<Void> {
         let statements = configuration.sessionOptions.buildStatements()
         guard !statements.isEmpty else {
