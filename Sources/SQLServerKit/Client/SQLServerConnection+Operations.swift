@@ -215,6 +215,82 @@ extension SQLServerConnection {
         metadataClient.searchMetadata(query: query, database: database, schema: schema, scopes: scopes)
     }
 
+    // MARK: - Per-Type Search (internal ELF)
+
+    internal func searchTables(query: String, database: String? = nil, limit: Int = 50) -> EventLoopFuture<[TableSearchResult]> {
+        metadataClient.searchTables(query: query, database: database, limit: limit)
+    }
+
+    internal func searchViews(query: String, database: String? = nil, limit: Int = 50) -> EventLoopFuture<[ViewSearchResult]> {
+        metadataClient.searchViews(query: query, database: database, limit: limit)
+    }
+
+    internal func searchFunctions(query: String, database: String? = nil, limit: Int = 50) -> EventLoopFuture<[RoutineSearchResult]> {
+        metadataClient.searchFunctions(query: query, database: database, limit: limit)
+    }
+
+    internal func searchProcedures(query: String, database: String? = nil, limit: Int = 50) -> EventLoopFuture<[RoutineSearchResult]> {
+        metadataClient.searchProcedures(query: query, database: database, limit: limit)
+    }
+
+    internal func searchTriggers(query: String, database: String? = nil, limit: Int = 50) -> EventLoopFuture<[TriggerSearchResult]> {
+        metadataClient.searchTriggers(query: query, database: database, limit: limit)
+    }
+
+    internal func searchColumns(query: String, database: String? = nil, limit: Int = 50) -> EventLoopFuture<[ColumnSearchResult]> {
+        metadataClient.searchColumns(query: query, database: database, limit: limit)
+    }
+
+    internal func searchIndexes(query: String, database: String? = nil, limit: Int = 50) -> EventLoopFuture<[IndexSearchResult]> {
+        metadataClient.searchIndexes(query: query, database: database, limit: limit)
+    }
+
+    internal func searchForeignKeys(query: String, database: String? = nil, limit: Int = 50) -> EventLoopFuture<[ForeignKeySearchResult]> {
+        metadataClient.searchForeignKeys(query: query, database: database, limit: limit)
+    }
+
+    // MARK: - Per-Type Search (public async)
+
+    @available(macOS 12.0, *)
+    public func searchTables(query: String, database: String? = nil, limit: Int = 50) async throws -> [TableSearchResult] {
+        try await searchTables(query: query, database: database, limit: limit).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func searchViews(query: String, database: String? = nil, limit: Int = 50) async throws -> [ViewSearchResult] {
+        try await searchViews(query: query, database: database, limit: limit).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func searchFunctions(query: String, database: String? = nil, limit: Int = 50) async throws -> [RoutineSearchResult] {
+        try await searchFunctions(query: query, database: database, limit: limit).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func searchProcedures(query: String, database: String? = nil, limit: Int = 50) async throws -> [RoutineSearchResult] {
+        try await searchProcedures(query: query, database: database, limit: limit).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func searchTriggers(query: String, database: String? = nil, limit: Int = 50) async throws -> [TriggerSearchResult] {
+        try await searchTriggers(query: query, database: database, limit: limit).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func searchColumns(query: String, database: String? = nil, limit: Int = 50) async throws -> [ColumnSearchResult] {
+        try await searchColumns(query: query, database: database, limit: limit).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func searchIndexes(query: String, database: String? = nil, limit: Int = 50) async throws -> [IndexSearchResult] {
+        try await searchIndexes(query: query, database: database, limit: limit).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func searchForeignKeys(query: String, database: String? = nil, limit: Int = 50) async throws -> [ForeignKeySearchResult] {
+        try await searchForeignKeys(query: query, database: database, limit: limit).get()
+    }
+
     internal func serverVersion() -> EventLoopFuture<String> {
         metadataClient.serverVersion()
     }
