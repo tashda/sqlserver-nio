@@ -26,6 +26,18 @@ public struct SQLServerRow: Sendable {
     public var data: [SQLServerValue] {
         values
     }
+
+    internal func droppingLastColumn() -> SQLServerRow {
+        guard !base.columnMetadata.isEmpty, !base.columnData.isEmpty else {
+            return self
+        }
+        return SQLServerRow(
+            base: TDSRow(
+                columnMetadata: Array(base.columnMetadata.dropLast()),
+                columnData: Array(base.columnData.dropLast())
+            )
+        )
+    }
 }
 
 public struct SQLServerColumn: Sendable {

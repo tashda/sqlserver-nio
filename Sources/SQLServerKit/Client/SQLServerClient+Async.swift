@@ -5,6 +5,32 @@ import SQLServerTDS
 
 extension SQLServerClient {
     @available(macOS 12.0, *)
+    public func withDatabase<Result: Sendable>(
+        _ database: String,
+        _ operation: @escaping @Sendable (SQLServerConnection) async throws -> Result
+    ) async throws -> Result {
+        try await withConnection { connection in
+            let originalDatabase = connection.currentDatabase
+            let needsReset = originalDatabase.caseInsensitiveCompare(database) != .orderedSame
+            if needsReset {
+                _ = try await connection.changeDatabase(database)
+            }
+            do {
+                let result = try await operation(connection)
+                if needsReset {
+                    _ = try await connection.changeDatabase(originalDatabase)
+                }
+                return result
+            } catch {
+                if needsReset {
+                    _ = try? await connection.changeDatabase(originalDatabase)
+                }
+                throw error
+            }
+        }
+    }
+
+    @available(macOS 12.0, *)
     public func withConnection<Result: Sendable>(
         on eventLoop: EventLoop? = nil,
         _ operation: @escaping @Sendable (SQLServerConnection) async throws -> Result
@@ -82,6 +108,18 @@ extension SQLServerClient {
     ) async throws -> [SQLServerRow] {
         try await withConnection(on: eventLoop) { connection in
             try await connection.query(sql)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func queryPaged(
+        _ sql: String,
+        limit: Int,
+        offset: Int = 0,
+        on eventLoop: EventLoop? = nil
+    ) async throws -> [SQLServerRow] {
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.queryPaged(sql, limit: limit, offset: offset)
         }
     }
 

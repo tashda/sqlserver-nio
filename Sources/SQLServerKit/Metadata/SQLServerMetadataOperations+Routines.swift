@@ -5,6 +5,16 @@ import SQLServerTDS
 extension SQLServerMetadataOperations {
     // MARK: - Procedures & Functions
 
+    public func objectDefinition(
+        database: String? = nil,
+        schema: String,
+        name: String,
+        kind: SQLServerMetadataObjectIdentifier.Kind
+    ) -> EventLoopFuture<ObjectDefinition?> {
+        let identifier = SQLServerMetadataObjectIdentifier(database: database, schema: schema, name: name, kind: kind)
+        return fetchObjectDefinitions([identifier]).map(\.first)
+    }
+
     public func listProcedures(
         database: String? = nil,
         schema: String? = nil,
