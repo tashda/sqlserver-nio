@@ -5,12 +5,14 @@ import NIOConcurrencyHelpers
 import SQLServerTDS
 
 public final class SQLServerClient: @unchecked Sendable {
+    @available(*, deprecated, message: "Use async connect(configuration:logger:) instead.")
     public enum EventLoopGroupProvider {
         case shared(EventLoopGroup)
         case createNew(numberOfThreads: Int)
     }
 
     public let configuration: Configuration
+    @available(*, deprecated, message: "Event loops are an implementation detail. Use the async API instead.")
     public let eventLoopGroup: EventLoopGroup
     internal let ownsEventLoopGroup: Bool
     internal let pool: SQLServerConnectionPool
@@ -23,6 +25,18 @@ public final class SQLServerClient: @unchecked Sendable {
     internal var inFlightOperations: Int = 0
     internal var drainWaiters: [EventLoopPromise<Void>] = []
 
+    public static func connect(
+        configuration: Configuration,
+        logger: Logger = Logger(label: "tds.sqlserver.client")
+    ) async throws -> SQLServerClient {
+        try await connect(
+            configuration: configuration,
+            eventLoopGroupProvider: .createNew(numberOfThreads: System.coreCount),
+            logger: logger
+        ).get()
+    }
+
+    @available(*, deprecated, message: "Use async connect(configuration:logger:) instead.")
     public static func connect(
         configuration: Configuration,
         eventLoopGroupProvider: EventLoopGroupProvider = .createNew(numberOfThreads: System.coreCount),
@@ -162,6 +176,11 @@ public final class SQLServerClient: @unchecked Sendable {
         }
     }
 
+    public func shutdownGracefully() async throws {
+        try await shutdownGracefully().get()
+    }
+
+    @available(*, deprecated, message: "Use async shutdownGracefully() instead.")
     public func shutdownGracefully() -> EventLoopFuture<Void> {
         let loop = eventLoopGroup.next()
         var already = false

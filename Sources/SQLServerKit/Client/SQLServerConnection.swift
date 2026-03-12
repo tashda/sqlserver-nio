@@ -72,6 +72,18 @@ public final class SQLServerConnection: @unchecked Sendable {
 
     public static func connect(
         configuration: Configuration,
+        logger: Logger = Logger(label: "tds.sqlserver.connection")
+    ) async throws -> SQLServerConnection {
+        try await connect(
+            configuration: configuration,
+            eventLoopGroupProvider: .createNew(numberOfThreads: System.coreCount),
+            logger: logger
+        ).get()
+    }
+
+    @available(*, deprecated, message: "Use async connect(configuration:logger:) instead.")
+    public static func connect(
+        configuration: Configuration,
         eventLoopGroupProvider: SQLServerClient.EventLoopGroupProvider = .createNew(numberOfThreads: System.coreCount),
         logger: Logger = Logger(label: "tds.sqlserver.connection")
     ) -> EventLoopFuture<SQLServerConnection> {
@@ -103,6 +115,7 @@ public final class SQLServerConnection: @unchecked Sendable {
         return fut
     }
 
+    @available(*, deprecated, message: "Use async connect(configuration:logger:) instead.")
     public static func connect(
         configuration: Configuration,
         on eventLoop: EventLoop,
@@ -233,6 +246,7 @@ public final class SQLServerConnection: @unchecked Sendable {
         )
     }
 
+    @available(*, deprecated, message: "Use async close() instead.")
     public func close() -> EventLoopFuture<Void> {
         let shouldClose = stateLock.withLock { () -> Bool in
             if _isClosed {
@@ -262,6 +276,10 @@ public final class SQLServerConnection: @unchecked Sendable {
         } else {
             return release(true).flatMap { _ in self.shutdownGroupIfNeeded() }
         }
+    }
+
+    public func close() async throws {
+        try await close().get()
     }
 
     @available(macOS 12.0, *)
