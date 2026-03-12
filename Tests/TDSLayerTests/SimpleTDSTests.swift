@@ -6,7 +6,7 @@ import Logging
 
 /// Simple TDS Layer Tests - Basic Working Tests
 /// Tests fundamental TDS functionality using SQLServerClient against live database
-final class SimpleTDSTests: StandardTestBase {
+final class SimpleTDSTests: StandardTestBase, @unchecked Sendable {
 
     // MARK: - Basic Connection Test
 

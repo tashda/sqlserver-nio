@@ -3,8 +3,7 @@ import XCTest
 import SQLServerKitTesting
 import Foundation
 
-final class SQLServerMetadataCommentsTests: XCTestCase {
-    var group: EventLoopGroup!
+final class SQLServerMetadataCommentsTests: XCTestCase, @unchecked Sendable {
     var client: SQLServerClient!
 
     private var adminClient: SQLServerAdministrationClient!
@@ -19,19 +18,14 @@ final class SQLServerMetadataCommentsTests: XCTestCase {
         _ = isLoggingConfigured
 
         // Create connection
-        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        self.client = try await SQLServerClient.connect(
-            configuration: makeSQLServerClientConfiguration(),
-            eventLoopGroupProvider: .shared(group)
-        ).get()
+        self.client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
 
         self.adminClient = SQLServerAdministrationClient(client: client)
     }
 
     override func tearDown() async throws {
         // Clean up connections first
-        try await client?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
+        try? await client?.shutdownGracefully()
 
         self.adminClient = nil
         try await super.tearDown()
@@ -46,25 +40,24 @@ final class SQLServerMetadataCommentsTests: XCTestCase {
                 .init(name: "flag", definition: .standard(.init(dataType: .bit)))
             ]
             let tableName = "t_\(UUID().uuidString.prefix(8))"
-            // Use admin client helper which persists comments via extended properties
-            try await withDbConnection(client: self.client, database: db) { conn in
-                _ = try await conn.execute("IF OBJECT_ID(N'dbo.\(tableName)', 'U') IS NOT NULL DROP TABLE [dbo].[\(tableName)]").get()
-            }
-            try await withDbClient(for: db, using: self.group) { dbClient in
+            try await withDbClient(for: db) { dbClient in
                 let admin = SQLServerAdministrationClient(client: dbClient)
+                if try await dbClient.queryScalar("SELECT OBJECT_ID(N'dbo.\(tableName)', N'U')", as: Int.self) != nil {
+                    try await admin.dropTable(name: tableName)
+                }
                 try await admin.createTable(name: tableName, columns: cols)
                 try await admin.addTableComment(tableName: tableName, comment: "Table comment for \(tableName)")
             }
 
             // Verify listTables without comments does not hydrate
             let noCommentTables = try await withDbConnection(client: self.client, database: db) { conn in
-                try await conn.listTables(schema: "dbo").get()
+                try await conn.listTables(schema: "dbo")
             }
             XCTAssertTrue(noCommentTables.contains { $0.name == tableName && $0.comment == nil })
 
             // Verify listTables with comments includes table comment
             let tables = try await withDbConnection(client: self.client, database: db) { conn in
-                try await conn.listTables(schema: "dbo", includeComments: true).get()
+                try await conn.listTables(schema: "dbo", includeComments: true)
             }
             guard let t = tables.first(where: { $0.name == tableName }) else {
                 XCTFail("Expected table returned by listTables")
@@ -74,7 +67,7 @@ final class SQLServerMetadataCommentsTests: XCTestCase {
 
             // Verify listColumns returns column comments when requested
             let colsWithComments = try await withDbConnection(client: self.client, database: db) { conn in
-                try await conn.listColumns(schema: "dbo", table: tableName, includeComments: true).get()
+                try await conn.listColumns(schema: "dbo", table: tableName, includeComments: true)
             }
             XCTAssertEqual(colsWithComments.count, 3)
             XCTAssertEqual(colsWithComments.first(where: { $0.name == "id" })?.comment, "Primary key")
@@ -83,7 +76,7 @@ final class SQLServerMetadataCommentsTests: XCTestCase {
 
             // And without includeComments they should be nil
             let colsNoComments = try await withDbConnection(client: self.client, database: db) { conn in
-                try await conn.listColumns(schema: "dbo", table: tableName).get()
+                try await conn.listColumns(schema: "dbo", table: tableName)
             }
             XCTAssertTrue(colsNoComments.allSatisfy { $0.comment == nil })
         }
@@ -93,8 +86,18 @@ final class SQLServerMetadataCommentsTests: XCTestCase {
         try await withTemporaryDatabase(client: self.client, prefix: "cmtv") { db in
             let table = "src_\(UUID().uuidString.prefix(8))"
             let view = "v_\(UUID().uuidString.prefix(8))"
-            _ = try await executeInDb(client: self.client, database: db, "CREATE TABLE [dbo].[\(table)](id INT NOT NULL, name NVARCHAR(40) NOT NULL)")
-            _ = try await executeInDb(client: self.client, database: db, "CREATE VIEW [dbo].[\(view)] AS SELECT id, name FROM [dbo].[\(table)]")
+            try await withDbClient(for: db) { dbClient in
+                let admin = SQLServerAdministrationClient(client: dbClient)
+                let views = SQLServerViewClient(client: dbClient)
+                try await admin.createTable(
+                    name: table,
+                    columns: [
+                        .init(name: "id", definition: .standard(.init(dataType: .int, isNullable: false))),
+                        .init(name: "name", definition: .standard(.init(dataType: .nvarchar(length: .length(40)), isNullable: false)))
+                    ]
+                )
+                try await views.createView(name: view, query: "SELECT id, name FROM [dbo].[\(table)]")
+            }
 
             // Add MS_Description to view and one of its columns
             let addViewComment = """
@@ -104,7 +107,7 @@ final class SQLServerMetadataCommentsTests: XCTestCase {
             _ = try await executeInDb(client: self.client, database: db, addViewComment)
 
             let cols = try await withDbConnection(client: self.client, database: db) { conn in
-                try await conn.listColumns(schema: "dbo", table: view, includeComments: true).get()
+                try await conn.listColumns(schema: "dbo", table: view, includeComments: true)
             }
             XCTAssertEqual(cols.first(where: { $0.name == "id" })?.comment, "Identifier")
             // name column not annotated
@@ -120,10 +123,24 @@ final class SQLServerMetadataCommentsTests: XCTestCase {
             let funcName = "f_\(UUID().uuidString.prefix(8))"
             let trig = "tr_\(UUID().uuidString.prefix(8))"
 
-            _ = try await executeInDb(client: self.client, database: db, "CREATE TABLE [dbo].[\(table)](id INT NOT NULL PRIMARY KEY)")
-            _ = try await executeInDb(client: self.client, database: db, "CREATE PROCEDURE [dbo].[\(proc)] AS BEGIN SET NOCOUNT ON; SELECT 1; END")
-            _ = try await executeInDb(client: self.client, database: db, "CREATE FUNCTION [dbo].[\(funcName)]() RETURNS INT AS BEGIN RETURN 1 END")
-            _ = try await executeInDb(client: self.client, database: db, "CREATE TRIGGER [dbo].[\(trig)] ON [dbo].[\(table)] AFTER INSERT AS BEGIN SET NOCOUNT ON; END")
+            try await withDbClient(for: db) { dbClient in
+                let admin = SQLServerAdministrationClient(client: dbClient)
+                let routines = SQLServerRoutineClient(client: dbClient)
+                let triggers = SQLServerTriggerClient(client: dbClient)
+                try await admin.createTable(
+                    name: table,
+                    columns: [.init(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true)))]
+                )
+                try await routines.createStoredProcedure(name: proc, body: "BEGIN SET NOCOUNT ON; SELECT 1; END")
+                try await routines.createFunction(name: funcName, returnType: .int, body: "BEGIN RETURN 1 END")
+                try await triggers.createTrigger(
+                    name: trig,
+                    table: table,
+                    timing: .after,
+                    events: [.insert],
+                    body: "BEGIN SET NOCOUNT ON; END"
+                )
+            }
 
             // Add MS_Description to each
             let addComments = """
@@ -135,9 +152,9 @@ final class SQLServerMetadataCommentsTests: XCTestCase {
 
             // Use single connection for all operations to prevent thread switching
             let results = try await withDbConnection(client: self.client, database: db) { conn in
-                let procs = try await conn.listProcedures(schema: "dbo", includeComments: true).get()
-                let funcs = try await conn.listFunctions(schema: "dbo", includeComments: true).get()
-                let trigs = try await conn.listTriggers(schema: "dbo", table: table, includeComments: true).get()
+                let procs = try await conn.listProcedures(schema: "dbo", includeComments: true)
+                let funcs = try await conn.listFunctions(schema: "dbo", includeComments: true)
+                let trigs = try await conn.listTriggers(schema: "dbo", table: table, includeComments: true)
                 return (procs: procs, funcs: funcs, trigs: trigs)
             }
 

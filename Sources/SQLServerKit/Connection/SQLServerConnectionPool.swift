@@ -2,20 +2,21 @@ import NIO
 import NIOEmbedded
 import NIOCore
 import NIOConcurrencyHelpers
+import Foundation
 import Logging
 import SQLServerTDS
 
-public final class SQLServerConnectionPool {
-    public struct Configuration {
+public final class SQLServerConnectionPool: @unchecked Sendable {
+    public struct Configuration: Sendable {
         public var maximumConcurrentConnections: Int
         public var minimumIdleConnections: Int
-        public var connectionIdleTimeout: TimeAmount?
+        public var connectionIdleTimeout: TimeInterval?
         public var validationQuery: String?
 
         public init(
             maximumConcurrentConnections: Int = 8,
             minimumIdleConnections: Int = 0,
-            connectionIdleTimeout: TimeAmount? = nil,
+            connectionIdleTimeout: TimeInterval? = nil,
             validationQuery: String? = nil
         ) {
             precondition(maximumConcurrentConnections > 0, "maximumConcurrentConnections must be positive")
@@ -43,7 +44,7 @@ public final class SQLServerConnectionPool {
         var idleTask: Scheduled<Void>?
     }
 
-    public final class PooledConnection {
+    public final class PooledConnection: @unchecked Sendable {
         fileprivate let connection: TDSConnection
         fileprivate unowned let pool: SQLServerConnectionPool
         private let releaseLock = NIOLock()
@@ -54,12 +55,12 @@ public final class SQLServerConnectionPool {
             self.pool = pool
         }
 
-        public var base: TDSConnection {
+        internal var base: TDSConnection {
             connection
         }
 
         @discardableResult
-        public func release(close: Bool = false) -> EventLoopFuture<Void> {
+        internal func release(close: Bool = false) -> EventLoopFuture<Void> {
             let alreadyReleased = releaseLock.withLock { () -> Bool in
                 if released {
                     return true
@@ -103,12 +104,13 @@ public final class SQLServerConnectionPool {
     private let connectionFactory: (EventLoop) -> EventLoopFuture<TDSConnection>
     private let lock = NIOLock()
     private var idle: [IdleConnection] = []
+    private var leased: [Swift.ObjectIdentifier: TDSConnection] = [:]
     private var waiters = CircularBuffer<PoolRequest>()
     private var activeConnections = 0
     private var isShuttingDown = false
     private let logger: Logger
 
-    public init(
+    internal init(
         configuration: Configuration,
         eventLoopGroup: EventLoopGroup,
         logger: Logger = Logger(label: "tds.sqlserver.pool"),
@@ -122,7 +124,7 @@ public final class SQLServerConnectionPool {
         // mirroring SSMS/JDBC behavior where connections are created on demand.
     }
 
-    public func checkout(on eventLoop: EventLoop? = nil) -> EventLoopFuture<PooledConnection> {
+    internal func checkout(on eventLoop: EventLoop? = nil) -> EventLoopFuture<PooledConnection> {
         let targetLoop = eventLoop ?? eventLoopGroup.next()
         let promise = targetLoop.makePromise(of: TDSConnection.self)
         let request = PoolRequest(promise: promise, eventLoop: targetLoop)
@@ -133,9 +135,9 @@ public final class SQLServerConnectionPool {
     }
 
     @discardableResult
-    public func withConnection<Result>(
+    internal func withConnection<Result: Sendable>(
         on eventLoop: EventLoop? = nil,
-        _ closure: @escaping (TDSConnection) -> EventLoopFuture<Result>
+        _ closure: @Sendable @escaping (TDSConnection) -> EventLoopFuture<Result>
     ) -> EventLoopFuture<Result> {
         return checkout(on: eventLoop).flatMap { pooled in
             let connection = pooled.base
@@ -147,7 +149,7 @@ public final class SQLServerConnectionPool {
         }
     }
 
-    public func shutdownGracefully() -> EventLoopFuture<Void> {
+    internal func shutdownGracefully() -> EventLoopFuture<Void> {
         var connectionsToClose: [TDSConnection] = []
         var waiting: [PoolRequest] = []
         var alreadyShuttingDown = false
@@ -159,8 +161,10 @@ public final class SQLServerConnectionPool {
             }
             isShuttingDown = true
             connectionsToClose = idle.map { $0.connection }
+            connectionsToClose.append(contentsOf: leased.values)
             idle.forEach { $0.idleTask?.cancel() }
             idle.removeAll(keepingCapacity: true)
+            leased.removeAll(keepingCapacity: true)
             waiting = Array(waiters)
             waiters.removeAll(keepingCapacity: true)
         }
@@ -192,6 +196,17 @@ public final class SQLServerConnectionPool {
         }
     }
 
+    internal func statusSnapshot() -> SQLServerConnectionPoolStatus {
+        lock.withLock {
+            SQLServerConnectionPoolStatus(
+                active: activeConnections,
+                idle: idle.count,
+                waiting: waiters.count,
+                isShuttingDown: isShuttingDown
+            )
+        }
+    }
+
     private func makeImmediateSucceededFuture(on group: EventLoopGroup) -> EventLoopFuture<Void> {
         // Always use a real event loop from the group to avoid EmbeddedEventLoop thread safety issues
         let loop = group.next()
@@ -207,6 +222,7 @@ public final class SQLServerConnectionPool {
             if !idle.isEmpty {
                 let entry = idle.removeLast()
                 entry.idleTask?.cancel()
+                leased[Swift.ObjectIdentifier(entry.connection)] = entry.connection
                 return .succeed(request: request, connection: entry.connection)
             }
 
@@ -226,6 +242,7 @@ public final class SQLServerConnectionPool {
         var shouldEnsure = false
 
         let action: Action = lock.withLock {
+            leased.removeValue(forKey: Swift.ObjectIdentifier(connection))
             if isShuttingDown {
                 activeConnections = max(0, activeConnections - 1)
                 return .close(connection: connection)
@@ -242,6 +259,7 @@ public final class SQLServerConnectionPool {
             }
 
             if let waiter = waiters.popFirst() {
+                leased[Swift.ObjectIdentifier(connection)] = connection
                 return .succeed(request: waiter, connection: connection)
             }
 
@@ -282,7 +300,7 @@ public final class SQLServerConnectionPool {
         guard let timeout = configuration.connectionIdleTimeout else {
             return nil
         }
-        return connection.eventLoop.scheduleTask(deadline: .now() + timeout) { [weak self, weak connection] in
+        return connection.eventLoop.scheduleTask(in: timeout.nioTimeAmount) { [weak self, weak connection] in
             guard let self = self, let connection = connection else { return }
             self.expireIdleConnection(connection)
         }
@@ -344,6 +362,7 @@ public final class SQLServerConnectionPool {
                         shouldClose = true
                     } else if let request = self.waiters.popFirst() {
                         waiter = request
+                        self.leased[Swift.ObjectIdentifier(connection)] = connection
                     } else {
                         let task = self.scheduleIdleClose(for: connection)
                         self.idle.append(IdleConnection(connection: connection, idleTask: task))
@@ -400,6 +419,9 @@ public final class SQLServerConnectionPool {
     }
 
     private func deliver(connection: TDSConnection, to request: PoolRequest) {
+        self.lock.withLock {
+            self.leased[Swift.ObjectIdentifier(connection)] = connection
+        }
         if let validationQuery = configuration.validationQuery {
             connection.rawSql(validationQuery).whenComplete { result in
                 switch result {
@@ -409,6 +431,7 @@ public final class SQLServerConnectionPool {
                     self.logger.warning("Validation query failed: \(error)")
                     _ = connection.close()
                     self.lock.withLock {
+                        self.leased.removeValue(forKey: Swift.ObjectIdentifier(connection))
                         self.activeConnections = max(0, self.activeConnections - 1)
                     }
                     self.process(request: request)

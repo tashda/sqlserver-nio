@@ -27,7 +27,7 @@ public struct ViewOptions: Sendable {
 
 // MARK: - SQLServerViewClient
 
-public final class SQLServerViewClient {
+public final class SQLServerViewClient: @unchecked Sendable {
     private let client: SQLServerClient
     
     public init(client: SQLServerClient) {
@@ -89,7 +89,7 @@ public final class SQLServerViewClient {
         _ = try await client.execute(sql)
     }
     
-    public func dropView(name: String, schema: String = "dbo") -> EventLoopFuture<Void> {
+    internal func dropView(name: String, schema: String = "dbo") -> EventLoopFuture<Void> {
         let promise = client.eventLoopGroup.next().makePromise(of: Void.self)
         if #available(macOS 12.0, *) {
             promise.completeWithTask {

@@ -2,7 +2,7 @@ import XCTest
 @testable import SQLServerTDS
 import NIO
 
-final class TDSTokenParserVarlenNullTests: XCTestCase {
+final class TDSTokenOperationsVarlenNullTests: XCTestCase, @unchecked Sendable {
     private func makeMeta() -> TDSTokens.ColMetadataToken {
         let col0 = TDSTokens.ColMetadataToken.ColumnData(
             userType: 0,
@@ -57,7 +57,7 @@ final class TDSTokenParserVarlenNullTests: XCTestCase {
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
         parser.colMetadata = makeMeta()
 
         let row = try XCTUnwrap(parser.parseRowToken())
@@ -109,7 +109,7 @@ final class TDSTokenParserVarlenNullTests: XCTestCase {
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
         parser.colMetadata = meta
 
         let row = try XCTUnwrap(parser.parseRowToken())

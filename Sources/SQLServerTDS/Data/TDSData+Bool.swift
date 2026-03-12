@@ -1,7 +1,4 @@
-import NIO
-
-/// Bit
-/// https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/76425d61-416d-4c64-a60b-06072f83e180
+import NIOCore
 
 extension TDSData {
     public init(bool: Bool) {
@@ -14,36 +11,27 @@ extension TDSData {
         if self.metadata.dataType == .sqlVariant {
             return self.sqlVariantResolved()?.bool
         }
+
         guard var value = self.value else {
             return nil
         }
-        guard value.readableBytes == 1 else {
-            return nil
-        }
-        guard let byte = value.readInteger(as: UInt8.self) else {
-            return nil
-        }
-        if byte == 0 {
-            return false
-        } else {
-            return true
-        }
-    }
-}
 
-extension TDSData: ExpressibleByBooleanLiteral {
-    public init(booleanLiteral value: Bool) {
-        self.init(bool: value)
+        switch self.metadata.dataType {
+        case .bit, .bitn, .tinyInt:
+            guard value.readableBytes == 1,
+                  let byte = value.readInteger(as: UInt8.self) else {
+                return nil
+            }
+            return byte != 0
+        default:
+            return nil
+        }
     }
 }
 
 extension Bool: TDSDataConvertible {
-    public static var tdsMetadata: Metadata {
+    public static var tdsMetadata: any Metadata {
         return TypeMetadata(dataType: .bit)
-    }
-
-    public var tdsData: TDSData? {
-        return .init(bool: self)
     }
 
     public init?(tdsData: TDSData) {
@@ -51,5 +39,9 @@ extension Bool: TDSDataConvertible {
             return nil
         }
         self = bool
+    }
+
+    public var tdsData: TDSData? {
+        return .init(bool: self)
     }
 }

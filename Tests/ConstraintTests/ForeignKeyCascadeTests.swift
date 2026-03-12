@@ -1,45 +1,25 @@
 @testable import SQLServerKit
 import SQLServerKitTesting
 import XCTest
-import NIO
 import Logging
 
-final class SQLServerForeignKeyCascadeMatrixTests: XCTestCase {
-    var group: EventLoopGroup!
+final class SQLServerForeignKeyCascadeMatrixTests: XCTestCase, @unchecked Sendable {
     var client: SQLServerClient!
-    private var skipDueToEnv = false
-
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
-        group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).get()
-        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1").get() } } catch { skipDueToEnv = true }
+        TestEnvironmentManager.loadEnvironmentVariables()
+        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
+        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1") } } catch { throw error }
     }
 
     override func tearDown() async throws {
-        do {
-            try await client?.shutdownGracefully().get()
-        } catch {
-            // Silently ignore "Already closed" errors during shutdown - they're expected under stress
-            if error.localizedDescription.contains("Already closed") ||
-               error.localizedDescription.contains("ChannelError error 6") {
-                // Both errors are expected during EventLoop shutdown
-            } else {
-                throw error
-            }
-        }
-
-        if let g = group {
-            _ = try? await SQLServerClient.shutdownEventLoopGroup(g).get()
-        }
+        try? await client?.shutdownGracefully()
     }
 
     @available(macOS 12.0, *)
     func testForeignKeyCascadeMatrix() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         try await withTemporaryDatabase(client: self.client, prefix: "fkmx") { db in
-            try await withDbClient(for: db, using: self.group) { dbClient in
+            try await withDbClient(for: db) { dbClient in
                 let parent = "fk_parent_\(UUID().uuidString.prefix(6))"
                 let child = "fk_child_\(UUID().uuidString.prefix(6))"
 
@@ -64,12 +44,12 @@ final class SQLServerForeignKeyCascadeMatrixTests: XCTestCase {
                     let expectNullOnDelete: Bool
                     let expectDefaultOnDelete: Bool
                 }
-                var cases: [Case] = [
+                let cases: [Case] = [
                     Case(del: .noAction, upd: .noAction, expectNullOnDelete: false, expectDefaultOnDelete: false),
                     Case(del: .cascade, upd: .noAction, expectNullOnDelete: false, expectDefaultOnDelete: false),
                     Case(del: .setNull, upd: .noAction, expectNullOnDelete: true, expectDefaultOnDelete: false),
+                    Case(del: .setDefault, upd: .noAction, expectNullOnDelete: false, expectDefaultOnDelete: true),
                 ]
-                cases.append(Case(del: .setDefault, upd: .noAction, expectNullOnDelete: false, expectDefaultOnDelete: true))
 
                 try await withDbConnection(client: dbClient, database: db) { connection in
                     for (i, c) in cases.enumerated() {
@@ -87,10 +67,10 @@ final class SQLServerForeignKeyCascadeMatrixTests: XCTestCase {
                         }
 
                         // Clear all data from both tables
-                        _ = try await connection.execute("DELETE FROM [dbo].[\(child)]").get()
-                        _ = try await connection.execute("DELETE FROM [dbo].[\(parent)]").get()
+                        try await connection.deleteRows(from: child)
+                        try await connection.deleteRows(from: parent)
                         // Maintain a default parent row so SET DEFAULT actions target a valid key
-                        _ = try await connection.execute("INSERT INTO [dbo].[\(parent)](id) VALUES (0)").get()
+                        try await connection.insertRow(into: parent, values: ["id": .int(0)])
 
                         // Create the foreign key constraint with proper options
                         let options = ForeignKeyOptions(onDelete: c.del, onUpdate: c.upd)
@@ -104,19 +84,19 @@ final class SQLServerForeignKeyCascadeMatrixTests: XCTestCase {
                         )
 
                         // Insert test data
-                        _ = try await connection.execute("INSERT INTO [dbo].[\(parent)](id) VALUES (1)").get()
-                        _ = try await connection.execute("INSERT INTO [dbo].[\(child)](id, pid, v) VALUES (11, 1, N'x')").get()
+                        try await connection.insertRow(into: parent, values: ["id": .int(1)])
+                        try await connection.insertRow(into: child, values: ["id": .int(11), "pid": .int(1), "v": .nString("x")])
 
                         // Delete parent; for NO ACTION we expect a failure
                         if c.del == .noAction {
                             do {
-                                _ = try await connection.execute("DELETE FROM [dbo].[\(parent)] WHERE id = 1").get()
+                                try await connection.deleteRows(from: parent, where: "id = 1")
                                 XCTFail("Expected NO ACTION delete to fail due to FK constraint")
                             } catch {
                                 // expected — continue
                             }
                         } else {
-                            _ = try await connection.execute("DELETE FROM [dbo].[\(parent)] WHERE id = 1").get()
+                            try await connection.deleteRows(from: parent, where: "id = 1")
                         }
 
                         // Check child table results

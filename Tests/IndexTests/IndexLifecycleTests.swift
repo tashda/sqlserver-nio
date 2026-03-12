@@ -1,43 +1,36 @@
 import XCTest
 import Logging
-import NIO
 @testable import SQLServerKit
 import SQLServerKitTesting
 
-final class SQLServerIndexTests: XCTestCase {
-    private var group: EventLoopGroup!
+final class SQLServerIndexTests: XCTestCase, @unchecked Sendable {
     private var baseClient: SQLServerClient!
     private var client: SQLServerClient!
     private var indexClient: SQLServerIndexClient!
     private var adminClient: SQLServerAdministrationClient!
     private var testDatabase: String!
-    private var skipDueToEnv = false
-
-    private var eventLoop: EventLoop { self.group.next() }
 
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
         TestEnvironmentManager.loadEnvironmentVariables()
-        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        self.baseClient = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).get()
-        do {
-            _ = try await withTimeout(5) { try await self.baseClient.query("SELECT 1").get() }
-        } catch {
-            skipDueToEnv = true
-            return
-        }
+        self.baseClient = try await SQLServerClient.connect(
+            configuration: makeSQLServerClientConfiguration(),
+            numberOfThreads: 1
+        )
+        _ = try await withTimeout(5) { try await self.baseClient.query("SELECT 1") }
         testDatabase = try await createTemporaryDatabase(client: baseClient, prefix: "idx")
-        self.client = try await makeClient(forDatabase: testDatabase, using: group)
+        self.client = try await makeClient(forDatabase: testDatabase)
         self.adminClient = SQLServerAdministrationClient(client: self.client)
         self.indexClient = SQLServerIndexClient(client: self.client)
     }
 
     override func tearDown() async throws {
-        try? await client?.shutdownGracefully().get()
+        try? await client?.shutdownGracefully()
         if let db = testDatabase { try? await dropTemporaryDatabase(client: baseClient, name: db) }
-        try await baseClient?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
-        testDatabase = nil; group = nil
+        try? await baseClient?.shutdownGracefully()
+        testDatabase = nil
+        client = nil
+        baseClient = nil
     }
 
     // MARK: - Helper Methods
@@ -55,24 +48,59 @@ final class SQLServerIndexTests: XCTestCase {
             columns[0] = SQLServerColumnDefinition(name: "id", definition: .standard(.init(dataType: .int)))
         }
 
-        try await withTimeout(15) { try await self.adminClient.createTable(name: name, columns: columns) }
+        let tableColumns = columns
+        try await withTimeout(15) { try await self.adminClient.createTable(name: name, columns: tableColumns) }
 
-        // Insert some test data
-        let insertSql = """
-        INSERT INTO [\(name)] (id, name, email, age, created_date) VALUES
-        (1, N'John Doe', N'john@example.com', 30, '2023-01-01 10:00:00'),
-        (2, N'Jane Smith', N'jane@example.com', 25, '2023-01-02 11:00:00'),
-        (3, N'Bob Johnson', N'bob@example.com', 35, '2023-01-03 12:00:00'),
-        (4, N'Alice Brown', N'alice@example.com', 28, '2023-01-04 13:00:00'),
-        (5, N'Charlie Wilson', N'charlie@example.com', 32, '2023-01-05 14:00:00')
-        """
-        _ = try await self.client.execute(insertSql)
+        let seedRows: [[String: SQLServerLiteralValue]] = [
+            [
+                "id": .int(1),
+                "name": .nString("John Doe"),
+                "email": .nString("john@example.com"),
+                "age": .int(30),
+                "created_date": .raw("'2023-01-01 10:00:00'")
+            ],
+            [
+                "id": .int(2),
+                "name": .nString("Jane Smith"),
+                "email": .nString("jane@example.com"),
+                "age": .int(25),
+                "created_date": .raw("'2023-01-02 11:00:00'")
+            ],
+            [
+                "id": .int(3),
+                "name": .nString("Bob Johnson"),
+                "email": .nString("bob@example.com"),
+                "age": .int(35),
+                "created_date": .raw("'2023-01-03 12:00:00'")
+            ],
+            [
+                "id": .int(4),
+                "name": .nString("Alice Brown"),
+                "email": .nString("alice@example.com"),
+                "age": .int(28),
+                "created_date": .raw("'2023-01-04 13:00:00'")
+            ],
+            [
+                "id": .int(5),
+                "name": .nString("Charlie Wilson"),
+                "email": .nString("charlie@example.com"),
+                "age": .int(32),
+                "created_date": .raw("'2023-01-05 14:00:00'")
+            ]
+        ]
+
+        try await withTimeout(15) {
+            try await self.client.withConnection { connection in
+                for row in seedRows {
+                    try await connection.insertRow(into: name, values: row)
+                }
+            }
+        }
     }
 
     // MARK: - Basic Index Tests
 
     func testCreateSimpleIndex() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let tableName = "test_index_table_\(UUID().uuidString.prefix(8))"
         let indexName = "IX_\(tableName)_name"
 
@@ -90,7 +118,6 @@ final class SQLServerIndexTests: XCTestCase {
     }
 
     func testCreateIndexWithMultipleColumns() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let tableName = "test_multi_index_table_\(UUID().uuidString.prefix(8))"
         let indexName = "IX_\(tableName)_name_age"
 
@@ -115,7 +142,6 @@ final class SQLServerIndexTests: XCTestCase {
     }
 
     func testCreateIndexWithIncludedColumns() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let tableName = "test_included_index_table_\(UUID().uuidString.prefix(8))"
         let indexName = "IX_\(tableName)_name_incl_email"
 
@@ -140,7 +166,6 @@ final class SQLServerIndexTests: XCTestCase {
     }
 
     func testCreateUniqueIndex() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let tableName = "test_unique_index_table_\(UUID().uuidString.prefix(8))"
         let indexName = "IX_\(tableName)_email_unique"
 
@@ -156,7 +181,15 @@ final class SQLServerIndexTests: XCTestCase {
         XCTAssertNotNil(indexInfo, "Should retrieve index info")
 
         do {
-            _ = try await self.client.execute("INSERT INTO [\(tableName)] (id, name, email, age, created_date) VALUES (6, N'Test User', N'john@example.com', 40, '2023-01-06 15:00:00')")
+            try await self.client.withConnection { connection in
+                try await connection.insertRow(into: tableName, values: [
+                    "id": .int(6),
+                    "name": .nString("Test User"),
+                    "email": .nString("john@example.com"),
+                    "age": .int(40),
+                    "created_date": .raw("'2023-01-06 15:00:00'")
+                ])
+            }
             XCTFail("Inserting duplicate email should have failed due to unique index")
         } catch {
             XCTAssertTrue(error is SQLServerError)
@@ -164,7 +197,6 @@ final class SQLServerIndexTests: XCTestCase {
     }
 
     func testCreateClusteredIndex() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let tableName = "test_clustered_index_table_\(UUID().uuidString.prefix(8))"
         let indexName = "IX_\(tableName)_clustered"
 
@@ -182,7 +214,6 @@ final class SQLServerIndexTests: XCTestCase {
     }
 
     func testCreateIndexWithOptions() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let tableName = "test_options_index_table_\(UUID().uuidString.prefix(8))"
         let indexName = "IX_\(tableName)_with_options"
 
@@ -204,7 +235,6 @@ final class SQLServerIndexTests: XCTestCase {
     }
 
     func testDropIndex() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let tableName = "test_drop_index_table_\(UUID().uuidString.prefix(8))"
         let indexName = "IX_\(tableName)_to_drop"
 
@@ -225,7 +255,6 @@ final class SQLServerIndexTests: XCTestCase {
     // MARK: - Index Maintenance Tests
 
     func testRebuildIndex() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let tableName = "test_rebuild_index_table_\(UUID().uuidString.prefix(8))"
         let indexName = "IX_\(tableName)_rebuild"
 
@@ -244,7 +273,6 @@ final class SQLServerIndexTests: XCTestCase {
     }
 
     func testReorganizeIndex() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let tableName = "test_reorganize_index_table_\(UUID().uuidString.prefix(8))"
         let indexName = "IX_\(tableName)_reorganize"
 
@@ -265,7 +293,6 @@ final class SQLServerIndexTests: XCTestCase {
     // MARK: - Index Information Tests
 
     func testGetIndexInfo() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let tableName = "test_info_index_table_\(UUID().uuidString.prefix(8))"
         let indexName = "IX_\(tableName)_info"
 
@@ -299,7 +326,6 @@ final class SQLServerIndexTests: XCTestCase {
     }
 
     func testListTableIndexes() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let tableName = "test_list_indexes_table_\(UUID().uuidString.prefix(8))"
         let index1Name = "IX_\(tableName)_name"
         let index2Name = "IX_\(tableName)_email"
@@ -321,7 +347,6 @@ final class SQLServerIndexTests: XCTestCase {
     // MARK: - Error Handling Tests
 
     func testCreateDuplicateIndex() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let tableName = "test_duplicate_index_table_\(UUID().uuidString.prefix(8))"
         let indexName = "IX_\(tableName)_duplicate"
 
@@ -339,7 +364,6 @@ final class SQLServerIndexTests: XCTestCase {
     }
 
     func testDropNonExistentIndex() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let tableName = "test_nonexistent_index_table_\(UUID().uuidString.prefix(8))"
         let indexName = "IX_nonexistent_index"
 
@@ -354,7 +378,6 @@ final class SQLServerIndexTests: XCTestCase {
     }
 
     func testCreateIndexOnNonExistentTable() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let tableName = "non_existent_table"
         let indexName = "IX_test_index"
 
@@ -369,7 +392,6 @@ final class SQLServerIndexTests: XCTestCase {
     }
 
     func testCreateIndexOnNonExistentColumn() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let tableName = "test_bad_column_table_\(UUID().uuidString.prefix(8))"
         let indexName = "IX_\(tableName)_bad_column"
 
@@ -386,7 +408,6 @@ final class SQLServerIndexTests: XCTestCase {
     }
 
     func testCreateClusteredIndexWithIncludedColumns() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let tableName = "test_clustered_included_table_\(UUID().uuidString.prefix(8))"
         let indexName = "IX_\(tableName)_clustered_included"
 
@@ -406,7 +427,6 @@ final class SQLServerIndexTests: XCTestCase {
     }
 
     func testCreateIndexWithNoKeyColumns() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let tableName = "test_no_key_columns_table_\(UUID().uuidString.prefix(8))"
         let indexName = "IX_\(tableName)_no_keys"
 

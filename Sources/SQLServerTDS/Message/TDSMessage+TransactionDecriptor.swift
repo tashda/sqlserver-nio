@@ -1,6 +1,6 @@
 import NIO
 
-extension TDSMessage {
+extension SQLServerTDS.TDSMessage {
 
     static public func serializeAllHeaders(_ buffer: inout ByteBuffer, transactionDescriptor: [UInt8] = [0, 0, 0, 0, 0, 0, 0, 0], outstandingRequestCount: UInt32 = 1) {
         // Removed debug logging to test if it was causing issues
