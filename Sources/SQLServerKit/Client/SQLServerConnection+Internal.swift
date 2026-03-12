@@ -106,14 +106,15 @@ extension SQLServerConnection {
     }
 
     internal func invalidate() -> EventLoopFuture<Void> {
-        self.release(true).flatMap { self.shutdownGroupIfNeeded() }
+        self.release(true).map { self.fireAndForgetGroupShutdown() }
     }
 
-    internal func shutdownGroupIfNeeded() -> EventLoopFuture<Void> {
-        guard let group = ownsEventLoopGroup else {
-            return eventLoop.makeSucceededFuture(())
-        }
-        return SQLServerClient.shutdownEventLoopGroup(group)
+    internal func fireAndForgetGroupShutdown() {
+        // Fire-and-forget: we cannot return a future for group shutdown because NIO
+        // would need to hop the result back to this event loop — which belongs to the
+        // group being shut down — causing "Cannot schedule tasks on shut down EventLoop."
+        guard let group = ownsEventLoopGroup else { return }
+        group.shutdownGracefully { _ in }
     }
 
     internal func setCurrentDatabase(_ database: String) {
