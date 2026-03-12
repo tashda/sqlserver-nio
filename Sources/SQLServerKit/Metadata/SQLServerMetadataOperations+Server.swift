@@ -48,30 +48,34 @@ extension SQLServerMetadataOperations {
         includeComments: Bool = false
     ) -> EventLoopFuture<SQLServerSchemaStructure> {
         let resolvedDatabase = effectiveDatabase(database)
-        return listTables(database: resolvedDatabase, schema: schema, includeComments: includeComments).flatMap { tables in
+
+        // Launch all 6 queries in parallel — tables aren't needed until the
+        // grouping step at the end, so there's no reason to wait for them first.
+        let tablesF = listTables(database: resolvedDatabase, schema: schema, includeComments: includeComments)
+        let columnsF = listColumnsForSchema(database: resolvedDatabase, schema: schema, includeComments: includeComments)
+        let pkF = listPrimaryKeysFromCatalog(database: resolvedDatabase, schema: schema, table: nil)
+        let funcF = listFunctions(database: resolvedDatabase, schema: schema, includeComments: includeComments)
+        let procF = listProcedures(database: resolvedDatabase, schema: schema, includeComments: includeComments)
+        let trigF = listTriggers(database: resolvedDatabase, schema: schema, table: nil, includeComments: includeComments)
+
+        return tablesF.and(columnsF).and(pkF).and(funcF).and(procF).and(trigF).map { data in
+            let (((((tables, columns), primaryKeys), functions), procedures), triggers) = data
             let tableCandidates = tables.filter { $0.kind == .table || $0.kind == .view }
-            let columnsF = self.listColumnsForSchema(database: resolvedDatabase, schema: schema, includeComments: includeComments)
-            let pkF = self.listPrimaryKeysFromCatalog(database: resolvedDatabase, schema: schema, table: nil)
-            let funcF = self.listFunctions(database: resolvedDatabase, schema: schema, includeComments: includeComments)
-            let procF = self.listProcedures(database: resolvedDatabase, schema: schema, includeComments: includeComments)
-            let trigF = self.listTriggers(database: resolvedDatabase, schema: schema, table: nil, includeComments: includeComments)
 
-            return columnsF.and(pkF).and(funcF).and(procF).and(trigF).map { data in
-                let ((((columns, primaryKeys), functions), procedures), triggers) = data
-                var columnsByTable: [String: [ColumnMetadata]] = [:]
-                for col in columns { columnsByTable["\(col.schema.lowercased())|\(col.table.lowercased())", default: []].append(col) }
-                var pkByTable: [String: KeyConstraintMetadata] = [:]
-                for pk in primaryKeys { pkByTable["\(pk.schema.lowercased())|\(pk.table.lowercased())"] = pk }
+            var columnsByTable: [String: [ColumnMetadata]] = [:]
+            for col in columns { columnsByTable["\(col.schema.lowercased())|\(col.table.lowercased())", default: []].append(col) }
+            var pkByTable: [String: KeyConstraintMetadata] = [:]
+            for pk in primaryKeys { pkByTable["\(pk.schema.lowercased())|\(pk.table.lowercased())"] = pk }
 
-                var tableStructures: [SQLServerTableStructure] = []
-                var viewStructures: [SQLServerTableStructure] = []
-                for table in tableCandidates {
-                    let key = "\(table.schema.lowercased())|\(table.name.lowercased())"
-                    let structure = SQLServerTableStructure(table: table, columns: (columnsByTable[key] ?? []).sorted { $0.ordinalPosition < $1.ordinalPosition }, primaryKey: pkByTable[key])
-                    if table.isView { viewStructures.append(structure) } else { tableStructures.append(structure) }
-                }
-                return SQLServerSchemaStructure(name: schema, tables: tableStructures, views: viewStructures, functions: functions, procedures: procedures, triggers: triggers)
+            var tableStructures: [SQLServerTableStructure] = []
+            var viewStructures: [SQLServerTableStructure] = []
+            for table in tableCandidates {
+                let key = "\(table.schema.lowercased())|\(table.name.lowercased())"
+                let cols = (columnsByTable[key] ?? []).sorted { $0.ordinalPosition < $1.ordinalPosition }
+                let structure = SQLServerTableStructure(table: table, columns: cols, primaryKey: pkByTable[key])
+                if table.isView { viewStructures.append(structure) } else { tableStructures.append(structure) }
             }
+            return SQLServerSchemaStructure(name: schema, tables: tableStructures, views: viewStructures, functions: functions, procedures: procedures, triggers: triggers)
         }
     }
 
@@ -80,13 +84,99 @@ extension SQLServerMetadataOperations {
         includeComments: Bool = false
     ) -> EventLoopFuture<SQLServerDatabaseStructure> {
         let resolvedDatabase = effectiveDatabase(database)
-        return listSchemas(in: resolvedDatabase).flatMap { schemas in
-            let initial = self.eventLoop.makeSucceededFuture([SQLServerSchemaStructure]())
-            return schemas.reduce(initial) { partial, schema in
-                partial.flatMap { collected in
-                    self.loadSchemaStructure(database: resolvedDatabase, schema: schema.name, includeComments: includeComments).map { collected + [$0] }
+
+        // Fetch schemas and all tables in one pass (schema: nil = all schemas).
+        let schemasF = listSchemas(in: resolvedDatabase)
+        let tablesF = listTables(database: resolvedDatabase, schema: nil, includeComments: includeComments)
+
+        return schemasF.and(tablesF).flatMap { schemas, tables in
+            let tableCandidates = tables.filter { $0.kind == .table || $0.kind == .view }
+
+            // Bulk-load columns, primary keys, routines, and triggers across all
+            // schemas in parallel.  Each query uses schema=nil / table=nil so the
+            // server returns everything in a single result set.
+            let columnsF = self.listColumnsForDatabase(database: resolvedDatabase, includeComments: includeComments)
+                .flatMapError { _ in
+                    // Fallback: per-schema column fetch if the bulk query fails.
+                    let initial = self.eventLoop.makeSucceededFuture([ColumnMetadata]())
+                    return schemas.reduce(initial) { partial, schema in
+                        partial.flatMap { collected in
+                            self.listColumnsForSchema(database: resolvedDatabase, schema: schema.name, includeComments: includeComments)
+                                .map { collected + $0 }
+                                .flatMapError { _ in self.eventLoop.makeSucceededFuture(collected) }
+                        }
+                    }
                 }
-            }.map { SQLServerDatabaseStructure(database: resolvedDatabase, schemas: $0) }
+            let pkF = self.listPrimaryKeysFromCatalog(database: resolvedDatabase, schema: nil, table: nil)
+                .flatMapError { _ in self.eventLoop.makeSucceededFuture([KeyConstraintMetadata]()) }
+            let funcF = self.listFunctions(database: resolvedDatabase, schema: nil, includeComments: includeComments)
+                .flatMapError { _ in self.eventLoop.makeSucceededFuture([RoutineMetadata]()) }
+            let procF = self.listProcedures(database: resolvedDatabase, schema: nil, includeComments: includeComments)
+                .flatMapError { _ in self.eventLoop.makeSucceededFuture([RoutineMetadata]()) }
+            let trigF = self.listTriggers(database: resolvedDatabase, schema: nil, table: nil, includeComments: includeComments)
+                .flatMapError { _ in self.eventLoop.makeSucceededFuture([TriggerMetadata]()) }
+
+            // Wait for all parallel queries, then group results by schema.
+            return columnsF.and(pkF).and(funcF).and(procF).and(trigF).map { data in
+                let ((((columns, primaryKeys), functions), procedures), triggers) = data
+
+                func objectKey(schema: String, table: String) -> String {
+                    "\(schema.lowercased())|\(table.lowercased())"
+                }
+
+                // Index columns and primary keys by schema|table for fast lookup.
+                var columnsByTable: [String: [ColumnMetadata]] = [:]
+                columnsByTable.reserveCapacity(tableCandidates.count)
+                for col in columns {
+                    columnsByTable[objectKey(schema: col.schema, table: col.table), default: []].append(col)
+                }
+
+                var pkByTable: [String: KeyConstraintMetadata] = [:]
+                for pk in primaryKeys {
+                    let key = objectKey(schema: pk.schema, table: pk.table)
+                    if pkByTable[key] == nil { pkByTable[key] = pk }
+                }
+
+                // Group tables/views by schema.
+                var tablesBySchema: [String: [TableMetadata]] = [:]
+                for table in tableCandidates {
+                    tablesBySchema[table.schema.lowercased(), default: []].append(table)
+                }
+
+                // Group routines and triggers by schema.
+                var funcsBySchema: [String: [RoutineMetadata]] = [:]
+                for f in functions { funcsBySchema[f.schema.lowercased(), default: []].append(f) }
+                var procsBySchema: [String: [RoutineMetadata]] = [:]
+                for p in procedures { procsBySchema[p.schema.lowercased(), default: []].append(p) }
+                var trigsBySchema: [String: [TriggerMetadata]] = [:]
+                for t in triggers { trigsBySchema[t.schema.lowercased(), default: []].append(t) }
+
+                // Assemble per-schema structures.
+                let schemaStructures: [SQLServerSchemaStructure] = schemas.map { schema in
+                    let key = schema.name.lowercased()
+                    let schemaTables = tablesBySchema[key] ?? []
+
+                    var tableStructures: [SQLServerTableStructure] = []
+                    var viewStructures: [SQLServerTableStructure] = []
+                    for table in schemaTables {
+                        let tKey = objectKey(schema: table.schema, table: table.name)
+                        let cols = (columnsByTable[tKey] ?? []).sorted { $0.ordinalPosition < $1.ordinalPosition }
+                        let structure = SQLServerTableStructure(table: table, columns: cols, primaryKey: pkByTable[tKey])
+                        if table.isView { viewStructures.append(structure) } else { tableStructures.append(structure) }
+                    }
+
+                    return SQLServerSchemaStructure(
+                        name: schema.name,
+                        tables: tableStructures,
+                        views: viewStructures,
+                        functions: funcsBySchema[key] ?? [],
+                        procedures: procsBySchema[key] ?? [],
+                        triggers: trigsBySchema[key] ?? []
+                    )
+                }
+
+                return SQLServerDatabaseStructure(database: resolvedDatabase, schemas: schemaStructures)
+            }
         }
     }
 
