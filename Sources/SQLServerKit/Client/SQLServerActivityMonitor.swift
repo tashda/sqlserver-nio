@@ -151,16 +151,16 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
             [timestamp]
             FROM (
                 SELECT [timestamp], convert(xml, record) AS [record]
-                FROM sys.dm_os_ring_buffers
+                FROM [sys].[dm_os_ring_buffers]
                 WHERE ring_buffer_type = N'RING_BUFFER_SCHEDULER_MONITOR'
                 AND record LIKE '%<SchedulerMonitorEvent>%'
             ) AS x
-        ) AS y ORDER BY [timestamp] DESC;
-        """
-        
-        let waitsSql = "SELECT COUNT(*) AS waiting_tasks FROM sys.dm_os_waiting_tasks WHERE wait_type NOT IN (\(waitIgnoreList.map { "'\($0)'" }.joined(separator: ", ")));"
-        
-        let batchSql = "SELECT cntr_value FROM sys.dm_os_performance_counters WHERE counter_name = 'Batch Requests/sec' AND object_name LIKE '%SQL Statistics%';"
+            ) AS y ORDER BY [timestamp] DESC;
+            """
+
+            let waitsSql = "SELECT COUNT(*) AS waiting_tasks FROM [sys].[dm_os_waiting_tasks] WHERE wait_type NOT IN (\(waitIgnoreList.map { \"'\($0)'\" }.joined(separator: \", \")));"
+
+            let batchSql = "SELECT cntr_value FROM [sys].[dm_os_performance_counters] WHERE counter_name = 'Batch Requests/sec' AND object_name LIKE '%SQL Statistics%';"
 
         // We wrap each query in its own future and handle them with timeouts if possible via client configuration
         // For now, we rely on snapshot() level recovery.
@@ -224,12 +224,12 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
         // For resilience, we skip it unless explicitly asked.
         if options.includeQueryPlan { sql += ", CAST(qp.query_plan AS NVARCHAR(MAX)) AS plan_xml" }
         sql += """
-        FROM sys.dm_exec_sessions AS s
-        LEFT JOIN sys.dm_exec_connections AS c ON c.session_id = s.session_id
-        LEFT JOIN sys.dm_exec_requests   AS r ON r.session_id = s.session_id
+        FROM [sys].[dm_exec_sessions] AS s
+        LEFT JOIN [sys].[dm_exec_connections] AS c ON c.session_id = s.session_id
+        LEFT JOIN [sys].[dm_exec_requests]   AS r ON r.session_id = s.session_id
         """
-        if options.includeSqlText { sql += " OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) AS st" }
-        if options.includeQueryPlan { sql += " OUTER APPLY sys.dm_exec_query_plan(r.plan_handle) AS qp" }
+        if options.includeSqlText { sql += " OUTER APPLY [sys].[dm_exec_sql_text](r.sql_handle) AS st" }
+        if options.includeQueryPlan { sql += " OUTER APPLY [sys].[dm_exec_query_plan](r.plan_handle) AS qp" }
         sql += """
         WHERE s.session_id <> @@SPID
         ORDER BY s.session_id;
@@ -275,8 +275,8 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
     private func fetchWaits(on loop: EventLoop) -> EventLoopFuture<[SQLServerWaitStat]> {
         let sql = """
         SELECT wait_type, waiting_tasks_count, wait_time_ms, signal_wait_time_ms
-        FROM sys.dm_os_wait_stats
-        WHERE wait_type NOT IN (\(waitIgnoreList.map { "'\($0)'" }.joined(separator: ", ")))
+        FROM [sys].[dm_os_wait_stats]
+        WHERE wait_type NOT IN (\(waitIgnoreList.map { \"'\($0)'\" }.joined(separator: \", \")))
         AND wait_time_ms > 0
         ORDER BY wait_time_ms DESC;
         """
@@ -301,12 +301,12 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
             mf.name AS file_name,
             vfs.num_of_reads,
             vfs.num_of_writes,
-            vfs.bytes_read,
-            vfs.bytes_written,
+            vfs.num_of_bytes_read,
+            vfs.num_of_bytes_written,
             vfs.io_stall_read_ms,
             vfs.io_stall_write_ms
-        FROM sys.dm_io_virtual_file_stats(NULL, NULL) AS vfs
-        INNER JOIN sys.master_files AS mf
+        FROM [sys].[dm_io_virtual_file_stats](NULL, NULL) AS vfs
+        INNER JOIN [sys].[master_files] AS mf
             ON vfs.database_id = mf.database_id AND vfs.file_id = mf.file_id
         ORDER BY vfs.database_id, vfs.file_id;
         """
@@ -320,8 +320,8 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
                     fileName: row.column("file_name")?.string,
                     numReads: row.column("num_of_reads")?.int ?? 0,
                     numWrites: row.column("num_of_writes")?.int ?? 0,
-                    bytesRead: Int64(row.column("bytes_read")?.int64 ?? 0),
-                    bytesWritten: Int64(row.column("bytes_written")?.int64 ?? 0),
+                    bytesRead: Int64(row.column("num_of_bytes_read")?.int64 ?? 0),
+                    bytesWritten: Int64(row.column("num_of_bytes_written")?.int64 ?? 0),
                     ioStallReadMs: Int64(row.column("io_stall_read_ms")?.int64 ?? 0),
                     ioStallWriteMs: Int64(row.column("io_stall_write_ms")?.int64 ?? 0)
                 )
@@ -345,10 +345,10 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
         if options.includeSqlText { sql += ", st.text AS sql_text" }
         if options.includeQueryPlan { sql += ", CAST(qp.query_plan AS NVARCHAR(MAX)) AS plan_xml" }
         sql += """
-        FROM sys.dm_exec_query_stats AS qs
+        FROM [sys].[dm_exec_query_stats] AS qs
         """
-        if options.includeSqlText { sql += " OUTER APPLY sys.dm_exec_sql_text(qs.sql_handle) AS st" }
-        if options.includeQueryPlan { sql += " OUTER APPLY sys.dm_exec_query_plan(qs.plan_handle) AS qp" }
+        if options.includeSqlText { sql += " OUTER APPLY [sys].[dm_exec_sql_text](qs.sql_handle) AS st" }
+        if options.includeQueryPlan { sql += " OUTER APPLY [sys].[dm_exec_query_plan](qs.plan_handle) AS qp" }
         sql += " ORDER BY qs.total_worker_time DESC;"
 
         return client.query(sql, on: loop).map { rows in
