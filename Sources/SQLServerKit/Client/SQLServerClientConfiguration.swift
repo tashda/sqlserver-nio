@@ -2,6 +2,12 @@ import NIOSSL
 
 public typealias SQLServerTLSConfiguration = TLSConfiguration
 
+extension SQLServerTLSConfiguration {
+    public static var clientDefault: SQLServerTLSConfiguration {
+        .makeClientConfiguration()
+    }
+}
+
 extension SQLServerClient {
     public struct Configuration: Sendable {
         public var connection: SQLServerConnection.Configuration
@@ -27,7 +33,7 @@ extension SQLServerClient {
             hostname: String,
             port: Int = 1433,
             login: SQLServerConnection.Configuration.Login,
-            tlsConfiguration: SQLServerTLSConfiguration? = .makeClientConfiguration(),
+            tlsConfiguration: SQLServerTLSConfiguration? = .clientDefault,
             poolConfiguration: SQLServerConnectionPool.Configuration = .init(),
             metadataConfiguration: SQLServerMetadataOperations.Configuration = .init(),
             retryConfiguration: SQLServerRetryConfiguration = .init(),
@@ -44,6 +50,53 @@ extension SQLServerClient {
                 transparentNetworkIPResolution: transparentNetworkIPResolution
             )
             self.poolConfiguration = poolConfiguration
+        }
+
+        public init(
+            hostname: String,
+            port: Int = 1433,
+            database: String = "master",
+            authentication: SQLServerAuthentication,
+            tlsEnabled: Bool,
+            poolConfiguration: SQLServerConnectionPool.Configuration = .init(),
+            metadataConfiguration: SQLServerMetadataOperations.Configuration = .init(),
+            retryConfiguration: SQLServerRetryConfiguration = .init(),
+            transparentNetworkIPResolution: Bool = true
+        ) {
+            self.init(
+                hostname: hostname,
+                port: port,
+                database: database,
+                authentication: authentication,
+                tlsConfiguration: tlsEnabled ? .clientDefault : nil,
+                poolConfiguration: poolConfiguration,
+                metadataConfiguration: metadataConfiguration,
+                retryConfiguration: retryConfiguration,
+                transparentNetworkIPResolution: transparentNetworkIPResolution
+            )
+        }
+
+        public init(
+            hostname: String,
+            port: Int = 1433,
+            database: String = "master",
+            authentication: SQLServerAuthentication,
+            tlsConfiguration: SQLServerTLSConfiguration? = .clientDefault,
+            poolConfiguration: SQLServerConnectionPool.Configuration = .init(),
+            metadataConfiguration: SQLServerMetadataOperations.Configuration = .init(),
+            retryConfiguration: SQLServerRetryConfiguration = .init(),
+            transparentNetworkIPResolution: Bool = true
+        ) {
+            self.init(
+                hostname: hostname,
+                port: port,
+                login: .init(database: database, authentication: authentication),
+                tlsConfiguration: tlsConfiguration,
+                poolConfiguration: poolConfiguration,
+                metadataConfiguration: metadataConfiguration,
+                retryConfiguration: retryConfiguration,
+                transparentNetworkIPResolution: transparentNetworkIPResolution
+            )
         }
 
         public var hostname: String {

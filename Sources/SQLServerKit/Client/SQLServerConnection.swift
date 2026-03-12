@@ -76,7 +76,19 @@ public final class SQLServerConnection: @unchecked Sendable {
     ) async throws -> SQLServerConnection {
         try await connect(
             configuration: configuration,
-            eventLoopGroupProvider: .createNew(numberOfThreads: System.coreCount),
+            numberOfThreads: System.coreCount,
+            logger: logger
+        )
+    }
+
+    public static func connect(
+        configuration: Configuration,
+        numberOfThreads: Int,
+        logger: Logger = Logger(label: "tds.sqlserver.connection")
+    ) async throws -> SQLServerConnection {
+        try await connect(
+            configuration: configuration,
+            eventLoopGroupProvider: .createNew(numberOfThreads: numberOfThreads),
             logger: logger
         ).get()
     }

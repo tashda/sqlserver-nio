@@ -5,6 +5,13 @@ import SQLServerTDS
 
 extension SQLServerClient {
     @available(macOS 12.0, *)
+    public func withConnection<Result: Sendable>(
+        _ operation: @escaping @Sendable (SQLServerConnection) async throws -> Result
+    ) async throws -> Result {
+        try await withConnection(on: nil, operation)
+    }
+
+    @available(macOS 12.0, *)
     public func withDatabase<Result: Sendable>(
         _ database: String,
         _ operation: @escaping @Sendable (SQLServerConnection) async throws -> Result
@@ -102,6 +109,11 @@ extension SQLServerClient {
     }
 
     @available(macOS 12.0, *)
+    public func execute(_ sql: String) async throws -> SQLServerExecutionResult {
+        try await execute(sql, on: nil)
+    }
+
+    @available(macOS 12.0, *)
     public func query(
         _ sql: String,
         on eventLoop: EventLoop? = nil
@@ -109,6 +121,11 @@ extension SQLServerClient {
         try await withConnection(on: eventLoop) { connection in
             try await connection.query(sql)
         }
+    }
+
+    @available(macOS 12.0, *)
+    public func query(_ sql: String) async throws -> [SQLServerRow] {
+        try await query(sql, on: nil)
     }
 
     @available(macOS 12.0, *)
@@ -124,12 +141,31 @@ extension SQLServerClient {
     }
 
     @available(macOS 12.0, *)
+    public func queryPaged(
+        _ sql: String,
+        limit: Int,
+        offset: Int = 0
+    ) async throws -> [SQLServerRow] {
+        try await queryPaged(sql, limit: limit, offset: offset, on: nil)
+    }
+
+    @available(macOS 12.0, *)
     public func queryScalar<T: SQLServerDataConvertible & Sendable>(
         _ sql: String,
         as type: T.Type = T.self,
         on eventLoop: EventLoop? = nil
     ) async throws -> T? {
-        try await queryScalar(sql, as: type, on: eventLoop).get()
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.queryScalar(sql, as: type)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func queryScalar<T: SQLServerDataConvertible & Sendable>(
+        _ sql: String,
+        as type: T.Type = T.self
+    ) async throws -> T? {
+        try await queryScalar(sql, as: type, on: nil)
     }
 
     @available(macOS 12.0, *)
@@ -138,7 +174,17 @@ extension SQLServerClient {
         parameters: [SQLServerConnection.ProcedureParameter] = [],
         on eventLoop: EventLoop? = nil
     ) async throws -> SQLServerExecutionResult {
-        try await call(procedure: name, parameters: parameters, on: eventLoop).get()
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.call(procedure: name, parameters: parameters)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func call(
+        procedure name: String,
+        parameters: [SQLServerConnection.ProcedureParameter] = []
+    ) async throws -> SQLServerExecutionResult {
+        try await call(procedure: name, parameters: parameters, on: nil)
     }
 
     @available(macOS 12.0, *)
@@ -146,7 +192,16 @@ extension SQLServerClient {
         _ identifiers: [SQLServerMetadataObjectIdentifier],
         on eventLoop: EventLoop? = nil
     ) async throws -> [ObjectDefinition] {
-        try await fetchObjectDefinitions(identifiers, on: eventLoop).get()
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.fetchObjectDefinitions(identifiers).get()
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func fetchObjectDefinitions(
+        _ identifiers: [SQLServerMetadataObjectIdentifier]
+    ) async throws -> [ObjectDefinition] {
+        try await fetchObjectDefinitions(identifiers, on: nil)
     }
 
     @available(macOS 12.0, *)
@@ -157,12 +212,31 @@ extension SQLServerClient {
         kind: SQLServerMetadataObjectIdentifier.Kind,
         on eventLoop: EventLoop? = nil
     ) async throws -> ObjectDefinition? {
-        try await fetchObjectDefinition(database: database, schema: schema, name: name, kind: kind, on: eventLoop).get()
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.fetchObjectDefinition(database: database, schema: schema, name: name, kind: kind).get()
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func fetchObjectDefinition(
+        database: String? = nil,
+        schema: String,
+        name: String,
+        kind: SQLServerMetadataObjectIdentifier.Kind
+    ) async throws -> ObjectDefinition? {
+        try await fetchObjectDefinition(database: database, schema: schema, name: name, kind: kind, on: nil)
     }
 
     @available(macOS 12.0, *)
     public func fetchAgentStatus(on eventLoop: EventLoop? = nil) async throws -> SQLServerAgentStatus {
-        try await fetchAgentStatus(on: eventLoop).get()
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.fetchAgentStatus()
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func fetchAgentStatus() async throws -> SQLServerAgentStatus {
+        try await fetchAgentStatus(on: nil)
     }
 
     @available(macOS 12.0, *)
@@ -173,12 +247,31 @@ extension SQLServerClient {
         scopes: MetadataSearchScope = .default,
         on eventLoop: EventLoop? = nil
     ) async throws -> [MetadataSearchHit] {
-        try await searchMetadata(query: query, database: database, schema: schema, scopes: scopes, on: eventLoop).get()
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.searchMetadata(query: query, database: database, schema: schema, scopes: scopes).get()
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func searchMetadata(
+        query: String,
+        database: String? = nil,
+        schema: String? = nil,
+        scopes: MetadataSearchScope = .default
+    ) async throws -> [MetadataSearchHit] {
+        try await searchMetadata(query: query, database: database, schema: schema, scopes: scopes, on: nil)
     }
 
     @available(macOS 12.0, *)
     public func listDatabases(on eventLoop: EventLoop? = nil) async throws -> [DatabaseMetadata] {
-        try await listDatabases(on: eventLoop).get()
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.listDatabases().get()
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listDatabases() async throws -> [DatabaseMetadata] {
+        try await listDatabases(on: nil)
     }
 
     @available(macOS 12.0, *)
@@ -195,7 +288,14 @@ extension SQLServerClient {
         in database: String? = nil,
         on eventLoop: EventLoop? = nil
     ) async throws -> [SchemaMetadata] {
-        try await listSchemas(in: database, on: eventLoop).get()
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.listSchemas(in: database).get()
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listSchemas(in database: String? = nil) async throws -> [SchemaMetadata] {
+        try await listSchemas(in: database, on: nil)
     }
 
     @available(macOS 12.0, *)
@@ -205,7 +305,18 @@ extension SQLServerClient {
         includeComments: Bool = false,
         on eventLoop: EventLoop? = nil
     ) async throws -> [TableMetadata] {
-        try await listTables(database: database, schema: schema, includeComments: includeComments, on: eventLoop).get()
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.listTables(database: database, schema: schema, includeComments: includeComments).get()
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listTables(
+        database: String? = nil,
+        schema: String? = nil,
+        includeComments: Bool = false
+    ) async throws -> [TableMetadata] {
+        try await listTables(database: database, schema: schema, includeComments: includeComments, on: nil)
     }
 
     @available(macOS 12.0, *)
@@ -217,7 +328,26 @@ extension SQLServerClient {
         includeComments: Bool = false,
         on eventLoop: EventLoop? = nil
     ) async throws -> [ColumnMetadata] {
-        try await listColumns(database: database, schema: schema, table: table, objectTypeHint: objectTypeHint, includeComments: includeComments, on: eventLoop).get()
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.listColumns(
+                database: database,
+                schema: schema,
+                table: table,
+                objectTypeHint: objectTypeHint,
+                includeComments: includeComments
+            ).get()
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listColumns(
+        database: String? = nil,
+        schema: String,
+        table: String,
+        objectTypeHint: String? = nil,
+        includeComments: Bool = false
+    ) async throws -> [ColumnMetadata] {
+        try await listColumns(database: database, schema: schema, table: table, objectTypeHint: objectTypeHint, includeComments: includeComments, on: nil)
     }
 
     @available(macOS 12.0, *)
@@ -227,7 +357,13 @@ extension SQLServerClient {
         includeComments: Bool = false,
         on eventLoop: EventLoop? = nil
     ) async throws -> [ColumnMetadata] {
-        try await listColumnsForSchema(database: database, schema: schema, includeComments: includeComments, on: eventLoop).get()
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.listColumnsForSchema(
+                database: database,
+                schema: schema,
+                includeComments: includeComments
+            ).get()
+        }
     }
 
     @available(macOS 12.0, *)
@@ -236,7 +372,12 @@ extension SQLServerClient {
         includeComments: Bool = false,
         on eventLoop: EventLoop? = nil
     ) async throws -> [ColumnMetadata] {
-        try await listColumnsForDatabase(database: database, includeComments: includeComments, on: eventLoop).get()
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.listColumnsForDatabase(
+                database: database,
+                includeComments: includeComments
+            ).get()
+        }
     }
 
     @available(macOS 12.0, *)
@@ -246,7 +387,9 @@ extension SQLServerClient {
         object: String,
         on eventLoop: EventLoop? = nil
     ) async throws -> [ParameterMetadata] {
-        try await listParameters(database: database, schema: schema, object: object, on: eventLoop).get()
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.listParameters(database: database, schema: schema, object: object).get()
+        }
     }
 
     @available(macOS 12.0, *)
@@ -256,7 +399,9 @@ extension SQLServerClient {
         table: String? = nil,
         on eventLoop: EventLoop? = nil
     ) async throws -> [KeyConstraintMetadata] {
-        try await listPrimaryKeys(database: database, schema: schema, table: table, on: eventLoop).get()
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.listPrimaryKeys(database: database, schema: schema, table: table).get()
+        }
     }
 
     @available(macOS 12.0, *)
@@ -266,7 +411,9 @@ extension SQLServerClient {
         table: String? = nil,
         on eventLoop: EventLoop? = nil
     ) async throws -> [KeyConstraintMetadata] {
-        try await listPrimaryKeysFromCatalog(database: database, schema: schema, table: table, on: eventLoop).get()
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.listPrimaryKeysFromCatalog(database: database, schema: schema, table: table).get()
+        }
     }
 
     @available(macOS 12.0, *)
@@ -276,7 +423,9 @@ extension SQLServerClient {
         table: String? = nil,
         on eventLoop: EventLoop? = nil
     ) async throws -> [KeyConstraintMetadata] {
-        try await listUniqueConstraints(database: database, schema: schema, table: table, on: eventLoop).get()
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.listUniqueConstraints(database: database, schema: schema, table: table).get()
+        }
     }
 
     @available(macOS 12.0, *)
@@ -286,7 +435,9 @@ extension SQLServerClient {
         table: String,
         on eventLoop: EventLoop? = nil
     ) async throws -> [IndexMetadata] {
-        try await listIndexes(database: database, schema: schema, table: table, on: eventLoop).get()
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.listIndexes(database: database, schema: schema, table: table).get()
+        }
     }
 
     @available(macOS 12.0, *)
@@ -296,7 +447,9 @@ extension SQLServerClient {
         table: String,
         on eventLoop: EventLoop? = nil
     ) async throws -> [ForeignKeyMetadata] {
-        try await listForeignKeys(database: database, schema: schema, table: table, on: eventLoop).get()
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.listForeignKeys(database: database, schema: schema, table: table).get()
+        }
     }
 
     @available(macOS 12.0, *)
@@ -306,7 +459,9 @@ extension SQLServerClient {
         object: String,
         on eventLoop: EventLoop? = nil
     ) async throws -> [DependencyMetadata] {
-        try await listDependencies(database: database, schema: schema, object: object, on: eventLoop).get()
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.listDependencies(database: database, schema: schema, object: object).get()
+        }
     }
 
     @available(macOS 12.0, *)
@@ -317,7 +472,14 @@ extension SQLServerClient {
         includeComments: Bool = false,
         on eventLoop: EventLoop? = nil
     ) async throws -> [TriggerMetadata] {
-        try await listTriggers(database: database, schema: schema, table: table, includeComments: includeComments, on: eventLoop).get()
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.listTriggers(
+                database: database,
+                schema: schema,
+                table: table,
+                includeComments: includeComments
+            ).get()
+        }
     }
 
     @available(macOS 12.0, *)
@@ -327,7 +489,9 @@ extension SQLServerClient {
         includeComments: Bool = false,
         on eventLoop: EventLoop? = nil
     ) async throws -> [RoutineMetadata] {
-        try await listProcedures(database: database, schema: schema, includeComments: includeComments, on: eventLoop).get()
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.listProcedures(database: database, schema: schema, includeComments: includeComments).get()
+        }
     }
 
     @available(macOS 12.0, *)
@@ -337,7 +501,9 @@ extension SQLServerClient {
         includeComments: Bool = false,
         on eventLoop: EventLoop? = nil
     ) async throws -> [RoutineMetadata] {
-        try await listFunctions(database: database, schema: schema, includeComments: includeComments, on: eventLoop).get()
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.listFunctions(database: database, schema: schema, includeComments: includeComments).get()
+        }
     }
 
     @available(macOS 12.0, *)
@@ -347,7 +513,9 @@ extension SQLServerClient {
         includeComments: Bool = false,
         on eventLoop: EventLoop? = nil
     ) async throws -> SQLServerSchemaStructure {
-        try await loadSchemaStructure(database: database, schema: schema, includeComments: includeComments, on: eventLoop).get()
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.loadSchemaStructure(database: database, schema: schema, includeComments: includeComments).get()
+        }
     }
 
     @available(macOS 12.0, *)
@@ -356,12 +524,21 @@ extension SQLServerClient {
         includeComments: Bool = false,
         on eventLoop: EventLoop? = nil
     ) async throws -> SQLServerDatabaseStructure {
-        try await loadDatabaseStructure(database: database, includeComments: includeComments, on: eventLoop).get()
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.loadDatabaseStructure(database: database, includeComments: includeComments).get()
+        }
     }
 
     @available(macOS 12.0, *)
     public func serverVersion(on eventLoop: EventLoop? = nil) async throws -> String {
-        try await serverVersion(on: eventLoop).get()
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.serverVersion()
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func serverVersion() async throws -> String {
+        try await serverVersion(on: nil)
     }
 
     @available(macOS 12.0, *)
@@ -369,7 +546,12 @@ extension SQLServerClient {
         _ sql: String,
         on eventLoop: EventLoop? = nil
     ) async throws -> SQLServerExecutionResult {
-        try await executeOnFreshConnection(sql, on: eventLoop).get()
+        let loop = eventLoop ?? eventLoopGroup.next()
+        return try await withCheckedThrowingContinuation { continuation in
+            self.executeOnFreshConnection(sql, on: loop).whenComplete { result in
+                continuation.resume(with: result)
+            }
+        }
     }
 
     @available(macOS 12.0, *)
@@ -450,8 +632,8 @@ extension SQLServerClient {
 
     @available(macOS 12.0, *)
     public func validateConnections() async throws {
-        _ = withConnection { _ in
-            return self.eventLoopGroup.next().makeSucceededFuture(())
+        _ = try await withConnection { _ in
+            ()
         }
     }
 }

@@ -31,7 +31,19 @@ public final class SQLServerClient: @unchecked Sendable {
     ) async throws -> SQLServerClient {
         try await connect(
             configuration: configuration,
-            eventLoopGroupProvider: .createNew(numberOfThreads: System.coreCount),
+            numberOfThreads: System.coreCount,
+            logger: logger
+        )
+    }
+
+    public static func connect(
+        configuration: Configuration,
+        numberOfThreads: Int,
+        logger: Logger = Logger(label: "tds.sqlserver.client")
+    ) async throws -> SQLServerClient {
+        try await connect(
+            configuration: configuration,
+            eventLoopGroupProvider: .createNew(numberOfThreads: numberOfThreads),
             logger: logger
         ).get()
     }
@@ -178,6 +190,25 @@ public final class SQLServerClient: @unchecked Sendable {
 
     public func shutdownGracefully() async throws {
         try await shutdownGracefully().get()
+    }
+
+    public func close() async throws {
+        try await shutdownGracefully()
+    }
+
+    @available(macOS 12.0, *)
+    public func connection() async throws -> SQLServerConnection {
+        let pooled = try await pool.checkout().get()
+        let connection = makeConnection(from: pooled)
+        let loop = connection.eventLoop
+
+        do {
+            try await healthProbe(connection, on: loop).get()
+            return connection
+        } catch {
+            _ = try? await connection.invalidate().get()
+            throw SQLServerError.normalize(error)
+        }
     }
 
     @available(*, deprecated, message: "Use async shutdownGracefully() instead.")

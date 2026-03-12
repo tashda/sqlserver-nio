@@ -1,5 +1,4 @@
 import Foundation
-import NIO
 
 public final class SQLServerMetadataNamespace: @unchecked Sendable {
     internal let client: SQLServerClient
@@ -9,23 +8,22 @@ public final class SQLServerMetadataNamespace: @unchecked Sendable {
     }
 
     @available(macOS 12.0, *)
-    public func listDatabases(on eventLoop: EventLoop? = nil) async throws -> [DatabaseMetadata] {
-        try await client.listDatabases(on: eventLoop)
+    public func listDatabases() async throws -> [DatabaseMetadata] {
+        try await client.listDatabases()
     }
 
     @available(macOS 12.0, *)
-    public func listSchemas(in database: String? = nil, on eventLoop: EventLoop? = nil) async throws -> [SchemaMetadata] {
-        try await client.listSchemas(in: database, on: eventLoop)
+    public func listSchemas(in database: String? = nil) async throws -> [SchemaMetadata] {
+        try await client.listSchemas(in: database)
     }
 
     @available(macOS 12.0, *)
     public func listTables(
         database: String? = nil,
         schema: String? = nil,
-        includeComments: Bool = false,
-        on eventLoop: EventLoop? = nil
+        includeComments: Bool = false
     ) async throws -> [TableMetadata] {
-        try await client.listTables(database: database, schema: schema, includeComments: includeComments, on: eventLoop)
+        try await client.listTables(database: database, schema: schema, includeComments: includeComments)
     }
 
     @available(macOS 12.0, *)
@@ -34,29 +32,27 @@ public final class SQLServerMetadataNamespace: @unchecked Sendable {
         schema: String,
         table: String,
         objectTypeHint: String? = nil,
-        includeComments: Bool = false,
-        on eventLoop: EventLoop? = nil
+        includeComments: Bool = false
     ) async throws -> [ColumnMetadata] {
         try await client.listColumns(
             database: database,
             schema: schema,
             table: table,
             objectTypeHint: objectTypeHint,
-            includeComments: includeComments,
-            on: eventLoop
+            includeComments: includeComments
         )
     }
 
     @available(macOS 12.0, *)
-    public func listIndexes(database: String? = nil, schema: String, table: String, on eventLoop: EventLoop? = nil) async throws -> [IndexMetadata] {
-        try await client.withConnection(on: eventLoop) { connection in
+    public func listIndexes(database: String? = nil, schema: String, table: String) async throws -> [IndexMetadata] {
+        try await client.withConnection { connection in
             try await connection.listIndexes(database: database, schema: schema, table: table).get()
         }
     }
 
     @available(macOS 12.0, *)
-    public func listForeignKeys(database: String? = nil, schema: String, table: String, on eventLoop: EventLoop? = nil) async throws -> [ForeignKeyMetadata] {
-        try await client.withConnection(on: eventLoop) { connection in
+    public func listForeignKeys(database: String? = nil, schema: String, table: String) async throws -> [ForeignKeyMetadata] {
+        try await client.withConnection { connection in
             try await connection.listForeignKeys(database: database, schema: schema, table: table).get()
         }
     }
@@ -66,10 +62,9 @@ public final class SQLServerMetadataNamespace: @unchecked Sendable {
         database: String? = nil,
         schema: String? = nil,
         table: String? = nil,
-        includeComments: Bool = false,
-        on eventLoop: EventLoop? = nil
+        includeComments: Bool = false
     ) async throws -> [TriggerMetadata] {
-        try await client.withConnection(on: eventLoop) { connection in
+        try await client.withConnection { connection in
             try await connection.listTriggers(database: database, schema: schema, table: table, includeComments: includeComments).get()
         }
     }
@@ -78,10 +73,9 @@ public final class SQLServerMetadataNamespace: @unchecked Sendable {
     public func listProcedures(
         database: String? = nil,
         schema: String? = nil,
-        includeComments: Bool = false,
-        on eventLoop: EventLoop? = nil
+        includeComments: Bool = false
     ) async throws -> [RoutineMetadata] {
-        try await client.withConnection(on: eventLoop) { connection in
+        try await client.withConnection { connection in
             try await connection.listProcedures(database: database, schema: schema, includeComments: includeComments).get()
         }
     }
@@ -90,10 +84,9 @@ public final class SQLServerMetadataNamespace: @unchecked Sendable {
     public func listFunctions(
         database: String? = nil,
         schema: String? = nil,
-        includeComments: Bool = false,
-        on eventLoop: EventLoop? = nil
+        includeComments: Bool = false
     ) async throws -> [RoutineMetadata] {
-        try await client.withConnection(on: eventLoop) { connection in
+        try await client.withConnection { connection in
             try await connection.listFunctions(database: database, schema: schema, includeComments: includeComments).get()
         }
     }
@@ -103,20 +96,18 @@ public final class SQLServerMetadataNamespace: @unchecked Sendable {
         database: String? = nil,
         schema: String,
         name: String,
-        kind: SQLServerMetadataObjectIdentifier.Kind,
-        on eventLoop: EventLoop? = nil
+        kind: SQLServerMetadataObjectIdentifier.Kind
     ) async throws -> ObjectDefinition? {
-        try await client.objectDefinition(database: database, schema: schema, name: name, kind: kind, on: eventLoop)
+        try await client.objectDefinition(database: database, schema: schema, name: name, kind: kind)
     }
 
     @available(macOS 12.0, *)
     public func loadSchemaStructure(
         database: String? = nil,
         schema: String,
-        includeComments: Bool = false,
-        on eventLoop: EventLoop? = nil
+        includeComments: Bool = false
     ) async throws -> SQLServerSchemaStructure {
-        try await client.withConnection(on: eventLoop) { connection in
+        try await client.withConnection { connection in
             try await connection.loadSchemaStructure(database: database, schema: schema, includeComments: includeComments).get()
         }
     }
@@ -124,10 +115,9 @@ public final class SQLServerMetadataNamespace: @unchecked Sendable {
     @available(macOS 12.0, *)
     public func loadDatabaseStructure(
         database: String? = nil,
-        includeComments: Bool = false,
-        on eventLoop: EventLoop? = nil
+        includeComments: Bool = false
     ) async throws -> SQLServerDatabaseStructure {
-        try await client.withConnection(on: eventLoop) { connection in
+        try await client.withConnection { connection in
             try await connection.loadDatabaseStructure(database: database, includeComments: includeComments).get()
         }
     }
@@ -137,9 +127,8 @@ public final class SQLServerMetadataNamespace: @unchecked Sendable {
         query: String,
         database: String? = nil,
         schema: String? = nil,
-        scopes: MetadataSearchScope = .default,
-        on eventLoop: EventLoop? = nil
+        scopes: MetadataSearchScope = .default
     ) async throws -> [MetadataSearchHit] {
-        try await client.searchMetadata(query: query, database: database, schema: schema, scopes: scopes, on: eventLoop)
+        try await client.searchMetadata(query: query, database: database, schema: schema, scopes: scopes)
     }
 }
