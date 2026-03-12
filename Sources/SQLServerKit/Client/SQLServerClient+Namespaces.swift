@@ -7,6 +7,7 @@ extension SQLServerClient {
     public var security: SQLServerSecurityClient { SQLServerSecurityClient(client: self) }
     public var serverSecurity: SQLServerServerSecurityClient { SQLServerServerSecurityClient(client: self) }
     public var transactions: SQLServerTransactionClient { SQLServerTransactionClient(client: self) }
+    public var constraints: SQLServerConstraintClient { SQLServerConstraintClient(client: self) }
     public var indexes: SQLServerIndexClient { SQLServerIndexClient(client: self) }
     public var routines: SQLServerRoutineClient { SQLServerRoutineClient(client: self) }
     public var views: SQLServerViewClient { SQLServerViewClient(client: self) }
