@@ -215,6 +215,13 @@ final class AgentEnhancedAPITests: AgentTestBase, @unchecked Sendable {
         XCTAssertGreaterThanOrEqual(jobs.count, 0)
     }
 
+    func testAgentPreflightAsync() async throws {
+        let agent = SQLServerAgentOperations(client: self.client)
+        try await withTimeout(operationTimeout) {
+            try await agent.preflightAgentEnvironment()
+        }
+    }
+
     func testDateConversionInEnhancedAPIs() async throws {
         let agent = SQLServerAgentOperations(client: self.client)
 
