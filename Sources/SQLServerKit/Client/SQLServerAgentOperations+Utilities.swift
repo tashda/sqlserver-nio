@@ -6,9 +6,9 @@ extension SQLServerAgentOperations {
     internal func run(_ sql: String) -> EventLoopFuture<[TDSRow]> {
         switch backing {
         case .connection(let connection):
-            return connection.execute(sql).map(\.rows)
+            return connection.execute(sql).map(\.rawRows)
         case .client(let client):
-            return client.withConnection { $0.execute(sql).map(\.rows) }
+            return client.withConnection { $0.execute(sql).map(\.rawRows) }
         }
     }
 

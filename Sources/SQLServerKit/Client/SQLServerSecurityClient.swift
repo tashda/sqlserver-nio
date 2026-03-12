@@ -45,7 +45,7 @@ public final class SQLServerSecurityClient: @unchecked Sendable {
     }
     
     @available(macOS 12.0, *)
-    internal func query(_ sql: String) async throws -> [TDSRow] {
+    internal func query(_ sql: String) async throws -> [SQLServerRow] {
         switch backing {
         case .client(let c):
             return try await c.query(sql)
@@ -55,7 +55,7 @@ public final class SQLServerSecurityClient: @unchecked Sendable {
     }
     
     @available(macOS 12.0, *)
-    internal func queryScalar<T: TDSDataConvertible & Sendable>(_ sql: String, as: T.Type) async throws -> T? {
+    internal func queryScalar<T: SQLServerDataConvertible & Sendable>(_ sql: String, as: T.Type) async throws -> T? {
         switch backing {
         case .client(let c):
             return try await c.queryScalar(sql, as: T.self)
@@ -65,7 +65,7 @@ public final class SQLServerSecurityClient: @unchecked Sendable {
     }
 
     // Non-async convenience used by some EventLoopFuture-returning helpers
-    internal func run(_ sql: String) -> EventLoopFuture<[TDSRow]> {
+    internal func run(_ sql: String) -> EventLoopFuture<[SQLServerRow]> {
         switch backing {
         case .client(let c):
             return c.query(sql)
