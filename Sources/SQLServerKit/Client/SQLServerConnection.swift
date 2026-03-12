@@ -288,7 +288,45 @@ public final class SQLServerConnection: @unchecked Sendable {
     }
 
     public func close() async throws {
-        try await close().get()
+        let shouldClose = stateLock.withLock { () -> Bool in
+            if _isClosed {
+                return false
+            }
+            _isClosed = true
+            return true
+        }
+        guard shouldClose else { return }
+
+        if reuseOnClose {
+            let defaultDatabase = configuration.login.database
+            let currentDatabase = self.currentDatabase
+            if !base.isClosed,
+               currentDatabase.caseInsensitiveCompare(defaultDatabase) != .orderedSame {
+                do {
+                    let switchFuture: EventLoopFuture<Void> = self.changeDatabase(defaultDatabase)
+                    try await switchFuture.get()
+                    try await release(false).get()
+                } catch {
+                    try await release(true).get()
+                }
+            } else {
+                try await release(false).get()
+            }
+        } else {
+            try await release(true).get()
+        }
+
+        if let group = ownsEventLoopGroup {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                group.shutdownGracefully { error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume()
+                    }
+                }
+            }
+        }
     }
 
     @available(macOS 12.0, *)

@@ -1,14 +1,11 @@
 @testable import SQLServerKit
 import SQLServerKitTesting
 import XCTest
-import NIO
 import Logging
 
 final class SQLServerTransactionClientTests: XCTestCase, @unchecked Sendable {
-    private static let sharedGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     @MainActor
     private static var sharedClient: SQLServerClient?
-    var group: EventLoopGroup!
     var client: SQLServerClient!
     var dbClient: SQLServerClient!
     private var testDatabase: String!
@@ -16,28 +13,27 @@ final class SQLServerTransactionClientTests: XCTestCase, @unchecked Sendable {
         continueAfterFailure = false
         TestEnvironmentManager.loadEnvironmentVariables()
         _ = isLoggingConfigured
-        self.group = Self.sharedGroup
         if let sharedClient = await MainActor.run(body: { Self.sharedClient }) {
             self.client = sharedClient
         } else {
             let sharedClient = try await SQLServerClient.connect(
                 configuration: makeSQLServerClientConfiguration(),
-                eventLoopGroupProvider: .shared(group)
-            ).get()
+                numberOfThreads: 1
+            )
             await MainActor.run {
                 Self.sharedClient = sharedClient
             }
             self.client = sharedClient
         }
-        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1").get() } } catch { throw error }
+        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1") } } catch { throw error }
         testDatabase = try await createTemporaryDatabase(client: client, prefix: "txc")
-        dbClient = try await makeClient(forDatabase: testDatabase, using: group, maxConnections: 1)
+        dbClient = try await makeClient(forDatabase: testDatabase, maxConnections: 1)
     }
 
     override func tearDown() async throws {
-        try? await dbClient?.shutdownGracefully().get()
+        try? await dbClient?.shutdownGracefully()
         if let db = testDatabase { try? await dropTemporaryDatabase(client: client, name: db) }
-        dbClient = nil; testDatabase = nil; group = nil
+        dbClient = nil; testDatabase = nil
     }
 
     @available(macOS 12.0, *)

@@ -1,23 +1,19 @@
 @testable import SQLServerKit
 import SQLServerKitTesting
 import XCTest
-import NIO
 import Logging
 
 final class SQLServerPartitionSchemeMatrixTests: XCTestCase, @unchecked Sendable {
-    var group: EventLoopGroup!
     var client: SQLServerClient!
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
         TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
-        group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).get()
-        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1").get() } } catch { throw error }
+        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
+        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1") } } catch { throw error }
     }
 
     override func tearDown() async throws {
-        try await client?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
+        try? await client?.shutdownGracefully()
     }
 
     @available(macOS 12.0, *)
@@ -27,7 +23,7 @@ final class SQLServerPartitionSchemeMatrixTests: XCTestCase, @unchecked Sendable
             let ps = "psInt_\(UUID().uuidString.prefix(6))"
             let table = "ps_tbl_\(UUID().uuidString.prefix(6))"
             let ix = "ix_ps_\(UUID().uuidString.prefix(6))"
-            try await withDbClient(for: db, using: self.group) { dbClient in
+            try await withDbClient(for: db) { dbClient in
                 let indexClient = SQLServerIndexClient(client: dbClient)
                 try await withDbConnection(client: dbClient, database: db) { connection in
                     try await connection.createPartitionFunction(name: String(pf), dataType: .int, values: ["100", "1000"])

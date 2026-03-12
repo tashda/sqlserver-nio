@@ -1,11 +1,9 @@
 @testable import SQLServerKit
 import SQLServerKitTesting
 import XCTest
-import NIO
 import Logging
 
 final class SQLServerTableDefinitionCoverageTests: XCTestCase, @unchecked Sendable {
-    var group: EventLoopGroup!
     var client: SQLServerClient!
 
     override func setUp() async throws {
@@ -17,14 +15,13 @@ final class SQLServerTableDefinitionCoverageTests: XCTestCase, @unchecked Sendab
         // Configure logging
         _ = isLoggingConfigured
 
-        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         let config = makeSQLServerClientConfiguration()
-        self.client = try await SQLServerClient.connect(configuration: config, eventLoopGroupProvider: .shared(group)).get()
+        self.client = try await SQLServerClient.connect(configuration: config, numberOfThreads: 1)
     }
 
     override func tearDown() async throws {
-        try await client?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
+        try? await client?.shutdownGracefully()
+        client = nil
     }
 
     func testComprehensiveTableScripting() async throws {
@@ -35,7 +32,7 @@ final class SQLServerTableDefinitionCoverageTests: XCTestCase, @unchecked Sendab
             let child = "cov_child_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8))"
 
             // Create parent using the administration client
-            let dbClient = try await makeClient(forDatabase: db, using: self.group)
+            let dbClient = try await makeClient(forDatabase: db)
             let admin = SQLServerAdministrationClient(client: dbClient)
             let constraints = SQLServerConstraintClient(client: dbClient)
             let indexes = SQLServerIndexClient(client: dbClient)
@@ -84,7 +81,7 @@ final class SQLServerTableDefinitionCoverageTests: XCTestCase, @unchecked Sendab
                 filter: "[RefId] IS NOT NULL"
             )
 
-        
+
 
             guard let def = try await withRetry(attempts: 5, operation: {
                 try await withTimeout(60, operation: {
@@ -137,7 +134,7 @@ final class SQLServerTableDefinitionCoverageTests: XCTestCase, @unchecked Sendab
         XCTAssertTrue(ddl.contains("WITH ("), "Expected WITH table/index options when applicable")
 
         // Cleanup - no explicit cleanup needed; database gets dropped by withTemporaryDatabase
-        _ = try? await dbClient.shutdownGracefully().get()
+        _ = try? await dbClient.shutdownGracefully()
         }
         } catch {
             if let te = error as? AsyncTimeoutError {

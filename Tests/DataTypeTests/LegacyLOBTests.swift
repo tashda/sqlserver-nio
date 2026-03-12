@@ -1,25 +1,20 @@
 @testable import SQLServerKit
 import SQLServerKitTesting
 import XCTest
-import NIO
 import Logging
 
 final class SQLServerLegacyLobRoundTripTests: XCTestCase, @unchecked Sendable {
-    var group: EventLoopGroup!
     var client: SQLServerClient!
 
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
         TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
-        group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).get()
+        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
     }
 
     override func tearDown() async throws {
-        try await client?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
+        try? await client?.shutdownGracefully()
         client = nil
-        group = nil
     }
 
     func testNTextAndImageRoundTrip() async throws {
@@ -27,7 +22,7 @@ final class SQLServerLegacyLobRoundTripTests: XCTestCase, @unchecked Sendable {
             try await withTemporaryDatabase(client: self.client, prefix: "lob") { db in
                 let table = "legacy_lob_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8))"
 
-                try await withDbClient(for: db, using: self.group) { dbClient in
+                try await withDbClient(for: db) { dbClient in
                     let dbAdminClient = SQLServerAdministrationClient(client: dbClient)
 
                     // TEXT/NTEXT/IMAGE are deprecated; if this fails on your server config, we will skip.
@@ -80,7 +75,7 @@ final class SQLServerLegacyLobRoundTripTests: XCTestCase, @unchecked Sendable {
             try await withTemporaryDatabase(client: self.client, prefix: "plp") { db in
                 let table = "plp_roundtrip_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8))"
 
-                try await withDbClient(for: db, using: self.group) { dbClient in
+                try await withDbClient(for: db) { dbClient in
                     let dbAdminClient = SQLServerAdministrationClient(client: dbClient)
 
                     // Create table using SQLServerKit APIs with XML and MAX data types

@@ -1,23 +1,19 @@
 @testable import SQLServerKit
 import SQLServerKitTesting
 import XCTest
-import NIO
 import Logging
 
 final class SQLServerTemporalMatrixTests: XCTestCase, @unchecked Sendable {
-    var group: EventLoopGroup!
     var client: SQLServerClient!
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
         TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
-        group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).get()
-        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1").get() } } catch { throw error }
+        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
+        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1") } } catch { throw error }
     }
 
     override func tearDown() async throws {
-        try await client?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
+        try? await client?.shutdownGracefully()
     }
 
     @available(macOS 12.0, *)

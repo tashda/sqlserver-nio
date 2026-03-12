@@ -1,38 +1,22 @@
 @testable import SQLServerKit
 import SQLServerKitTesting
 import XCTest
-import NIO
 import Logging
 
 final class SQLServerTableDefinitionTests: XCTestCase, @unchecked Sendable {
-    var group: EventLoopGroup!
     var client: SQLServerClient!
 
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
         TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
 
-        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         let config = makeSQLServerClientConfiguration()
-        self.client = try await SQLServerClient.connect(configuration: config, eventLoopGroupProvider: .shared(group)).get()
+        self.client = try await SQLServerClient.connect(configuration: config, numberOfThreads: 1)
     }
 
     override func tearDown() async throws {
-        do {
-            try await client?.shutdownGracefully().get()
-        } catch {
-            // Silently ignore "Already closed" errors during shutdown - they're expected under stress
-            if error.localizedDescription.contains("Already closed") ||
-               error.localizedDescription.contains("ChannelError error 6") {
-                // Both errors are expected during EventLoop shutdown
-            } else {
-                throw error
-            }
-        }
-
-        if let g = group {
-            _ = try? await SQLServerClient.shutdownEventLoopGroup(g).get()
-        }
+        try? await client?.shutdownGracefully()
+        client = nil
     }
 
     func testFetchTableDefinition() async throws {
@@ -41,7 +25,7 @@ final class SQLServerTableDefinitionTests: XCTestCase, @unchecked Sendable {
         let child = "def_child_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8))"
         do {
         try await withTemporaryDatabase(client: self.client, prefix: "def") { db in
-            try await withDbClient(for: db, using: self.group) { dbClient in
+            try await withDbClient(for: db) { dbClient in
                 // Use proper API methods instead of raw SQL
                 let adminClient = SQLServerAdministrationClient(client: dbClient)
                 let constraintClient = SQLServerConstraintClient(client: dbClient)

@@ -1,33 +1,28 @@
 @testable import SQLServerKit
 import SQLServerKitTesting
 import XCTest
-import NIO
 import Logging
 import Foundation
 
 final class SQLServerTableScriptingMatrixTests: XCTestCase, @unchecked Sendable {
-    var group: EventLoopGroup!
     var client: SQLServerClient!
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
         TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
-        group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).get()
+        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
         // Probe basic connectivity; skip if unstable
-        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1 as ready").get() } } catch { throw error }
+        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1 as ready") } } catch { throw error }
     }
 
     override func tearDown() async throws {
-        try await client?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
+        try? await client?.shutdownGracefully()
         client = nil
-        group = nil
     }
 
     @available(macOS 12.0, *)
     func testTableScriptGoldenRecreate() async throws {
         try await withTemporaryDatabase(client: self.client, prefix: "tsmx") { db in
-            try await withDbClient(for: db, using: self.group) { dbClient in
+            try await withDbClient(for: db) { dbClient in
                 let dbAdminClient = SQLServerAdministrationClient(client: dbClient)
             // A small but representative set; expanded when deep mode is enabled
                 struct Col { let name: String; let def: String }

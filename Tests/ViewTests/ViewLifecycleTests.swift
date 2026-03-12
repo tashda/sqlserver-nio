@@ -1,11 +1,9 @@
 import XCTest
 import Logging
-import NIO
 @testable import SQLServerKit
 import SQLServerKitTesting
 
 final class SQLServerViewTests: XCTestCase, @unchecked Sendable {
-    private var group: EventLoopGroup!
     private var client: SQLServerClient!
     private var viewClient: SQLServerViewClient!
     private var adminClient: SQLServerAdministrationClient!
@@ -16,10 +14,9 @@ final class SQLServerViewTests: XCTestCase, @unchecked Sendable {
         try await super.setUp()
         XCTAssertTrue(isLoggingConfigured)
         TestEnvironmentManager.loadEnvironmentVariables()
-        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        
+
         let config = makeSQLServerClientConfiguration()
-        self.client = try await SQLServerClient.connect(configuration: config, eventLoopGroupProvider: .shared(group)).get()
+        self.client = try await SQLServerClient.connect(configuration: config, numberOfThreads: 1)
         self.viewClient = SQLServerViewClient(client: client)
         self.adminClient = SQLServerAdministrationClient(client: client)
     }
@@ -35,9 +32,7 @@ final class SQLServerViewTests: XCTestCase, @unchecked Sendable {
         }
         tablesToDrop.removeAll()
 
-        try await self.client.shutdownGracefully().get()
-        try await self.group?.shutdownGracefully()
-        self.group = nil
+        try? await self.client?.shutdownGracefully()
         try await super.tearDown()
     }
 
@@ -50,10 +45,10 @@ final class SQLServerViewTests: XCTestCase, @unchecked Sendable {
             SQLServerColumnDefinition(name: "value", definition: .standard(.init(dataType: .int))),
             SQLServerColumnDefinition(name: "created_date", definition: .standard(.init(dataType: .datetime2(precision: 3))))
         ]
-        
+
         try await adminClient.createTable(name: name, columns: columns)
         tablesToDrop.append(name)
-        
+
         try await client.withConnection { connection in
             try await connection.insertRow(into: name, values: [
                 "id": .int(1),
@@ -209,7 +204,7 @@ final class SQLServerViewTests: XCTestCase, @unchecked Sendable {
         FROM dbo.[\(tableName)]
         GROUP BY id, name, value
         """
-        
+
         try await viewClient.createIndexedView(
             name: viewName,
             query: query,
@@ -245,7 +240,7 @@ final class SQLServerViewTests: XCTestCase, @unchecked Sendable {
         FROM dbo.[\(tableName)]
         GROUP BY id, name
         """
-        
+
         try await viewClient.createIndexedView(
             name: viewName,
             query: query,
@@ -335,7 +330,7 @@ final class SQLServerViewTests: XCTestCase, @unchecked Sendable {
 
         // Create aggregation view
         let query = """
-        SELECT category, 
+        SELECT category,
                COUNT(*) as item_count,
                SUM(amount) as total_amount,
                AVG(amount) as avg_amount
@@ -347,7 +342,7 @@ final class SQLServerViewTests: XCTestCase, @unchecked Sendable {
         // Test the aggregation view
         let result = try await client.query("SELECT * FROM [\(viewName)] ORDER BY category")
         XCTAssertEqual(result.count, 3)
-        
+
         // Check category A
         XCTAssertEqual(result[0].column("category")?.string, "A")
         XCTAssertEqual(result[0].column("item_count")?.int, 2)
@@ -360,7 +355,7 @@ final class SQLServerViewTests: XCTestCase, @unchecked Sendable {
         }
         XCTAssertEqual(totalAmountA, 300.75, accuracy: 0.0001)
         XCTAssertEqual(averageAmountA, 150.375, accuracy: 0.0001)
-        
+
         // Check category B
         XCTAssertEqual(result[1].column("category")?.string, "B")
         XCTAssertEqual(result[1].column("item_count")?.int, 2)
@@ -373,7 +368,7 @@ final class SQLServerViewTests: XCTestCase, @unchecked Sendable {
         }
         XCTAssertEqual(totalAmountB, 450.75, accuracy: 0.0001)
         XCTAssertEqual(averageAmountB, 225.375, accuracy: 0.0001)
-        
+
         // Check category C single row
         XCTAssertEqual(result[2].column("category")?.string, "C")
         XCTAssertEqual(result[2].column("item_count")?.int, 1)

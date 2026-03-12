@@ -1,47 +1,40 @@
 import XCTest
-import NIO
 @testable import SQLServerKit
 import SQLServerKitTesting
 
 class ConstraintTestBase: XCTestCase, @unchecked Sendable {
-    var group: EventLoopGroup!
     var baseClient: SQLServerClient!
     var client: SQLServerClient!
     var constraintClient: SQLServerConstraintClient!
     var adminClient: SQLServerAdministrationClient!
     var testDatabase: String!
+
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
         TestEnvironmentManager.loadEnvironmentVariables()
-        
-        // Ensure Docker is started if requested
+
         if envFlagEnabled("USE_DOCKER") {
             try SQLServerDockerManager.shared.startIfNeeded()
         }
-        
-        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+
         self.baseClient = try await SQLServerClient.connect(
             configuration: makeSQLServerClientConfiguration(),
-            eventLoopGroupProvider: .shared(group)
-        ).get()
-        do {
-            _ = try await withTimeout(10) { try await self.baseClient.query("SELECT 1").get() }
-        } catch {
-            throw error
-        }
+            numberOfThreads: 1
+        )
+        _ = try await withTimeout(10) { try await self.baseClient.query("SELECT 1") }
         testDatabase = try await createTemporaryDatabase(client: baseClient, prefix: "cst")
-        self.client = try await makeClient(forDatabase: testDatabase, using: group)
+        self.client = try await makeClient(forDatabase: testDatabase, using: nil)
         self.adminClient = SQLServerAdministrationClient(client: self.client)
         self.constraintClient = SQLServerConstraintClient(client: self.client)
     }
 
     override func tearDown() async throws {
-        try? await client?.shutdownGracefully().get()
+        try? await client?.shutdownGracefully()
         if let db = testDatabase { try? await dropTemporaryDatabase(client: baseClient, name: db) }
-        try? await baseClient?.shutdownGracefully().get()
-        try? await group?.shutdownGracefully()
+        try? await baseClient?.shutdownGracefully()
         testDatabase = nil
-        group = nil
+        client = nil
+        baseClient = nil
     }
 
     func createTestTable(name: String, withPrimaryKey: Bool = false) async throws {

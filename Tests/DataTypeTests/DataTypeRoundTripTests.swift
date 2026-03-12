@@ -1,12 +1,10 @@
 import XCTest
 import Logging
-import NIO
 @testable import SQLServerKit
 import SQLServerKitTesting
 import Foundation
 
 final class SQLServerDataTypeRoundTripTests: XCTestCase, @unchecked Sendable {
-    var group: EventLoopGroup!
     var client: SQLServerClient!
 
     private var adminClient: SQLServerAdministrationClient!
@@ -20,32 +18,31 @@ final class SQLServerDataTypeRoundTripTests: XCTestCase, @unchecked Sendable {
         // Configure logging
         _ = isLoggingConfigured
 
-        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         let config = makeSQLServerClientConfiguration()
-        self.client = try await SQLServerClient.connect(configuration: config, eventLoopGroupProvider: .shared(group)).get()
+        self.client = try await SQLServerClient.connect(configuration: config, numberOfThreads: 1)
 
         adminClient = SQLServerAdministrationClient(client: client)
         // Quick probe; if the server is unstable right now, skip long integration paths to avoid timeouts.
-        do { _ = try await client.query("SELECT 1").get() } catch { throw error }
+        do { _ = try await client.query("SELECT 1") } catch { throw error }
     }
-  
+
     override func tearDown() async throws {
         for table in tablesToDrop {
             try? await adminClient.dropTable(name: table)
         }
         tablesToDrop.removeAll()
         adminClient = nil
-        try await client?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
+        try? await client?.shutdownGracefully()
+        client = nil
         try await super.tearDown()
     }
-    
+
     func testNumericRoundTrips() async throws {
         try await withTimeout(20) {
             try await withTemporaryDatabase(client: self.client, prefix: "rt") { db in
             let tableName = "datatype_numeric_\(UUID().uuidString.prefix(8))"
 
-            try await withDbClient(for: db, using: self.group) { dbClient in
+            try await withDbClient(for: db) { dbClient in
                 let dbAdminClient = SQLServerAdministrationClient(client: dbClient)
 
                 // Create table using SQLServerKit APIs with numeric data types
@@ -110,7 +107,7 @@ final class SQLServerDataTypeRoundTripTests: XCTestCase, @unchecked Sendable {
             try await withTemporaryDatabase(client: self.client, prefix: "rt") { db in
                 let tableName = "datatype_temporal_\(UUID().uuidString.prefix(8))"
 
-                try await withDbClient(for: db, using: self.group) { dbClient in
+                try await withDbClient(for: db) { dbClient in
                     let dbAdminClient = SQLServerAdministrationClient(client: dbClient)
 
                     let columns = [
@@ -178,7 +175,7 @@ final class SQLServerDataTypeRoundTripTests: XCTestCase, @unchecked Sendable {
             }
         }
     }
-    
+
     func testCharacterBinaryAndVariantRoundTrips() async throws {
         // Use a pooled client connection and select typed literals to exercise decode paths without DDL
         // Temporarily disable the test-timeout wrapper to avoid interfering with variant decoding
@@ -214,13 +211,13 @@ final class SQLServerDataTypeRoundTripTests: XCTestCase, @unchecked Sendable {
             XCTAssertEqual(rows2.first?.column("variant_value")?.string, "Variant payload")
         }
     }
-    
+
     func testMaxPayloadRoundTrips() async throws {
         try await withTimeout(30) {
             try await withTemporaryDatabase(client: self.client, prefix: "rt") { db in
                 let tableName = "datatype_max_\(UUID().uuidString.prefix(8))"
 
-                try await withDbClient(for: db, using: self.group) { dbClient in
+                try await withDbClient(for: db) { dbClient in
                     let dbAdminClient = SQLServerAdministrationClient(client: dbClient)
 
                     // Create table using SQLServerKit APIs with MAX data types
