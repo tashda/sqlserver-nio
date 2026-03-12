@@ -345,7 +345,7 @@ try await serverSec.alterCredential(name: "s3_cred", identity: nil, secret: "new
 try await serverSec.dropCredential(name: "s3_cred")
 ```
 
-Note: Server‑level tests and operations may require `sysadmin` or specific server permissions (e.g., `ALTER ANY CREDENTIAL`). Gate integration tests with `TDS_ENABLE_SERVER_SECURITY_TESTS=1`.
+Note: Server-level tests and operations may require `sysadmin` or specific server permissions (for example `ALTER ANY CREDENTIAL`). The default test suite now runs those integration tests directly, so use an isolated SQL Server instance or the Docker-backed matrix.
 
 Notes:
 - SQL Server uses SELECT TOP n or FETCH NEXT n ROWS ONLY, not LIMIT.
@@ -772,18 +772,12 @@ let proxies = try await agent.listProxies()
 
 ### Testing Agent end-to-end
 
-The integration tests are gated by environment flags so you can selectively run them against your instance:
-- `TDS_ENABLE_AGENT_TESTS=1` — core job lifecycle (create, steps, start/stop, running list, history)
-- `TDS_ENABLE_AGENT_SCHEDULE_TESTS=1` — schedules (create, attach/detach, list, next run times)
-- `TDS_ENABLE_AGENT_ALERT_TESTS=1` — operators and alerts
-- `TDS_ENABLE_AGENT_SECURITY_TESTS=1` — agent role/permission checks (creates logins/users)
-- `TDS_ENABLE_AGENT_PROXY_TESTS=1` — proxies and credentials (requires elevated permissions)
+Agent integration tests now run as part of the normal suite. The recommended setup is the Docker-backed test environment so the package, Xcode test plan, and GitHub Actions all exercise the same path.
 
-Run a focused suite:
+Use focused filters only for iteration speed, not feature gating:
 
-```
-env $(grep -v '^#' .env | xargs) TDS_ENABLE_AGENT_TESTS=1 swift test --filter SQLServerAgentTests
-```
+```bash
+USE_DOCKER=1 TDS_VERSION=2022-latest TDS_DOCKER_PORT=14331 swift test --filter MinimalAgentTests
 ```
 
 ## Error Handling & Retries
@@ -802,16 +796,23 @@ Configure retries via `SQLServerRetryConfiguration` on your connection/client co
 
 ## Testing
 
-1. Copy `.env.example` to `.env` and adjust credentials.
-2. Start a SQL Server instance locally or via `docker/scripts/docker-compose.yml`.
-3. Enable the suites you want using the `TDS_ENABLE_*` flags in `.env`.
-4. Run `swift test` or open `SQLServerNIO.xctestplan` in Xcode.
+1. For a host-managed instance, export `TDS_HOSTNAME`, `TDS_PORT`, `TDS_DATABASE`, `TDS_USERNAME`, and `TDS_PASSWORD`.
+2. For the full Docker-backed matrix, set `USE_DOCKER=1`, pick a `TDS_VERSION`, and optionally enable `TDS_LOAD_ADVENTUREWORKS=1`.
+3. Run `swift test` or open `SQLServerNIO.xctestplan` in Xcode.
 
-```
+Host-managed example:
+
+```bash
 TDS_HOSTNAME=127.0.0.1 TDS_PORT=1433 TDS_DATABASE=master TDS_USERNAME=sa TDS_PASSWORD=<your_password> swift test
 ```
 
-`SQLServerNIO.xctestplan` includes configurations for core, admin, and SQL Agent suites. Use environment flags such as `TDS_HOSTNAME`, `TDS_PORT`, `TDS_USERNAME`, `TDS_PASSWORD`, `TDS_DATABASE`, `TDS_ENABLE_SCHEMA_TESTS`, and `TDS_ENABLE_AGENT_TESTS`.
+Docker-backed example:
+
+```bash
+USE_DOCKER=1 TDS_VERSION=2022-latest TDS_DOCKER_PORT=14331 TDS_LOAD_ADVENTUREWORKS=1 TDS_AW_DATABASE=AdventureWorks swift test
+```
+
+`SQLServerNIO.xctestplan` now carries one configuration per supported SQL Server version so Xcode uses the same Docker-backed environment model as GitHub Actions.
 
 ## Contributing
 

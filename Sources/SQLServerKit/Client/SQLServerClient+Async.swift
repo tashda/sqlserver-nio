@@ -1,0 +1,292 @@
+import Foundation
+import NIO
+import NIOConcurrencyHelpers
+import SQLServerTDS
+
+extension SQLServerClient {
+    @available(macOS 12.0, *)
+    public func withConnection<Result: Sendable>(
+        _ operation: @escaping @Sendable (SQLServerConnection) async throws -> Result
+    ) async throws -> Result {
+        try await withConnection(on: nil, operation)
+    }
+
+    @available(macOS 12.0, *)
+    public func withDatabase<Result: Sendable>(
+        _ database: String,
+        _ operation: @escaping @Sendable (SQLServerConnection) async throws -> Result
+    ) async throws -> Result {
+        try await withConnection { connection in
+            let originalDatabase = connection.currentDatabase
+            let needsReset = originalDatabase.caseInsensitiveCompare(database) != .orderedSame
+            if needsReset {
+                _ = try await connection.changeDatabase(database)
+            }
+            do {
+                let result = try await operation(connection)
+                if needsReset {
+                    _ = try await connection.changeDatabase(originalDatabase)
+                }
+                return result
+            } catch {
+                if needsReset {
+                    _ = try? await connection.changeDatabase(originalDatabase)
+                }
+                throw error
+            }
+        }
+    }
+
+    @available(macOS 12.0, *)
+    internal func withConnection<Result: Sendable>(
+        on eventLoop: EventLoop? = nil,
+        _ operation: @escaping @Sendable (SQLServerConnection) async throws -> Result
+    ) async throws -> Result {
+        let future: EventLoopFuture<Result> = self.withConnection(on: eventLoop) { connection in
+            let promise = connection.eventLoop.makePromise(of: Result.self)
+            let completed = NIOLockedValueBox(false)
+
+            let task = Task {
+                do {
+                    let result = try await withTaskCancellationHandler(operation: {
+                        try await operation(connection)
+                    }, onCancel: {
+                        connection.cancelActiveRequest()
+                    })
+
+                    if !completed.withLockedValue({ $0 }) {
+                        completed.withLockedValue { $0 = true }
+                        promise.succeed(result)
+                    }
+                } catch {
+                    if !completed.withLockedValue({ $0 }) {
+                        completed.withLockedValue { $0 = true }
+                        let errorToFail: Error
+                        if let sqlError = error as? SQLServerError,
+                           case .deadlockDetected = sqlError {
+                            errorToFail = sqlError
+                        } else {
+                            errorToFail = error
+                        }
+                        promise.fail(errorToFail)
+                    }
+                }
+            }
+
+            connection.underlying.closeFuture.whenComplete { _ in
+                if !completed.withLockedValue({ $0 }) {
+                    completed.withLockedValue { $0 = true }
+                    promise.fail(SQLServerError.connectionClosed)
+                }
+            }
+
+            promise.futureResult.whenFailure { _ in
+                task.cancel()
+            }
+
+            return promise.futureResult
+        }
+
+        do {
+            return try await future.get()
+        } catch {
+            if let channelError = error as? ChannelError,
+               case .alreadyClosed = channelError {
+                throw SQLServerError.connectionClosed
+            }
+            throw error
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func execute(
+        _ sql: String,
+        on eventLoop: EventLoop? = nil
+    ) async throws -> SQLServerExecutionResult {
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.execute(sql)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func execute(_ sql: String) async throws -> SQLServerExecutionResult {
+        try await execute(sql, on: nil)
+    }
+
+    @available(macOS 12.0, *)
+    public func query(
+        _ sql: String,
+        on eventLoop: EventLoop? = nil
+    ) async throws -> [SQLServerRow] {
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.query(sql)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func query(_ sql: String) async throws -> [SQLServerRow] {
+        try await query(sql, on: nil)
+    }
+
+    @available(macOS 12.0, *)
+    public func queryPaged(
+        _ sql: String,
+        limit: Int,
+        offset: Int = 0,
+        on eventLoop: EventLoop? = nil
+    ) async throws -> [SQLServerRow] {
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.queryPaged(sql, limit: limit, offset: offset)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func queryPaged(
+        _ sql: String,
+        limit: Int,
+        offset: Int = 0
+    ) async throws -> [SQLServerRow] {
+        try await queryPaged(sql, limit: limit, offset: offset, on: nil)
+    }
+
+    @available(macOS 12.0, *)
+    public func queryScalar<T: SQLServerDataConvertible & Sendable>(
+        _ sql: String,
+        as type: T.Type = T.self,
+        on eventLoop: EventLoop? = nil
+    ) async throws -> T? {
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.queryScalar(sql, as: type)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func queryScalar<T: SQLServerDataConvertible & Sendable>(
+        _ sql: String,
+        as type: T.Type = T.self
+    ) async throws -> T? {
+        try await queryScalar(sql, as: type, on: nil)
+    }
+
+    @available(macOS 12.0, *)
+    public func call(
+        procedure name: String,
+        parameters: [SQLServerConnection.ProcedureParameter] = [],
+        on eventLoop: EventLoop? = nil
+    ) async throws -> SQLServerExecutionResult {
+        try await withConnection(on: eventLoop) { connection in
+            try await connection.call(procedure: name, parameters: parameters)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func call(
+        procedure name: String,
+        parameters: [SQLServerConnection.ProcedureParameter] = []
+    ) async throws -> SQLServerExecutionResult {
+        try await call(procedure: name, parameters: parameters, on: nil)
+    }
+
+    @available(macOS 12.0, *)
+    public func serverVersion() async throws -> String {
+        try await withConnection { connection in
+            try await connection.serverVersion()
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func executeOnFreshConnection(
+        _ sql: String,
+        on eventLoop: EventLoop? = nil
+    ) async throws -> SQLServerExecutionResult {
+        let loop = eventLoop ?? eventLoopGroup.next()
+        return try await withCheckedThrowingContinuation { continuation in
+            self.executeOnFreshConnection(sql, on: loop).whenComplete { result in
+                continuation.resume(with: result)
+            }
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func executeSeparateBatches(_ sqlStatements: [String]) async throws -> [SQLServerExecutionResult] {
+        let script = sqlStatements.joined(separator: "\nGO\n")
+        return try await executeScript(script)
+    }
+
+    @available(macOS 12.0, *)
+    public func executeScript(_ sql: String) async throws -> [SQLServerExecutionResult] {
+        let splitResults = SQLServerQuerySplitter.splitQuery(sql, options: .mssql)
+        return try await executeWithConnectionLock { connection in
+            var results: [SQLServerExecutionResult] = []
+            for (_, splitResult) in splitResults.enumerated() {
+                if splitResult.text.isEmpty || self.isCommentOnlyBatch(splitResult.text) { continue }
+                do {
+                    let result = try await connection.execute(splitResult.text).get()
+                    if let errorMessage = result.messages.first(where: { $0.kind == .error }) {
+                        if errorMessage.number == 1205 {
+                            throw SQLServerError.deadlockDetected(message: errorMessage.message)
+                        } else {
+                            throw SQLServerError.sqlExecutionError(message: errorMessage.message)
+                        }
+                    }
+                    results.append(result)
+                } catch {
+                    throw error
+                }
+            }
+            return results
+        }
+    }
+
+    @available(macOS 12.0, *)
+    private func executeWithConnectionLock<T: Sendable>(_ operation: @escaping @Sendable (SQLServerConnection) async throws -> T) async throws -> T {
+        let future: EventLoopFuture<T> = self.withConnection(on: nil) { connection in
+            let promise = connection.eventLoop.makePromise(of: T.self)
+            let didComplete = NIOLockedValueBox(false)
+            promise.futureResult.whenComplete { _ in
+                didComplete.withLockedValue { $0 = true }
+            }
+            connection.underlying.closeFuture.whenComplete { _ in
+                if !didComplete.withLockedValue({ $0 }) {
+                    promise.fail(SQLServerError.connectionClosed)
+                }
+            }
+            let _ = Task {
+                do {
+                    let result = try await operation(connection)
+                    if !didComplete.withLockedValue({ $0 }) {
+                        promise.succeed(result)
+                    }
+                } catch {
+                    if !didComplete.withLockedValue({ $0 }) {
+                        if error.localizedDescription.contains("Already closed") {
+                            promise.fail(SQLServerError.connectionClosed)
+                        } else {
+                            promise.fail(error)
+                        }
+                    }
+                }
+            }
+            return promise.futureResult
+        }
+        return try await future.get()
+    }
+
+    @available(macOS 12.0, *)
+    public func healthCheck() async throws -> Bool {
+        do {
+            let rows = try await query("SELECT 1 as health_check")
+            return rows.count == 1 && rows.first?.column("health_check")?.int == 1
+        } catch {
+            logger.warning("Health check failed: \(error)")
+            return false
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func validateConnections() async throws {
+        _ = try await withConnection { _ in
+            ()
+        }
+    }
+}

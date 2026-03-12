@@ -1,7 +1,13 @@
+import NIOCore
 
 public struct TDSRow: Sendable {
     public var columnMetadata: [TDSTokens.ColMetadataToken.ColumnData]
     public var columnData: [TDSTokens.RowToken.ColumnData]
+
+    public init(columnMetadata: [TDSTokens.ColMetadataToken.ColumnData], columnData: [TDSTokens.RowToken.ColumnData]) {
+        self.columnMetadata = columnMetadata
+        self.columnData = columnData
+    }
 
     public init(token: TDSTokens.RowToken, columns: [TDSTokens.ColMetadataToken.ColumnData]) {
         self.columnMetadata = columns

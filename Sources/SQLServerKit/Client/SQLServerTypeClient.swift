@@ -48,7 +48,7 @@ public struct UserDefinedTableTypeDefinition: Sendable {
 
 // MARK: - SQLServerTypeClient
 
-public final class SQLServerTypeClient {
+public final class SQLServerTypeClient: @unchecked Sendable {
     private let client: SQLServerClient
 
     public init(client: SQLServerClient) {
@@ -58,7 +58,7 @@ public final class SQLServerTypeClient {
     // MARK: - Create User-Defined Table Type
 
     /// Creates a user-defined table type with the specified columns
-    public func createUserDefinedTableType(_ definition: UserDefinedTableTypeDefinition) -> EventLoopFuture<Void> {
+    internal func createUserDefinedTableType(_ definition: UserDefinedTableTypeDefinition) -> EventLoopFuture<Void> {
         let columnDefinitions = definition.columns.map { column in
             var columnDef = "[\(column.name)] \(column.dataType.sqlLiteral)"
 
@@ -95,7 +95,7 @@ public final class SQLServerTypeClient {
     // MARK: - Drop User-Defined Table Type
 
     /// Drops a user-defined table type
-    public func dropUserDefinedTableType(name: String, schema: String = "dbo") -> EventLoopFuture<Void> {
+    internal func dropUserDefinedTableType(name: String, schema: String = "dbo") -> EventLoopFuture<Void> {
         let escapedName = "\(schema).[\(name)]"
         let sql = "DROP TYPE IF EXISTS \(escapedName)"
         return client.execute(sql).map { _ in () }
@@ -110,8 +110,8 @@ public final class SQLServerTypeClient {
     // MARK: - List User-Defined Table Types
 
     /// Lists all user-defined table types in the database
-    public func listUserDefinedTableTypes(schema: String? = nil) -> EventLoopFuture<[UserDefinedTableTypeDefinition]> {
-        let queryFuture: EventLoopFuture<[TDSRow]>
+    internal func listUserDefinedTableTypes(schema: String? = nil) -> EventLoopFuture<[UserDefinedTableTypeDefinition]> {
+        let queryFuture: EventLoopFuture<[SQLServerRow]>
 
         if let schema = schema {
             // Query for specific schema - use string interpolation for parameter
@@ -223,7 +223,7 @@ public final class SQLServerTypeClient {
 
     // MARK: - Helper Methods
 
-    private func parseDataType(from typeName: String, row: TDSRow) -> SQLDataType {
+    private func parseDataType(from typeName: String, row: SQLServerRow) -> SQLDataType {
         switch typeName.uppercased() {
         case "INT": return .int
         case "BIGINT": return .bigint

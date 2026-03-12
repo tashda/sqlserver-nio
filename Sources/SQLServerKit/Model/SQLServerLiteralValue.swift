@@ -36,7 +36,7 @@ extension SQLServerLiteralValue {
         case .bool(let flag):
             return flag ? "1" : "0"
         case .date(let date):
-            return "'\(Self.dateFormatter.string(from: date))'"
+            return "'\(Self.format(date: date))'"
         case .uuid(let uuid):
             return "'\(uuid.uuidString)'"
         case .bytes(let bytes):
@@ -51,10 +51,10 @@ extension SQLServerLiteralValue {
         text.replacingOccurrences(of: "'", with: "''")
     }
     
-    private static let dateFormatter: ISO8601DateFormatter = {
+    private static func format(date: Date) -> String {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withFullDate, .withFullTime, .withFractionalSeconds]
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        return formatter
-    }()
+        return formatter.string(from: date)
+    }
 }

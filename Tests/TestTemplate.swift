@@ -2,8 +2,7 @@ import XCTest
 @testable import SQLServerKit
 import SQLServerKitTesting
 
-final class TestNameTests: XCTestCase {
-    var group: EventLoopGroup!
+final class TestNameTests: XCTestCase, @unchecked Sendable {
     var client: SQLServerClient!
 
     override func setUp() async throws {
@@ -16,17 +15,14 @@ final class TestNameTests: XCTestCase {
         _ = isLoggingConfigured
 
         // Create connection
-        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         self.client = try await SQLServerClient.connect(
             configuration: makeSQLServerClientConfiguration(),
-            eventLoopGroupProvider: .shared(group)
-        ).get()
+            numberOfThreads: 1
+        )
     }
 
     override func tearDown() async throws {
-        try await client?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
-        group = nil
+        try? await client?.shutdownGracefully()
     }
 
     // MARK: - Tests

@@ -1,11 +1,13 @@
 import Foundation
 import NIO
+import NIOConcurrencyHelpers
 import SQLServerTDS
 
 /// High-level Activity Monitor mirroring SSMS panes via DMV queries.
-public final class SQLServerActivityMonitor {
+public final class SQLServerActivityMonitor: @unchecked Sendable {
     private let client: SQLServerClient
     private let waitIgnoreList: Set<String>
+    private let baselineLock = NIOLock()
 
     // Baselines for delta computation across snapshots
     private var lastWaits: [String: SQLServerWaitStat] = [:]
@@ -28,7 +30,7 @@ public final class SQLServerActivityMonitor {
     // MARK: - Public API
 
     /// Takes a single snapshot of activity.
-    public func snapshot(options: SQLServerActivityOptions = .init(), on eventLoop: EventLoop? = nil) -> EventLoopFuture<SQLServerActivitySnapshot> {
+    internal func snapshot(options: SQLServerActivityOptions = .init(), on eventLoop: EventLoop? = nil) -> EventLoopFuture<SQLServerActivitySnapshot> {
         let loop = eventLoop ?? client.eventLoopGroup.next()
         let processesFut = fetchProcesses(options: options, on: loop)
         let waitsFut = fetchWaits(on: loop)
@@ -61,7 +63,7 @@ public final class SQLServerActivityMonitor {
     }
 
     /// Kills a session (spid) via KILL <session_id>.
-    public func killSession(sessionId: Int, on eventLoop: EventLoop? = nil) -> EventLoopFuture<Void> {
+    internal func killSession(sessionId: Int, on eventLoop: EventLoop? = nil) -> EventLoopFuture<Void> {
         let sql = "KILL \(sessionId);"
         return client.execute(sql, on: eventLoop).map { _ in () }
     }
@@ -134,7 +136,7 @@ public final class SQLServerActivityMonitor {
         """
 
         return client.query(sql, on: loop).map { rows in
-            rows.compactMap { row in
+            rows.compactMap { row -> SQLServerProcessInfo? in
                 guard let sid = row.column("session_id")?.int else { return nil }
                 let pages = row.column("session_memory_pages")?.int ?? 0
                 let memKB = pages * 8 // memory_usage is in 8KB pages
@@ -178,7 +180,7 @@ public final class SQLServerActivityMonitor {
         ORDER BY wait_time_ms DESC;
         """
         return client.query(sql, on: loop).map { rows in
-            rows.compactMap { row in
+            rows.compactMap { row -> SQLServerWaitStat? in
                 guard let wt = row.column("wait_type")?.string,
                       let tasks = row.column("waiting_tasks_count")?.int,
                       let time = row.column("wait_time_ms")?.int,
@@ -208,7 +210,7 @@ public final class SQLServerActivityMonitor {
         ORDER BY vfs.database_id, vfs.file_id;
         """
         return client.query(sql, on: loop).map { rows in
-            rows.compactMap { row in
+            rows.compactMap { row -> SQLServerFileIOStat? in
                 guard let dbid = row.column("database_id")?.int, let fid = row.column("file_id")?.int else { return nil }
                 return SQLServerFileIOStat(
                     databaseId: dbid,
@@ -251,7 +253,7 @@ public final class SQLServerActivityMonitor {
         return client.query(sql, on: loop).map { rows in
             rows.map { row in
                 let hashBytes = row.column("query_hash")?.bytes ?? []
-                let hashHex = hashBytes.isEmpty ? nil : ("0x" + hashBytes.map { String(format: "%02X", $0) }.joined())
+                let hashHex = hashBytes.isEmpty ? nil : ("0x" + hashBytes.map { String(format: "%02X", UInt8($0)) }.joined())
                 return SQLServerExpensiveQuery(
                     queryHashHex: hashHex,
                     executionCount: row.column("execution_count")?.int ?? 0,
@@ -273,8 +275,9 @@ public final class SQLServerActivityMonitor {
 
     private func computeWaitDeltas(current: [SQLServerWaitStat]) -> [SQLServerWaitStatDelta] {
         var deltas: [SQLServerWaitStatDelta] = []
+        let previous = baselineLock.withLock { lastWaits }
         for w in current {
-            if let prev = lastWaits[w.waitType] {
+            if let prev = previous[w.waitType] {
                 let d = SQLServerWaitStatDelta(
                     waitType: w.waitType,
                     waitingTasksCountDelta: max(0, w.waitingTasksCount - prev.waitingTasksCount),
@@ -285,16 +288,19 @@ public final class SQLServerActivityMonitor {
             }
         }
         // update baseline
-        lastWaits = Dictionary(uniqueKeysWithValues: current.map { ($0.waitType, $0) })
+        baselineLock.withLock {
+            lastWaits = Dictionary(uniqueKeysWithValues: current.map { ($0.waitType, $0) })
+        }
         return deltas.sorted { $0.waitTimeMsDelta > $1.waitTimeMsDelta }
     }
 
     private func computeFileIODeltas(current: [SQLServerFileIOStat]) -> [SQLServerFileIOStatDelta] {
         func key(_ s: SQLServerFileIOStat) -> String { "\(s.databaseId):\(s.fileId)" }
         var deltas: [SQLServerFileIOStatDelta] = []
+        let previous = baselineLock.withLock { lastFileIO }
         for f in current {
             let k = key(f)
-            if let prev = lastFileIO[k] {
+            if let prev = previous[k] {
                 let d = SQLServerFileIOStatDelta(
                     databaseId: f.databaseId,
                     fileId: f.fileId,
@@ -309,7 +315,9 @@ public final class SQLServerActivityMonitor {
             }
         }
         // update baseline
-        lastFileIO = Dictionary(uniqueKeysWithValues: current.map { (key($0), $0) })
+        baselineLock.withLock {
+            lastFileIO = Dictionary(uniqueKeysWithValues: current.map { (key($0), $0) })
+        }
         return deltas
     }
 }

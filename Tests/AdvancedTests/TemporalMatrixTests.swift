@@ -1,46 +1,31 @@
 @testable import SQLServerKit
 import SQLServerKitTesting
 import XCTest
-import NIO
 import Logging
 
-final class SQLServerTemporalMatrixTests: XCTestCase {
-    var group: EventLoopGroup!
+final class SQLServerTemporalMatrixTests: XCTestCase, @unchecked Sendable {
     var client: SQLServerClient!
-    private var skipDueToEnv = false
-
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
         TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
-        group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).get()
-        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1").get() } } catch { skipDueToEnv = true }
+        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
+        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1") } } catch { throw error }
     }
 
     override func tearDown() async throws {
-        try await client?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
+        try? await client?.shutdownGracefully()
     }
 
     @available(macOS 12.0, *)
     func testTemporalDefaultHistoryScripting() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         do {
         try await withTemporaryDatabase(client: self.client, prefix: "tmpx") { db in
             let table = "temporal_def_\(UUID().uuidString.prefix(6))"
-            try? await withRetry(attempts: 3) {
-                _ = try await executeInDb(client: self.client, database: db, """
-                    CREATE TABLE [dbo].[\(table)] (
-                        [Id] INT NOT NULL,
-                        [ValidFrom] DATETIME2(7) GENERATED ALWAYS AS ROW START NOT NULL,
-                        [ValidTo] DATETIME2(7) GENERATED ALWAYS AS ROW END NOT NULL,
-                        PERIOD FOR SYSTEM_TIME ([ValidFrom], [ValidTo]),
-                        CONSTRAINT [PK_\(table)] PRIMARY KEY CLUSTERED ([Id])
-                    ) WITH (SYSTEM_VERSIONING = ON);
-                """)
+            try await withDbConnection(client: self.client, database: db) { conn in
+                try await conn.createSystemVersionedTable(name: String(table), schema: "dbo", database: db)
             }
             let def = try await withDbConnection(client: self.client, database: db) { conn in
-                try await conn.fetchObjectDefinition(schema: "dbo", name: table, kind: .table).get()
+                try await conn.objectDefinition(schema: "dbo", name: table, kind: .table)
             }
             guard let def, let ddl = def.definition else { XCTFail("No DDL returned"); return }
             XCTAssertTrue(ddl.contains("PERIOD FOR SYSTEM_TIME"))
@@ -54,24 +39,15 @@ final class SQLServerTemporalMatrixTests: XCTestCase {
 
     @available(macOS 12.0, *)
     func testTemporalExplicitHistoryScripting() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         do {
         try await withTemporaryDatabase(client: self.client, prefix: "tmph") { db in
             let table = "temporal_exp_\(UUID().uuidString.prefix(6))"
             let hist = "\(table)_History"
-            try? await withRetry(attempts: 3) {
-                _ = try await executeInDb(client: self.client, database: db, """
-                    CREATE TABLE [dbo].[\(table)] (
-                        [Id] INT NOT NULL,
-                        [ValidFrom] DATETIME2(7) GENERATED ALWAYS AS ROW START NOT NULL,
-                        [ValidTo] DATETIME2(7) GENERATED ALWAYS AS ROW END NOT NULL,
-                        PERIOD FOR SYSTEM_TIME ([ValidFrom], [ValidTo]),
-                        CONSTRAINT [PK_\(table)] PRIMARY KEY CLUSTERED ([Id])
-                    ) WITH (SYSTEM_VERSIONING = ON (HISTORY_TABLE = [dbo].[\(hist)]));
-                """)
+            try await withDbConnection(client: self.client, database: db) { conn in
+                try await conn.createSystemVersionedTable(name: String(table), historyTableName: String(hist), schema: "dbo", database: db)
             }
             let def = try await withDbConnection(client: self.client, database: db) { conn in
-                try await conn.fetchObjectDefinition(schema: "dbo", name: table, kind: .table).get()
+                try await conn.objectDefinition(schema: "dbo", name: table, kind: .table)
             }
             guard let def, let ddl = def.definition else { XCTFail("No DDL returned"); return }
             XCTAssertTrue(ddl.contains("PERIOD FOR SYSTEM_TIME"))

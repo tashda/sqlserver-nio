@@ -107,7 +107,7 @@ extension TDSMessages {
 }
 
 extension TDSMessages {
-    public enum PreloginEncryption: Byte {
+    public enum PreloginEncryption: Byte, Sendable {
         case encryptOff = 0x00
         case encryptOn = 0x01
         case encryptNotSup = 0x02

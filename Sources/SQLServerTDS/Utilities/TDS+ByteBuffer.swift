@@ -1,64 +1,46 @@
-import NIO
+import Foundation
+import NIOCore
 
 extension ByteBuffer {
-    mutating func writeUTF16String(_ str: String, endianness: Endianness = .little) {
-        for character in str.utf16 {
-            self.writeInteger(character, endianness: endianness)
+    mutating func readUByte() throws -> UInt8 {
+        guard let value: UInt8 = self.readInteger() else {
+            throw TDSError.needMoreData
         }
+        return value
     }
 
-    mutating func writeDouble(_ double: Double) {
-        self.writeInteger(double.bitPattern)
+    mutating func readUShort() throws -> UInt16 {
+        guard let value: UInt16 = self.readInteger(endianness: .little) else {
+            throw TDSError.needMoreData
+        }
+        return value
     }
 
-    mutating func readBVarchar() -> String? {
-        guard
-            let bytes = self.readByte(),
-            let utf16 = self.readUTF16String(length: Int(bytes) * 2)
-        else {
-            return nil
+    mutating func readULong() throws -> UInt32 {
+        guard let value: UInt32 = self.readInteger(endianness: .little) else {
+            throw TDSError.needMoreData
         }
-        return utf16
+        return value
     }
 
-    mutating func readUSVarchar() -> String? {
-        guard
-            let bytes = self.readUShort(),
-            let utf16 = self.readUTF16String(length: Int(bytes) * 2)
-        else {
-            return nil
-        }
-        return utf16
+    mutating func readByte() -> UInt8? {
+        return self.readInteger()
     }
 
-    mutating func readBVarbyte() -> [Byte]? {
-        guard
-            let numBytes = self.readByte(),
-            let bytes = self.readBytes(length: Int(numBytes))
-        else {
-            return nil
-        }
-        return bytes
+    mutating func writeUSVarChar(_ string: String) {
+        self.writeInteger(UInt16(string.utf16.count), endianness: .little)
+        self.writeUTF16String(string)
     }
 
-    mutating func readUSVarbyte() -> [Byte]? {
-        guard
-            let numBytes = self.readUShort(),
-            let bytes = self.readBytes(length: Int(numBytes))
-        else {
-            return nil
-        }
-        return bytes
+    mutating func writeBVarChar(_ string: String) {
+        self.writeInteger(UInt8(string.utf16.count))
+        self.writeUTF16String(string)
     }
 
-    mutating func readLVarbyte() -> [Byte]? {
-        guard
-            let numBytes = self.readULong(),
-            let bytes = self.readBytes(length: Int(numBytes))
-        else {
-            return nil
+    mutating func writeUTF16String(_ string: String) {
+        for codePoint in string.utf16 {
+            self.writeInteger(codePoint, endianness: .little)
         }
-        return bytes
     }
 
     mutating func readUTF16String(length: Int) -> String? {
@@ -70,201 +52,58 @@ extension ByteBuffer {
         }
         return utf16
     }
-    
-    mutating func readPLPBytes() throws -> ByteBuffer? {
-        guard self.readableBytes >= MemoryLayout<UInt64>.size else {
-            throw TDSError.needMoreData
+
+    func getUTF16String(at position: Int, length: Int) -> String? {
+        guard
+            let bytes = self.getBytes(at: position, length: length)
+        else {
+            return nil
         }
-        guard let totalLength = self.readInteger(endianness: .little, as: UInt64.self) else {
-            throw TDSError.protocolError("Failed to read PLP total length")
+        return String(bytes: bytes, encoding: .utf16LittleEndian)
+    }
+
+    mutating func writePLPBuffer(_ buffer: ByteBuffer) {
+        self.writeInteger(UInt64(buffer.readableBytes), endianness: .little)
+        var copy = buffer
+        self.writeBuffer(&copy)
+        self.writeInteger(UInt32(0), endianness: .little)
+    }
+
+    mutating func readPLPBytes() throws -> ByteBuffer? {
+        guard let totalLength: UInt64 = self.readInteger(endianness: .little) else {
+            throw TDSError.needMoreData
         }
 
         if totalLength == UInt64.max {
             return nil
         }
 
-        let allocator = ByteBufferAllocator()
         let initialCapacity: Int
-
         if totalLength == UInt64.max - 1 {
-            initialCapacity = 0 // unknown length, grow per chunk
+            initialCapacity = 0
         } else if totalLength <= UInt64(Int.max) {
             initialCapacity = Int(totalLength)
         } else {
             throw TDSError.protocolError("PLP payload length exceeds supported buffer size")
         }
 
-        var buffer = allocator.buffer(capacity: initialCapacity)
-
+        var result = ByteBufferAllocator().buffer(capacity: initialCapacity)
         while true {
-            guard self.readableBytes >= MemoryLayout<UInt32>.size else {
+            guard let chunkLength: UInt32 = self.readInteger(endianness: .little) else {
                 throw TDSError.needMoreData
-            }
-            guard let chunkLength = self.readInteger(endianness: .little, as: UInt32.self) else {
-                throw TDSError.protocolError("Failed to read PLP chunk length")
             }
 
             if chunkLength == 0 || chunkLength == UInt32.max {
                 break
             }
 
-            let chunkSize = Int(chunkLength)
-            guard self.readableBytes >= chunkSize else {
+            guard var chunk = self.readSlice(length: Int(chunkLength)) else {
                 throw TDSError.needMoreData
             }
-            guard var chunkSlice = self.readSlice(length: chunkSize) else {
-                throw TDSError.protocolError("Failed to read PLP chunk payload")
-            }
 
-            buffer.writeBuffer(&chunkSlice)
+            result.writeBuffer(&chunk)
         }
 
-        return buffer
-    }
-
-    mutating func readByte() -> Byte? {
-        guard let val = self.readInteger(as: Byte.self) else {
-            return nil
-        }
-        return val
-    }
-
-    mutating func readUShort(endianess: Endianness = .little) -> UShort? {
-        guard let val = self.readInteger(endianness: endianess, as: UShort.self) else {
-            return nil
-        }
-        return val
-    }
-
-    mutating func readULong(endianess: Endianness = .little) -> ULong? {
-        guard let val = self.readInteger(endianness: endianess, as: ULong.self) else {
-            return nil
-        }
-        return val
-    }
-
-    mutating func readLong(endianess: Endianness = .little) -> Long? {
-        guard let val = self.readInteger(endianness: endianess, as: Long.self) else {
-            return nil
-        }
-        return val
-    }
-
-    mutating func readDWord(endianess: Endianness = .big) -> DWord? {
-        guard let val = self.readInteger(endianness: endianess, as: DWord.self) else {
-            return nil
-        }
-        return val
-    }
-
-    mutating func readULongLong(endianess: Endianness = .little) -> ULongLong? {
-        guard let val = self.readInteger(endianness: endianess, as: ULongLong.self) else {
-            return nil
-        }
-        return val
-    }
-
-    mutating func readByteLen(endianness: Endianness = .little) -> ByteLen? {
-        guard let val = self.readInteger(endianness: .little, as: ByteLen.self) else {
-            return nil
-        }
-        return val
-    }
-
-    mutating func readUShortLen(endianness: Endianness = .little) -> UShortLen? {
-        guard let val = self.readInteger(endianness: .little, as: UShortLen.self) else {
-            return nil
-        }
-        return val
-    }
-
-    mutating func readUShortCharBinLen(endianness: Endianness = .little) -> UShortCharBinLen? {
-        guard let val = self.readInteger(endianness: .little, as: UShortCharBinLen.self) else {
-            return nil
-        }
-        return val
-    }
-
-    mutating func readLongLen(endianness: Endianness = .little) -> LongLen? {
-        guard let val = self.readInteger(endianness: .little, as: LongLen.self) else {
-            return nil
-        }
-        return val
-    }
-
-    mutating func readFloat(endianness: Endianness = .big) -> Float? {
-       precondition(MemoryLayout<Float>.size == MemoryLayout<UInt32>.size)
-        return self.readInteger(endianness: endianness, as: UInt32.self).map { Float(bitPattern: $0) }
-   }
-
-    mutating func readDouble(endianness: Endianness = .big) -> Double? {
-       precondition(MemoryLayout<Double>.size == MemoryLayout<UInt64>.size)
-       return self.readInteger(endianness: endianness, as: UInt64.self).map { Double(bitPattern: $0) }
-   }
-    
-    mutating func readSmallMoney() -> Double? {
-        guard let value = self.readInteger(endianness: .little, as: Int32.self) else {
-            return nil
-        }
-        return Double(value) / Double(10000)
-    }
-
-    mutating func readMoney() -> Double? {
-        guard
-            let high = self.readInteger(endianness: .little, as: UInt32.self),
-            let low = self.readInteger(endianness: .little, as: UInt32.self)
-        else {
-            return nil
-        }
-        
-        let value = Int64(high) << 32 | Int64(low)
-        return Double(value) / Double(10000)
-    }
-
-    mutating func read3ByteInt() -> UInt32? {
-        guard let bytes = self.readBytes(length: 3) else {
-            return nil
-        }
-        
-        var value: UInt32 = 0
-        value += numericCast(bytes[0]) << 16
-        value += numericCast(bytes[1]) << 8
-        value += numericCast(bytes[2]) << 0
-        
-        return value
-    }
-    
-    mutating func read5ByteInt() -> UInt64? {
-        guard let bytes = self.readBytes(length: 5) else {
-            return nil
-        }
-        
-        var value: UInt64 = 0
-        value += numericCast(bytes[0]) << 32
-        value += numericCast(bytes[1]) << 24
-        value += numericCast(bytes[2]) << 16
-        value += numericCast(bytes[3]) << 8
-        value += numericCast(bytes[4]) << 0
-        
-        return value
-    }
-    
-    mutating func readByteLengthInteger<I: FixedWidthInteger>(length: Int, as: I.Type = I.self) -> I? {
-        guard let bytes = self.readBytes(length: length) else {
-            return nil
-        }
-        
-        var value: I = 0
-        for i in 0...bytes.count - 1 {
-            value += numericCast(bytes[i]) << (i * 8)
-        }
-        
-        return value
-    }
-}
-
-internal extension Sequence where Element == UInt8 {
-    func hexdigest() -> String {
-        return reduce("") { $0 + String(format: "%02x", $1) }
+        return result
     }
 }
