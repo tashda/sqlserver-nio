@@ -166,8 +166,8 @@ public func withDbConnection<T: Sendable>(
     return try await future.get()
 }
 
-public func queryInDb(client: SQLServerClient, database: String, _ sql: String) async throws -> [TDSRow] {
-    let future: EventLoopFuture<[TDSRow]> = client.withConnection(on: nil) { connection in
+public func queryInDb(client: SQLServerClient, database: String, _ sql: String) async throws -> [SQLServerRow] {
+    let future: EventLoopFuture<[SQLServerRow]> = client.withConnection(on: nil) { connection in
         connection.changeDatabase(database).flatMap { _ in
             connection.query(sql).flatMap { rows in
                 resetDatabaseIfPossible(connection, to: connection.configuration.login.database).map { rows }
@@ -251,7 +251,7 @@ internal func queryWithTransientRetry<T: Sendable>(
 
 internal func databaseExists(client: SQLServerClient, name: String) async throws -> Bool {
     let sql = "SELECT DB_ID(N'\(name)') AS dbid;"
-    let rows: [TDSRow] = try await queryWithTransientRetry(client: client) { connection in
+    let rows: [SQLServerRow] = try await queryWithTransientRetry(client: client) { connection in
         connection.query(sql)
     }
     if let dbValue = rows.first?.column("dbid")?.int, dbValue != 0 {
@@ -269,7 +269,7 @@ internal func waitForDatabaseOnline(client: SQLServerClient, name: String, attem
     """
 
     for attempt in 1...attempts {
-        let rows: [TDSRow] = try await queryWithTransientRetry(client: client) { connection in
+        let rows: [SQLServerRow] = try await queryWithTransientRetry(client: client) { connection in
             connection.query(sql)
         }
         if let row = rows.first,

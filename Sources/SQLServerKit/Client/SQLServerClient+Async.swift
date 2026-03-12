@@ -79,14 +79,14 @@ extension SQLServerClient {
     public func query(
         _ sql: String,
         on eventLoop: EventLoop? = nil
-    ) async throws -> [TDSRow] {
+    ) async throws -> [SQLServerRow] {
         try await withConnection(on: eventLoop) { connection in
             try await connection.query(sql)
         }
     }
 
     @available(macOS 12.0, *)
-    public func queryScalar<T: TDSDataConvertible & Sendable>(
+    public func queryScalar<T: SQLServerDataConvertible & Sendable>(
         _ sql: String,
         as type: T.Type = T.self,
         on eventLoop: EventLoop? = nil

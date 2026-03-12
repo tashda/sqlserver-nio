@@ -3,6 +3,9 @@ import NIO
 import NIOConcurrencyHelpers
 import SQLServerTDS
 
+@available(*, deprecated, renamed: "SQLServerAgentOperations")
+public typealias SQLServerAgentClient = SQLServerAgentOperations
+
 public final class SQLServerAgentOperations: Sendable {
     internal enum Backing: Sendable {
         case connection(SQLServerConnection)

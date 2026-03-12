@@ -447,7 +447,7 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
     public func removeUserFromDatabaseRole(database: String, userName: String, role: String) async throws { _ = try await removeUserFromDatabaseRole(database: database, userName: userName, role: role).get() }
 
     // MARK: - Helpers
-    private func run(sql: String) -> EventLoopFuture<[TDSRow]> {
+    private func run(sql: String) -> EventLoopFuture<[SQLServerRow]> {
         switch backing {
         case .client(let c): return c.query(sql)
         case .connection(let conn): return conn.query(sql)

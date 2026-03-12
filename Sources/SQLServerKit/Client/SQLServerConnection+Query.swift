@@ -42,12 +42,12 @@ extension SQLServerConnection {
         })
     }
 
-    public func query(_ sql: String) -> EventLoopFuture<[TDSRow]> {
+    public func query(_ sql: String) -> EventLoopFuture<[SQLServerRow]> {
         execute(sql).map(\.rows)
     }
 
     @available(macOS 12.0, *)
-    public func query(_ sql: String) async throws -> [TDSRow] {
+    public func query(_ sql: String) async throws -> [SQLServerRow] {
         try await execute(sql).rows
     }
 
@@ -73,13 +73,13 @@ extension SQLServerConnection {
         return timed
     }
 
-    public func queryScalar<T: TDSDataConvertible & Sendable>(_ sql: String, as type: T.Type = T.self) -> EventLoopFuture<T?> {
+    public func queryScalar<T: SQLServerDataConvertible & Sendable>(_ sql: String, as type: T.Type = T.self) -> EventLoopFuture<T?> {
         execute(sql).map { result in
             guard
                 let row = result.rows.first,
-                let firstColumn = row.columnMetadata.first?.colName,
+                let firstColumn = row.columns.first?.name,
                 let valueData = row.column(firstColumn),
-                let value = T(tdsData: valueData)
+                let value = T(sqlServerValue: valueData)
             else {
                 return nil
             }
@@ -88,7 +88,7 @@ extension SQLServerConnection {
     }
 
     @available(macOS 12.0, *)
-    public func queryScalar<T: TDSDataConvertible & Sendable>(_ sql: String, as type: T.Type = T.self) async throws -> T? {
+    public func queryScalar<T: SQLServerDataConvertible & Sendable>(_ sql: String, as type: T.Type = T.self) async throws -> T? {
         try await queryScalar(sql, as: type).get()
     }
 
@@ -103,7 +103,7 @@ extension SQLServerConnection {
         let accumulator = NIOLockedValueBox(Accumulator())
 
         let tdsParams = parameters.map { p in
-            TDSMessages.RpcParameter(name: p.name, data: p.value, direction: {
+            TDSMessages.RpcParameter(name: p.name, data: p.value?.base, direction: {
                 switch p.direction { case .in: return .in; case .out: return .out; case .inout: return .inout }
             }())
         }
@@ -131,7 +131,7 @@ extension SQLServerConnection {
             onReturnValue: { token in
                 let tdsValue: TDSData? = token.value.map { TDSData(metadata: token.metadata, value: $0) }
                 accumulator.withLockedValue {
-                    $0.returnValues.append(SQLServerReturnValue(name: token.name, status: token.status, value: tdsValue))
+                    $0.returnValues.append(SQLServerReturnValue(name: token.name, status: token.status, value: tdsValue.map(SQLServerValue.init(base:))))
                 }
             }
         )
@@ -157,10 +157,10 @@ extension SQLServerConnection {
         AsyncThrowingStream(SQLServerStreamEvent.self) { continuation in
             let request = RawSqlRequest(
                 sql: sql,
-                onRow: { row in _ = continuation.yield(.row(row)) },
+                onRow: { row in _ = continuation.yield(.row(SQLServerRow(base: row))) },
                 onMetadata: { metadata in
                     let columns = metadata.map { column in
-                        SQLServerColumnDescription(name: column.colName, type: column.dataType, length: Int(column.length), precision: Int(column.precision), scale: Int(column.scale), flags: column.flags)
+                        SQLServerColumnDescription(name: column.colName, type: SQLServerDataType(base: column.dataType), length: Int(column.length), precision: Int(column.precision), scale: Int(column.scale), flags: column.flags)
                     }
                     _ = continuation.yield(.metadata(columns))
                 },

@@ -136,7 +136,7 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
         """
 
         return client.query(sql, on: loop).map { rows in
-            rows.compactMap { (row: TDSRow) -> SQLServerProcessInfo? in
+            rows.compactMap { row -> SQLServerProcessInfo? in
                 guard let sid = row.column("session_id")?.int else { return nil }
                 let pages = row.column("session_memory_pages")?.int ?? 0
                 let memKB = pages * 8 // memory_usage is in 8KB pages
@@ -180,7 +180,7 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
         ORDER BY wait_time_ms DESC;
         """
         return client.query(sql, on: loop).map { rows in
-            rows.compactMap { (row: TDSRow) -> SQLServerWaitStat? in
+            rows.compactMap { row -> SQLServerWaitStat? in
                 guard let wt = row.column("wait_type")?.string,
                       let tasks = row.column("waiting_tasks_count")?.int,
                       let time = row.column("wait_time_ms")?.int,
@@ -210,7 +210,7 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
         ORDER BY vfs.database_id, vfs.file_id;
         """
         return client.query(sql, on: loop).map { rows in
-            rows.compactMap { (row: TDSRow) -> SQLServerFileIOStat? in
+            rows.compactMap { row -> SQLServerFileIOStat? in
                 guard let dbid = row.column("database_id")?.int, let fid = row.column("file_id")?.int else { return nil }
                 return SQLServerFileIOStat(
                     databaseId: dbid,

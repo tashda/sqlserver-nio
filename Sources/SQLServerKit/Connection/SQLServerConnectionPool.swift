@@ -54,7 +54,7 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
             self.pool = pool
         }
 
-        public var base: TDSConnection {
+        internal var base: TDSConnection {
             connection
         }
 

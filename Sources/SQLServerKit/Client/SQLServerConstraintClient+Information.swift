@@ -124,7 +124,7 @@ extension SQLServerConstraintClient {
         
         let rows = try await client.query(sql)
         
-        var constraintGroups: [String: [TDSRow]] = [:]
+        var constraintGroups: [String: [SQLServerRow]] = [:]
         for row in rows {
             let constraintName = row.column("constraint_name")?.string ?? ""
             if constraintGroups[constraintName] == nil {

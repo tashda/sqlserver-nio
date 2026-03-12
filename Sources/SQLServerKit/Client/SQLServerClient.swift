@@ -81,7 +81,7 @@ public final class SQLServerClient: @unchecked Sendable {
                             serverName: configuration.connection.hostname,
                             port: configuration.connection.port,
                             database: database,
-                            authentication: configuration.connection.login.authentication
+                            authentication: configuration.connection.login.authentication.tdsAuthentication
                         )
                         return connection.login(configuration: cfg)
                             .flatMap { bootstrapSession(on: connection) }
