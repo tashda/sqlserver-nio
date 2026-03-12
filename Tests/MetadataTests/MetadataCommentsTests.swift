@@ -1,9 +1,11 @@
 import XCTest
+import NIO
+import NIOPosix
 @testable import SQLServerKit
 import SQLServerKitTesting
 import Foundation
 
-final class SQLServerMetadataCommentsTests: XCTestCase {
+final class SQLServerMetadataCommentsTests: XCTestCase, @unchecked Sendable {
     var group: EventLoopGroup!
     var client: SQLServerClient!
 
@@ -46,12 +48,11 @@ final class SQLServerMetadataCommentsTests: XCTestCase {
                 .init(name: "flag", definition: .standard(.init(dataType: .bit)))
             ]
             let tableName = "t_\(UUID().uuidString.prefix(8))"
-            // Use admin client helper which persists comments via extended properties
-            try await withDbConnection(client: self.client, database: db) { conn in
-                _ = try await conn.execute("IF OBJECT_ID(N'dbo.\(tableName)', 'U') IS NOT NULL DROP TABLE [dbo].[\(tableName)]").get()
-            }
             try await withDbClient(for: db, using: self.group) { dbClient in
                 let admin = SQLServerAdministrationClient(client: dbClient)
+                if try await dbClient.queryScalar("SELECT OBJECT_ID(N'dbo.\(tableName)', N'U')", as: Int.self) != nil {
+                    try await admin.dropTable(name: tableName)
+                }
                 try await admin.createTable(name: tableName, columns: cols)
                 try await admin.addTableComment(tableName: tableName, comment: "Table comment for \(tableName)")
             }
@@ -93,8 +94,18 @@ final class SQLServerMetadataCommentsTests: XCTestCase {
         try await withTemporaryDatabase(client: self.client, prefix: "cmtv") { db in
             let table = "src_\(UUID().uuidString.prefix(8))"
             let view = "v_\(UUID().uuidString.prefix(8))"
-            _ = try await executeInDb(client: self.client, database: db, "CREATE TABLE [dbo].[\(table)](id INT NOT NULL, name NVARCHAR(40) NOT NULL)")
-            _ = try await executeInDb(client: self.client, database: db, "CREATE VIEW [dbo].[\(view)] AS SELECT id, name FROM [dbo].[\(table)]")
+            try await withDbClient(for: db, using: self.group) { dbClient in
+                let admin = SQLServerAdministrationClient(client: dbClient)
+                let views = SQLServerViewClient(client: dbClient)
+                try await admin.createTable(
+                    name: table,
+                    columns: [
+                        .init(name: "id", definition: .standard(.init(dataType: .int, isNullable: false))),
+                        .init(name: "name", definition: .standard(.init(dataType: .nvarchar(length: .length(40)), isNullable: false)))
+                    ]
+                )
+                try await views.createView(name: view, query: "SELECT id, name FROM [dbo].[\(table)]")
+            }
 
             // Add MS_Description to view and one of its columns
             let addViewComment = """
@@ -120,10 +131,24 @@ final class SQLServerMetadataCommentsTests: XCTestCase {
             let funcName = "f_\(UUID().uuidString.prefix(8))"
             let trig = "tr_\(UUID().uuidString.prefix(8))"
 
-            _ = try await executeInDb(client: self.client, database: db, "CREATE TABLE [dbo].[\(table)](id INT NOT NULL PRIMARY KEY)")
-            _ = try await executeInDb(client: self.client, database: db, "CREATE PROCEDURE [dbo].[\(proc)] AS BEGIN SET NOCOUNT ON; SELECT 1; END")
-            _ = try await executeInDb(client: self.client, database: db, "CREATE FUNCTION [dbo].[\(funcName)]() RETURNS INT AS BEGIN RETURN 1 END")
-            _ = try await executeInDb(client: self.client, database: db, "CREATE TRIGGER [dbo].[\(trig)] ON [dbo].[\(table)] AFTER INSERT AS BEGIN SET NOCOUNT ON; END")
+            try await withDbClient(for: db, using: self.group) { dbClient in
+                let admin = SQLServerAdministrationClient(client: dbClient)
+                let routines = SQLServerRoutineClient(client: dbClient)
+                let triggers = SQLServerTriggerClient(client: dbClient)
+                try await admin.createTable(
+                    name: table,
+                    columns: [.init(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true)))]
+                )
+                try await routines.createStoredProcedure(name: proc, body: "BEGIN SET NOCOUNT ON; SELECT 1; END")
+                try await routines.createFunction(name: funcName, returnType: .int, body: "BEGIN RETURN 1 END")
+                try await triggers.createTrigger(
+                    name: trig,
+                    table: table,
+                    timing: .after,
+                    events: [.insert],
+                    body: "BEGIN SET NOCOUNT ON; END"
+                )
+            }
 
             // Add MS_Description to each
             let addComments = """

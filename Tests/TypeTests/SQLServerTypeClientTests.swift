@@ -6,11 +6,9 @@ import NIO
 import Logging
 import Foundation
 
-final class SQLServerTypeClientTests: XCTestCase {
+final class SQLServerTypeClientTests: XCTestCase, @unchecked Sendable {
     var group: EventLoopGroup!
     var client: SQLServerClient!
-
-    private var skipDueToEnv = false
 
     override func setUp() async throws {
         try await super.setUp()
@@ -29,7 +27,7 @@ final class SQLServerTypeClientTests: XCTestCase {
         ).get()
 
         // Test connection stability
-        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1").get() } } catch { skipDueToEnv = true }
+        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1").get() } } catch { throw error }
     }
 
     override func tearDown() async throws {
@@ -40,7 +38,6 @@ final class SQLServerTypeClientTests: XCTestCase {
 
     @available(macOS 12.0, *)
     func testCreateUserDefinedTableType() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         try await withTemporaryDatabase(client: self.client, prefix: "udtt") { db in
             try await withDbClient(for: db, using: self.group) { dbClient in
                 let typeClient = SQLServerTypeClient(client: dbClient)
@@ -86,7 +83,6 @@ final class SQLServerTypeClientTests: XCTestCase {
 
     @available(macOS 12.0, *)
     func testDropUserDefinedTableType() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         try await withTemporaryDatabase(client: self.client, prefix: "udtt_drop") { db in
             try await withDbClient(for: db, using: self.group) { dbClient in
                 let typeClient = SQLServerTypeClient(client: dbClient)
@@ -118,10 +114,10 @@ final class SQLServerTypeClientTests: XCTestCase {
 
     @available(macOS 12.0, *)
     func testListUserDefinedTableTypesWithSchema() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         try await withTemporaryDatabase(client: self.client, prefix: "udtt_list") { db in
             try await withDbClient(for: db, using: self.group) { dbClient in
                 let typeClient = SQLServerTypeClient(client: dbClient)
+                let securityClient = SQLServerSecurityClient(client: dbClient)
 
                 // Generate unique names to avoid collisions
                 let uniqueSuffix = UUID().uuidString.prefix(8)
@@ -130,7 +126,7 @@ final class SQLServerTypeClientTests: XCTestCase {
                 let schemaName = "custom_\(uniqueSuffix)"
 
                 // Create custom schema first
-                _ = try await dbClient.execute("CREATE SCHEMA [\(schemaName)]").get()
+                try await securityClient.createSchema(name: schemaName).get()
 
                 // Create types in different schemas
                 let dboType = UserDefinedTableTypeDefinition(
@@ -164,14 +160,13 @@ final class SQLServerTypeClientTests: XCTestCase {
                 // Clean up
                 try await typeClient.dropUserDefinedTableType(name: dboTypeName, schema: "dbo")
                 try await typeClient.dropUserDefinedTableType(name: customTypeName, schema: schemaName)
-                _ = try? await dbClient.execute("DROP SCHEMA [\(schemaName)]").get()
+                _ = try? await securityClient.dropSchema(name: schemaName).get()
             }
         }
     }
 
     @available(macOS 12.0, *)
     func testUserDefinedTableTypeWithAllDataTypes() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         try await withTemporaryDatabase(client: self.client, prefix: "udtt_alldata") { db in
             try await withDbClient(for: db, using: self.group) { dbClient in
                 let typeClient = SQLServerTypeClient(client: dbClient)

@@ -2,39 +2,40 @@ import Foundation
 import XCTest
 import Logging
 import NIO
+import NIOConcurrencyHelpers
 @testable import SQLServerKit
 import SQLServerKitTesting
 
-final class SQLServerBulkCopyTests: XCTestCase {
+final class SQLServerBulkCopyTests: XCTestCase, @unchecked Sendable {
     private var group: EventLoopGroup!
     private var client: SQLServerClient!
     private var adminClient: SQLServerAdministrationClient!
     private var bulkCopyClient: SQLServerBulkCopyClient!
     private var tablesToDrop: [String] = []
     
-    override func setUpWithError() throws {
-        try super.setUpWithError()
+    override func setUp() async throws {
+        try await super.setUp()
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
+        TestEnvironmentManager.loadEnvironmentVariables()
         group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         let config = makeSQLServerClientConfiguration()
-        client = try SQLServerClient.connect(configuration: config, eventLoopGroupProvider: .shared(group)).wait()
+        client = try await SQLServerClient.connect(configuration: config, eventLoopGroupProvider: .shared(group)).get()
         adminClient = SQLServerAdministrationClient(client: client)
         bulkCopyClient = SQLServerBulkCopyClient(client: client)
     }
     
-    override func tearDownWithError() throws {
+    override func tearDown() async throws {
         for table in tablesToDrop {
-            try? adminClient.dropTable(name: table).wait()
+            try? await adminClient.dropTable(name: table)
         }
         tablesToDrop.removeAll()
-        try client.shutdownGracefully().wait()
-        try group.syncShutdownGracefully()
+        try await client.shutdownGracefully().get()
+        try await group.shutdownGracefully()
         bulkCopyClient = nil
         adminClient = nil
         client = nil
         group = nil
-        try super.tearDownWithError()
+        try await super.tearDown()
     }
     
     func testBulkCopyInsertsRows() async throws {
@@ -158,9 +159,18 @@ final class SQLServerBulkCopyTests: XCTestCase {
             SQLServerColumnDefinition(name: "category", definition: .standard(.init(dataType: .nvarchar(length: .length(20)))))
         ]
         try await adminClient.createTable(name: tableName, columns: columns)
-        _ = try await client.execute("""
-        ALTER TABLE [\(tableName)] ADD CONSTRAINT CK_\(tableName)_amount CHECK (amount >= 0);
-        """)
+        try await client.withConnection { connection in
+            let promise = connection.eventLoop.makePromise(of: Void.self)
+            Task {
+                do {
+                    try await connection.addCheckConstraint(name: "CK_\(tableName)_amount", table: tableName, expression: "amount >= 0")
+                    promise.succeed(())
+                } catch {
+                    promise.fail(error)
+                }
+            }
+            return promise.futureResult
+        }.get()
         
         let rows = [
             SQLServerBulkCopyRow(values: [.int(1), .decimal("10.00"), .nString("ok")]),
@@ -257,17 +267,17 @@ final class SQLServerBulkCopyTests: XCTestCase {
         }
         let options = SQLServerBulkCopyOptions(table: tableName, columns: ["id", "payload"], batchSize: 3)
         
-        var dropCount = 0
+        let dropCount = NIOLockedValueBox(0)
         do {
             _ = try await bulkCopyClient.copy(rows: rows, options: options, afterBatch: { connection, batch in
-                if batch == 1 && dropCount == 0 {
-                    dropCount += 1
+                if batch == 1 && dropCount.withLockedValue({ $0 }) == 0 {
+                    dropCount.withLockedValue { $0 += 1 }
                     try await self.closeUnderlyingConnection(connection)
                 }
             })
             XCTFail("Connection drop should force retry failure")
         } catch {
-            XCTAssertEqual(dropCount, 1)
+            XCTAssertEqual(dropCount.withLockedValue { $0 }, 1)
             guard case SQLServerError.sqlExecutionError(let message) = error else {
                 XCTFail("Expected SQL execution error after retry exhaustion, got \(error)")
                 return
@@ -295,7 +305,9 @@ final class SQLServerBulkCopyTests: XCTestCase {
     }
     
     private func truncateTable(named tableName: String) async throws {
-        _ = try await client.execute("TRUNCATE TABLE \(qualifiedTableName(tableName));")
+        try await client.withConnection { connection in
+            try await connection.truncateTable(name: tableName)
+        }
     }
     
     private func singleInsertStatement(row: SQLServerBulkCopyRow, tableName: String, columns: [String]) -> String {

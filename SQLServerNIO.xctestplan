@@ -1,94 +1,128 @@
 {
   "configurations" : [
     {
-      "id" : "C5B2711F-7F67-4B74-B7E4-5B6AE54A02AA",
-      "name" : "Core (SQL Login)",
+      "id" : "0B93A19E-DAAF-4B1A-A03F-C48C0A0848E1",
+      "name" : "SQL Server 2008 R2",
       "options" : {
         "environmentVariableEntries" : [
-          {
-            "key" : "TDS_ENABLE_SCHEMA_TESTS",
-            "value" : "1"
-          }
+          { "key" : "USE_DOCKER", "value" : "1" },
+          { "key" : "TDS_DOCKER_PORT", "value" : "14331" },
+          { "key" : "TDS_VERSION", "value" : "2008R2" },
+          { "key" : "TDS_LOAD_ADVENTUREWORKS", "value" : "1" },
+          { "key" : "TDS_AW_DATABASE", "value" : "AdventureWorks" }
         ]
       }
     },
     {
-      "id" : "3A3FD24B-7E41-4B47-A7F7-EB69A62AEF25",
-      "name" : "Administration",
+      "id" : "E6C948CF-4A13-4C4D-8AE9-D3FBCC5E0C29",
+      "name" : "SQL Server 2012",
       "options" : {
         "environmentVariableEntries" : [
-          {
-            "key" : "TDS_ENABLE_SCHEMA_TESTS",
-            "value" : "1"
-          },
-          {
-            "key" : "TDS_ENABLE_ADMIN_TESTS",
-            "value" : "1"
-          }
-        ],
-        "selectedTestIdentifiers" : [
-          "SQLServerNIOTests\/SQLServerIntegrationTests"
+          { "key" : "USE_DOCKER", "value" : "1" },
+          { "key" : "TDS_DOCKER_PORT", "value" : "14331" },
+          { "key" : "TDS_VERSION", "value" : "2012" },
+          { "key" : "TDS_LOAD_ADVENTUREWORKS", "value" : "1" },
+          { "key" : "TDS_AW_DATABASE", "value" : "AdventureWorks" }
         ]
       }
     },
     {
-      "id" : "B6C2719A-2158-4DFE-98A8-863F3516E4B4",
-      "name" : "SQL Agent",
+      "id" : "435D410F-9107-42FB-82D1-43DF941D4A12",
+      "name" : "SQL Server 2014",
       "options" : {
         "environmentVariableEntries" : [
-          {
-            "key" : "TDS_ENABLE_SCHEMA_TESTS",
-            "value" : "1"
-          },
-          {
-            "key" : "TDS_ENABLE_AGENT_TESTS",
-            "value" : "1"
-          }
-        ],
-        "selectedTestIdentifiers" : [
-          "SQLServerNIOTests\/SQLServerIntegrationTests\/testSqlAgentJobLifecycle"
+          { "key" : "USE_DOCKER", "value" : "1" },
+          { "key" : "TDS_DOCKER_PORT", "value" : "14331" },
+          { "key" : "TDS_VERSION", "value" : "2014" },
+          { "key" : "TDS_LOAD_ADVENTUREWORKS", "value" : "1" },
+          { "key" : "TDS_AW_DATABASE", "value" : "AdventureWorks" }
+        ]
+      }
+    },
+    {
+      "id" : "7EB42C5B-BD62-4AAB-86A0-D4AF6E15B29B",
+      "name" : "SQL Server 2016",
+      "options" : {
+        "environmentVariableEntries" : [
+          { "key" : "USE_DOCKER", "value" : "1" },
+          { "key" : "TDS_DOCKER_PORT", "value" : "14331" },
+          { "key" : "TDS_VERSION", "value" : "2016" },
+          { "key" : "TDS_LOAD_ADVENTUREWORKS", "value" : "1" },
+          { "key" : "TDS_AW_DATABASE", "value" : "AdventureWorks" }
+        ]
+      }
+    },
+    {
+      "id" : "C4D55F58-7613-4A57-B0A4-D372F01B0F90",
+      "name" : "SQL Server 2017",
+      "options" : {
+        "environmentVariableEntries" : [
+          { "key" : "USE_DOCKER", "value" : "1" },
+          { "key" : "TDS_DOCKER_PORT", "value" : "14331" },
+          { "key" : "TDS_VERSION", "value" : "2017-latest" },
+          { "key" : "TDS_LOAD_ADVENTUREWORKS", "value" : "1" },
+          { "key" : "TDS_AW_DATABASE", "value" : "AdventureWorks" }
+        ]
+      }
+    },
+    {
+      "id" : "01EAF06F-181F-4238-8E37-587A4D6A5B51",
+      "name" : "SQL Server 2019",
+      "options" : {
+        "environmentVariableEntries" : [
+          { "key" : "USE_DOCKER", "value" : "1" },
+          { "key" : "TDS_DOCKER_PORT", "value" : "14331" },
+          { "key" : "TDS_VERSION", "value" : "2019-latest" },
+          { "key" : "TDS_LOAD_ADVENTUREWORKS", "value" : "1" },
+          { "key" : "TDS_AW_DATABASE", "value" : "AdventureWorks" }
+        ]
+      }
+    },
+    {
+      "id" : "328D84B0-5562-4621-8CAA-3DB7F3DF1146",
+      "name" : "SQL Server 2022",
+      "options" : {
+        "environmentVariableEntries" : [
+          { "key" : "USE_DOCKER", "value" : "1" },
+          { "key" : "TDS_DOCKER_PORT", "value" : "14331" },
+          { "key" : "TDS_VERSION", "value" : "2022-latest" },
+          { "key" : "TDS_LOAD_ADVENTUREWORKS", "value" : "1" },
+          { "key" : "TDS_AW_DATABASE", "value" : "AdventureWorks" }
+        ]
+      }
+    },
+    {
+      "id" : "9732D52A-74BE-4ED8-B3A8-F8E228B60F4A",
+      "name" : "SQL Server 2025",
+      "options" : {
+        "environmentVariableEntries" : [
+          { "key" : "USE_DOCKER", "value" : "1" },
+          { "key" : "TDS_DOCKER_PORT", "value" : "14331" },
+          { "key" : "TDS_VERSION", "value" : "2025-latest" },
+          { "key" : "TDS_LOAD_ADVENTUREWORKS", "value" : "1" },
+          { "key" : "TDS_AW_DATABASE", "value" : "AdventureWorks" }
         ]
       }
     }
   ],
   "defaultOptions" : {
-    "environmentVariableEntries" : [
-      {
-        "key" : "TDS_ENABLE_AGENT_TESTS",
-        "value" : "1"
-      },
-      {
-        "key" : "TDS_ENABLE_ADVENTUREWORKS",
-        "value" : "1"
-      },
-      {
-        "key" : "TDS_ENABLE_SCHEMA_TEST",
-        "value" : "1"
-      }
-    ],
-    "maximumTestRepetitions" : 1,
-    "runDestination" : {
-      "displayName" : "My Mac",
-      "targetArchitecture" : "arm64",
-      "targetDevice" : {
-        "model" : "My Mac"
-      }
-    }
+
   },
   "testTargets" : [
     {
-      "skippedTests" : [
-        "SQLServerConnectionTests\/testRemoteTLSServer()",
-        "SQLServerIntegrationTests\/testSQLServerClientMetadataFacade()",
-        "SQLServerIntegrationTests\/testSqlAgentJobLifecycle()"
-      ],
       "target" : {
         "containerPath" : "container:",
-        "identifier" : "SQLServerNIOTests",
-        "name" : "SQLServerNIOTests"
+        "identifier" : "TDSLayerTests",
+        "name" : "TDSLayerTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:",
+        "identifier" : "SQLServerKitTests",
+        "name" : "SQLServerKitTests"
       }
     }
   ],
-  "type" : "com.apple.dt.xctestplan",
-  "version" : 2
+  "version" : 1
 }

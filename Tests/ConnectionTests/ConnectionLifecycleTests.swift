@@ -1,12 +1,12 @@
 @testable import SQLServerKit
+import NIO
+import NIOPosix
 import SQLServerKitTesting
 import XCTest
 
-final class SQLServerConnectionTests: XCTestCase {
+final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
     var group: EventLoopGroup!
     var client: SQLServerClient!
-    private var skipDueToEnv = false
-
     override func setUp() async throws {
         continueAfterFailure = false
 
@@ -23,7 +23,7 @@ final class SQLServerConnectionTests: XCTestCase {
             eventLoopGroupProvider: .shared(group)
         ).get()
 
-        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1").get() } } catch { skipDueToEnv = true }
+        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1").get() } } catch { throw error }
     }
 
     override func tearDown() async throws {
@@ -33,21 +33,18 @@ final class SQLServerConnectionTests: XCTestCase {
     }
 
     func testHealthCheck() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
 
         let isHealthy = try await client.healthCheck()
         XCTAssertTrue(isHealthy, "Health check should pass for a working connection")
     }
 
     func testValidateConnections() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
 
         // This should not throw an error for a healthy connection pool
         try await client.validateConnections()
     }
 
     func testPoolStatus() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
 
         let status = client.poolStatus
         XCTAssertGreaterThanOrEqual(status.active, 0, "Active connections should be non-negative")
@@ -55,25 +52,34 @@ final class SQLServerConnectionTests: XCTestCase {
     }
     
     func testWithConnectionIsolation() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let tableName = "test_connection_isolation_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8))"
+        let adminClient = SQLServerAdministrationClient(client: client)
         
-        // Create test table
-        _ = try await client.execute("CREATE TABLE [\(tableName)] (id INT PRIMARY KEY, value NVARCHAR(50))").get()
-        _ = try await client.execute("INSERT INTO [\(tableName)] (id, value) VALUES (1, N'Original')").get()
+        try await adminClient.createTable(
+            name: tableName,
+            columns: [
+                .init(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
+                .init(name: "value", definition: .standard(.init(dataType: .nvarchar(length: .length(50)))))
+            ]
+        )
+        try await client.withConnection { connection in
+            try await connection.insertRow(into: tableName, values: [
+                "id": .int(1),
+                "value": .nString("Original")
+            ])
+        }
         
         // Test that withConnection provides proper isolation
         let result1 = try await client.withConnection { connection in
-            // Start a transaction on this connection
-            _ = try await connection.execute("BEGIN TRANSACTION").get()
-            _ = try await connection.execute("UPDATE [\(tableName)] SET value = N'Modified' WHERE id = 1").get()
+            try await connection.beginTransaction()
+            try await connection.updateRows(in: tableName, set: ["value": .nString("Modified")], where: "id = 1")
             
             // Query within the same connection should see the change
             let rows = try await connection.query("SELECT value FROM [\(tableName)] WHERE id = 1").get()
             let value = rows.first?.column("value")?.string
             
             // Rollback the transaction
-            _ = try await connection.execute("ROLLBACK").get()
+            try await connection.rollback()
             
             return value
         }
@@ -85,14 +91,20 @@ final class SQLServerConnectionTests: XCTestCase {
         XCTAssertEqual(result2.first?.column("value")?.string, "Original", "Should see original value after rollback")
         
         // Cleanup
-        _ = try await client.execute("DROP TABLE [\(tableName)]").get()
+        try await adminClient.dropTable(name: tableName)
     }
     
     func testMultipleWithConnectionCalls() async throws {
         let tableName = "test_multiple_connections_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8))"
+        let adminClient = SQLServerAdministrationClient(client: client)
         
-        // Create test table
-        _ = try await client.execute("CREATE TABLE [\(tableName)] (id INT PRIMARY KEY, value NVARCHAR(50))").get()
+        try await adminClient.createTable(
+            name: tableName,
+            columns: [
+                .init(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
+                .init(name: "value", definition: .standard(.init(dataType: .nvarchar(length: .length(50)))))
+            ]
+        )
         
         // Test multiple withConnection calls work independently
         let results = await withTaskGroup(of: String?.self) { group in
@@ -102,7 +114,10 @@ final class SQLServerConnectionTests: XCTestCase {
                 group.addTask {
                     do {
                         return try await self.client.withConnection { connection in
-                            _ = try await connection.execute("INSERT INTO [\(tableName)] (id, value) VALUES (\(i), N'Value\(i)')").get()
+                            try await connection.insertRow(into: tableName, values: [
+                                "id": .int(i),
+                                "value": .nString("Value\(i)")
+                            ])
                             let rows = try await connection.query("SELECT value FROM [\(tableName)] WHERE id = \(i)").get()
                             return rows.first?.column("value")?.string
                         }
@@ -129,7 +144,7 @@ final class SQLServerConnectionTests: XCTestCase {
         XCTAssertEqual(countResult.first?.column("count")?.int, 5)
         
         // Cleanup
-        _ = try await client.execute("DROP TABLE [\(tableName)]").get()
+        try await adminClient.dropTable(name: tableName)
     }
     
     func testConnectionReuse() async throws {
@@ -237,9 +252,15 @@ final class SQLServerConnectionTests: XCTestCase {
     
     func testConnectionStateConsistency() async throws {
         let tableName = "test_state_consistency_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8))"
+        let adminClient = SQLServerAdministrationClient(client: client)
         
-        // Create test table
-        _ = try await client.execute("CREATE TABLE [\(tableName)] (id INT PRIMARY KEY, value NVARCHAR(50))").get()
+        try await adminClient.createTable(
+            name: tableName,
+            columns: [
+                .init(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
+                .init(name: "value", definition: .standard(.init(dataType: .nvarchar(length: .length(50)))))
+            ]
+        )
         
         // Test that connection state is consistent within a withConnection block
         try await client.withConnection { connection in
@@ -247,7 +268,10 @@ final class SQLServerConnectionTests: XCTestCase {
             _ = try await connection.execute("DECLARE @test_var INT = 42").get()
             
             // Insert data
-            _ = try await connection.execute("INSERT INTO [\(tableName)] (id, value) VALUES (1, N'Test')").get()
+            try await connection.insertRow(into: tableName, values: [
+                "id": .int(1),
+                "value": .nString("Test")
+            ])
             
             // Verify we can access both the session variable and the data
             let varResult = try await connection.query("SELECT 42 as test_var").get() // Can't access DECLARE vars across batches
@@ -258,24 +282,33 @@ final class SQLServerConnectionTests: XCTestCase {
         }
         
         // Cleanup
-        _ = try await client.execute("DROP TABLE [\(tableName)]").get()
+        try await adminClient.dropTable(name: tableName)
     }
     
     func testConnectionRecoveryAfterError() async throws {
         // Test that connections can recover after errors
         let tableName = "test_recovery_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8))"
+        let adminClient = SQLServerAdministrationClient(client: client)
         
-        // Create test table
-        _ = try await client.execute("CREATE TABLE [\(tableName)] (id INT PRIMARY KEY, value NVARCHAR(50))").get()
+        try await adminClient.createTable(
+            name: tableName,
+            columns: [
+                .init(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
+                .init(name: "value", definition: .standard(.init(dataType: .nvarchar(length: .length(50)))))
+            ]
+        )
         
         // Cause an error in a connection
         do {
             try await client.withConnection { connection in
-                // Insert valid data
-                _ = try await connection.execute("INSERT INTO [\(tableName)] (id, value) VALUES (1, N'Valid')").get()
-                
-                // Cause a constraint violation
-                _ = try await connection.execute("INSERT INTO [\(tableName)] (id, value) VALUES (1, N'Duplicate')").get()
+                try await connection.insertRow(into: tableName, values: [
+                    "id": .int(1),
+                    "value": .nString("Valid")
+                ])
+                try await connection.insertRow(into: tableName, values: [
+                    "id": .int(1),
+                    "value": .nString("Duplicate")
+                ])
             }
             XCTFail("Should have thrown an error")
         } catch {
@@ -291,7 +324,7 @@ final class SQLServerConnectionTests: XCTestCase {
         XCTAssertEqual(result, 1, "Should have one valid record")
         
         // Cleanup
-        _ = try await client.execute("DROP TABLE [\(tableName)]").get()
+        try await adminClient.dropTable(name: tableName)
     }
     
     func testConnectionPoolWarmup() async throws {
@@ -307,7 +340,6 @@ final class SQLServerConnectionTests: XCTestCase {
     }
     
     func testConnectionCleanup() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
 
         // Test that connections are properly cleaned up
         let initialStatus = client.poolStatus

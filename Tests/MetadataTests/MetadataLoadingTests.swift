@@ -3,7 +3,7 @@ import SQLServerKitTesting
 import XCTest
 import NIO
 
-final class SQLServerAppMetadataLoadingTests: XCTestCase {
+final class SQLServerAppMetadataLoadingTests: XCTestCase, @unchecked Sendable {
     private var group: EventLoopGroup!
     private var client: SQLServerClient!
 

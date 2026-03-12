@@ -1,127 +1,102 @@
-import NIO
+import NIOCore
 
+public protocol Metadata: Sendable {
+    var userType: UInt32 { get }
+    var flags: UInt16 { get }
+    var dataType: TDSDataType { get }
+    var length: Int32 { get }
+    var precision: UInt8 { get }
+    var scale: UInt8 { get }
+    var collation: [UInt8] { get }
+}
+
+public struct TypeMetadata: Metadata, Sendable {
+    public var userType: UInt32
+    public var flags: UInt16
+    public var dataType: TDSDataType
+    public var length: Int32
+    public var precision: UInt8
+    public var scale: UInt8
+    public var collation: [UInt8]
+    
+    public init(userType: UInt32 = 0, flags: UInt16 = 0, dataType: TDSDataType, length: Int32 = 0, precision: UInt8 = 0, scale: UInt8 = 0, collation: [UInt8] = []) {
+        self.userType = userType
+        self.flags = flags
+        self.dataType = dataType
+        self.length = length
+        self.precision = precision
+        self.scale = scale
+        self.collation = collation
+    }
+}
 
 public enum TDSDataType: UInt8, Sendable {
     /// Fixed-Length Data Types
-    /// https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/859eb3d2-80d3-40f6-a637-414552c9c552
-
-    /// NULLTYPE / Null
     case null = 0x1F
-    /// INT1TYPE / TinyInt
     case tinyInt = 0x30
-    /// BITTYPE / Bit
     case bit = 0x32
-    /// INT2TYPE / SmallInt
     case smallInt = 0x34
-    /// INT4TYPE / Int
     case int = 0x38
-    /// DATETIM4TYPE / SmallDateTime
     case smallDateTime = 0x3A
-    /// FLT4TYPE / Real
     case real = 0x3B
-    /// MONEYTYPE / Money
     case money = 0x3C
-    /// DATETIMETYPE / DateTime
     case datetime = 0x3D
-    /// FLT8TYPE / Float
     case float = 0x3E
-    /// MONEY4TYPE / SmallMoney
     case smallMoney = 0x7A
-    /// INT8TYPE / BigInt
     case bigInt = 0x7F
 
     /// Variable-Length Data Types
-    /// https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/ce3183a6-9d89-47e8-a02f-de5a1a1303de
-
-    /// GUIDTYPE / UniqueIdentifier
     case guid = 0x24
-    /// INTNTYPE
     case intn = 0x26
-    /// DECIMALTYPE / Decimal (Legacy)
     case decimalLegacy = 0x37
-    /// NUMERICTYPE / Numeric (Legacy)
     case numericLegacy = 0x3F
-    /// BITNTYPE
     case bitn = 0x68
-    /// DECIMALNTYPE / Decimal
     case decimal = 0x6A
-    /// NUMERICNTYPE / Numeric
     case numeric = 0x6C
-    /// FLTNTYPE
     case floatn = 0x6D
-    /// MONEYNTYPE
     case moneyn = 0x6E
-    /// DATETIMNTYPE
     case datetimen = 0x6F
-    /// DATENTYPE / Date
     case date = 0x28
-    /// TIMENTYPE / Time
     case time = 0x29
-    /// DATETIME2NTYPE / DateTime
     case datetime2 = 0x2A
-    /// DATETIMEOFFSETNTYPE / DateTimeOffset
     case datetimeOffset = 0x2B
-    /// CHARTYPE / Char (Legacy)
     case charLegacy = 0x2F
-    /// VARCHARTYPE / VarChar(Legacy)
     case varcharLegacy = 0x27
-    /// BINARYTYPE / Binary (Legacy)
     case binaryLegacy = 0x2D
-    /// VARBINARYTYPE / VarBinary (Legacy)
     case varbinaryLegacy = 0x25
-    /// BIGVARBINARYTYPE / VarBinary
     case varbinary = 0xA5
-    /// BIGVARCHARTYPE / VarChar
     case varchar = 0xA7
-    /// BIGBINARYTYPE / Binary
     case binary = 0xAD
-    /// BIGCHARTYPE / Char
     case char = 0xAF
-    /// NVARCHARTYPE / NVarChar
     case nvarchar = 0xE7
-    /// NCHARTYPE / NChar
     case nchar = 0xEF
-    /// XMLTYPE / XML
     case xml = 0xF1
-    /// UDTTYPE / CLR UDT
     case clrUdt = 0xF0
-    /// JSONTYPE / JSON (newer SQL Server)
-    case json = 0xF4
-    /// VECTORTYPE / VECTOR (newer SQL Server)
-    case vector = 0xF5
-    /// TEXTTYPE / Text
     case text = 0x23
-    /// IMAGETYPE / Image
-    case image = 0x22
-    /// NTEXTTYPE / NText
     case nText = 0x63
-    /// SSVARIANTTYPE / Sql_Variant
+    case image = 0x22
     case sqlVariant = 0x62
+    case json = 0xF3
+    case vector = 0xF4
 
-    func isCollationType() -> Bool {
+    public func isCollationType() -> Bool {
         switch self {
-        case .char, .varchar, .text, .nText, .nchar, .nvarchar:
-            return true
-        default:
-            return false
+        case .char, .varchar, .text, .nchar, .nvarchar, .nText: return true
+        default: return false
         }
     }
 
-    func isPrecisionType() -> Bool {
+    public func isPrecisionType() -> Bool {
         switch self {
-        case .numericLegacy, .numeric, .decimalLegacy, .decimal:
-            return true
-        default:
-            return false
+        case .decimal, .numeric, .decimalLegacy, .numericLegacy: return true
+        default: return false
         }
     }
 
-    func isScaleType() -> Bool {
+    public func isScaleType() -> Bool {
         switch self {
-        case .numericLegacy, .numeric, .decimalLegacy, .decimal, .time, .datetime2, .datetimeOffset:
-            return true
-        default:
-            return false
+        case .decimal, .numeric, .decimalLegacy, .numericLegacy, .time, .datetime2, .datetimeOffset: return true
+        default: return false
         }
     }
 }

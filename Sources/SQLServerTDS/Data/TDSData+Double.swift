@@ -1,9 +1,10 @@
-import NIO
+import NIOCore
+import Foundation
 
 extension TDSData {
     public init(double: Double) {
-        var buffer = ByteBufferAllocator().buffer(capacity: 0)
-        buffer.writeDouble(double)
+        var buffer = ByteBufferAllocator().buffer(capacity: 8)
+        buffer.writeInteger(double.bitPattern, endianness: .little)
         self.init(metadata: Double.tdsMetadata, value: buffer)
     }
 
@@ -11,72 +12,62 @@ extension TDSData {
         if self.metadata.dataType == .sqlVariant {
             return self.sqlVariantResolved()?.double
         }
+
         guard var value = self.value else {
             return nil
         }
 
         switch self.metadata.dataType {
-        case .real:
-            return value.readFloat(endianness: .little).map {
-                Double($0)
-            }
         case .float:
-            return value.readDouble(endianness: .little)
+            return value.getInteger(at: value.readerIndex, endianness: .little, as: UInt64.self).map(Double.init(bitPattern:))
+        case .real:
+            return value.getInteger(at: value.readerIndex, endianness: .little, as: UInt32.self).map { Double(Float(bitPattern: $0)) }
         case .floatn:
             switch value.readableBytes {
             case 0:
                 return nil
             case 4:
-                return value.readFloat(endianness: .little).map {
-                    Double($0)
-                }
+                return value.getInteger(at: value.readerIndex, endianness: .little, as: UInt32.self).map { Double(Float(bitPattern: $0)) }
             case 8:
-                return value.readDouble(endianness: .little)
+                return value.getInteger(at: value.readerIndex, endianness: .little, as: UInt64.self).map(Double.init(bitPattern:))
             default:
-                fatalError("Unexpected number of readable bytes for FLOATNTYPE data type.")
+                return nil
             }
+        case .decimal, .numeric, .decimalLegacy, .numericLegacy:
+            return self.decimal.map { ($0 as NSDecimalNumber).doubleValue }
         case .smallMoney:
-            return value.readSmallMoney()
+            guard let raw = value.readInteger(endianness: .little, as: Int32.self) else {
+                return nil
+            }
+            return Double(raw) / 10_000.0
         case .money:
-            return value.readMoney()
+            guard let high = value.readInteger(endianness: .little, as: Int32.self),
+                  let low = value.readInteger(endianness: .little, as: UInt32.self) else {
+                return nil
+            }
+            let combined = (Int64(high) << 32) | Int64(low)
+            return Double(combined) / 10_000.0
         case .moneyn:
             switch value.readableBytes {
             case 0:
                 return nil
             case 4:
-                return value.readSmallMoney()
+                guard let raw = value.readInteger(endianness: .little, as: Int32.self) else {
+                    return nil
+                }
+                return Double(raw) / 10_000.0
             case 8:
-                return value.readMoney()
+                guard let high = value.readInteger(endianness: .little, as: Int32.self),
+                      let low = value.readInteger(endianness: .little, as: UInt32.self) else {
+                    return nil
+                }
+                let combined = (Int64(high) << 32) | Int64(low)
+                return Double(combined) / 10_000.0
             default:
-                fatalError("Unexpected number of readable bytes for MONEYNTYPE data type.")
-            }
-        case .numeric, .decimal:
-            guard
-                value.readableBytes != 0,
-                let scale = metadata.scale,
-                let signByte = value.readInteger(endianness: .little, as: UInt8.self)
-            else {
                 return nil
             }
-            
-            let sign = signByte == 1 ? 1 : -1
-
-            switch value.readableBytes {
-            case 4:
-                guard let val = value.readInteger(endianness: .little, as: UInt32.self) else {
-                    return nil
-                }
-                return Double(Int(val) * sign) / pow(10, Double(scale))
-            case 8:
-                guard let val = value.readInteger(endianness: .little, as: UInt64.self) else {
-                    return nil
-                }
-                return Double(val) * Double(sign) / pow(10, Double(scale))
-            case 12, 16:
-                fatalError("Yikes! That is a big number.")
-            default:
-                fatalError("Unexpected number of readable bytes for DECIMALNTYPE or NUMERICNTYPE data type.")
-            }
+        case .int, .bigInt, .smallInt, .tinyInt:
+            return self.int.map { Double($0) }
         default:
             return nil
         }
@@ -84,7 +75,7 @@ extension TDSData {
 }
 
 extension Double: TDSDataConvertible {
-    public static var tdsMetadata: Metadata {
+    public static var tdsMetadata: any Metadata {
         return TypeMetadata(dataType: .float)
     }
 

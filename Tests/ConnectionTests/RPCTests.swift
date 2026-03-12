@@ -1,9 +1,10 @@
 @testable import SQLServerKit
+@testable import SQLServerTDS
 import SQLServerKitTesting
 import XCTest
 import NIO
 
-final class SQLServerRPCTests: XCTestCase {
+final class SQLServerRPCTests: XCTestCase, @unchecked Sendable {
     var group: EventLoopGroup!
     var client: SQLServerClient!
 
@@ -24,19 +25,21 @@ final class SQLServerRPCTests: XCTestCase {
             let procName = "usp_rpc_test_\(UUID().uuidString.prefix(6))"
             try await withDbClient(for: db, using: self.group) { dbClient in
 
-            // Create a simple proc with OUT param and return code
-            let create = """
-            CREATE PROCEDURE [dbo].[\(procName)]
-                @InVal INT,
-                @OutVal INT OUTPUT
-            AS
-            BEGIN
-                SET NOCOUNT ON;
-                SET @OutVal = @InVal + 10;
-                RETURN @InVal + 5;
-            END
-            """
-            _ = try await dbClient.execute(create)
+            let routineClient = SQLServerRoutineClient(client: dbClient)
+            try await routineClient.createStoredProcedure(
+                name: procName,
+                parameters: [
+                    .init(name: "InVal", dataType: .int),
+                    .init(name: "OutVal", dataType: .int, direction: .output)
+                ],
+                body: """
+                BEGIN
+                    SET NOCOUNT ON;
+                    SET @OutVal = @InVal + 10;
+                    RETURN @InVal + 5;
+                END
+                """
+            )
 
             // Call via RPC
             let pIn = SQLServerConnection.ProcedureParameter(name: "@InVal", value: TDSData(int32: 7), direction: .in)
@@ -59,18 +62,21 @@ final class SQLServerRPCTests: XCTestCase {
             let procName = "usp_rpc_dec_\(UUID().uuidString.prefix(6))"
             try await withDbClient(for: db, using: self.group) { dbClient in
 
-            let create = """
-            CREATE PROCEDURE [dbo].[\(procName)]
-                @X DECIMAL(10,2),
-                @Y DECIMAL(10,2) OUTPUT
-            AS
-            BEGIN
-                SET NOCOUNT ON;
-                SET @Y = @X * 2;
-                RETURN 0;
-            END
-            """
-            _ = try await dbClient.execute(create)
+            let routineClient = SQLServerRoutineClient(client: dbClient)
+            try await routineClient.createStoredProcedure(
+                name: procName,
+                parameters: [
+                    .init(name: "X", dataType: .decimal(precision: 10, scale: 2)),
+                    .init(name: "Y", dataType: .decimal(precision: 10, scale: 2), direction: .output)
+                ],
+                body: """
+                BEGIN
+                    SET NOCOUNT ON;
+                    SET @Y = @X * 2;
+                    RETURN 0;
+                END
+                """
+            )
 
             let x = try TDSData(decimal: Decimal(string: "123.45")!, precision: 10, scale: 2)
             let px = SQLServerConnection.ProcedureParameter(name: "@X", value: x, direction: .in)

@@ -5,47 +5,11 @@ import SQLServerKitTesting
 import XCTest
 
 /// Tests that mirror App's actual job management scenarios and data usage
-final class AppIntegrationTests: XCTestCase {
-    var group: EventLoopGroup!
-    var client: SQLServerClient!
-
-    let TIMEOUT: TimeInterval = Double(env("TDS_TEST_OPERATION_TIMEOUT_SECONDS") ?? "30") ?? 30
-
-    override func setUp() async throws {
-        guard envFlagEnabled("TDS_ENABLE_AGENT_TESTS") else {
-            throw XCTSkip("Skipping agent tests. Set TDS_ENABLE_AGENT_TESTS=1 to enable.")
-        }
-        XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables()
-
-        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        let config = makeSQLServerClientConfiguration()
-        self.client = try await SQLServerClient.connect(configuration: config, eventLoopGroupProvider: .shared(group)).get()
-
-        // Ensure Agent XPs are enabled for these tests
-        let metadata = try await withTimeout(TIMEOUT) {
-            try await self.client.withConnection { connection in
-                return SQLServerMetadataClient(connection: connection)
-            }
-        }
-
-        let agentStatus = try await withTimeout(TIMEOUT) {
-            try await metadata.fetchAgentStatus().get()
-        }
-
-        if agentStatus.isSqlAgentRunning && !agentStatus.isSqlAgentEnabled {
-            _ = try await client.query("EXEC sp_configure 'show advanced options', 1; RECONFIGURE;").get()
-            _ = try await client.query("EXEC sp_configure 'Agent XPs', 1; RECONFIGURE;").get()
-        }
-    }
+final class AppIntegrationTests: AgentTestBase, @unchecked Sendable {
 
     /// Test the exact scenario App uses: enhanced API -> fallback to basic API
     func testAppJobLoadingScenario() async throws {
-        let agent = try await withTimeout(TIMEOUT) {
-            try await self.client.withConnection { connection in
-                SQLServerAgentClient(connection: connection)
-            }
-        }
+        let agent = SQLServerAgentOperations(client: self.client)
 
         print("🔍 [AppIntegration] Testing App's job loading scenario...")
 
@@ -121,11 +85,7 @@ final class AppIntegrationTests: XCTestCase {
 
     /// Test App's stored procedure usage
     func testAppStoredProcedures() async throws {
-        let agent = try await withTimeout(TIMEOUT) {
-            try await self.client.withConnection { connection in
-                SQLServerAgentClient(connection: connection)
-            }
-        }
+        let agent = SQLServerAgentOperations(client: self.client)
 
         print("🔍 [AppIntegration] Testing stored procedures App uses...")
 
@@ -199,26 +159,18 @@ final class AppIntegrationTests: XCTestCase {
 
     /// Test App's job management operations
     func testAppJobOperations() async throws {
-        let agent = try await withTimeout(TIMEOUT) {
-            try await self.client.withConnection { connection in
-                SQLServerAgentClient(connection: connection)
-            }
-        }
+        let agent = SQLServerAgentOperations(client: self.client)
 
         print("🔍 [AppIntegration] Testing App's job operations...")
 
-        // Get a test job
-        let jobs = try await agent.listJobsDetailed()
-        guard let testJob = jobs.first else {
-            throw XCTSkip("No jobs found to test operations")
-        }
+        let testJob = try await createManagedJob()
 
-        print("🔍 [AppIntegration] Testing operations on job: \(testJob.name)")
+        print("🔍 [AppIntegration] Testing operations on job: \(testJob.jobName)")
 
         // Test start job
         do {
             print("🔍 [AppIntegration] Testing startJob...")
-            try await agent.startJob(named: testJob.name)
+            try await agent.startJob(named: testJob.jobName)
             print("✅ [AppIntegration] startJob succeeded")
         } catch {
             print("⚠️ [AppIntegration] startJob failed (may be normal if job is already running): \(error.localizedDescription)")
@@ -227,7 +179,7 @@ final class AppIntegrationTests: XCTestCase {
         // Test stop job
         do {
             print("🔍 [AppIntegration] Testing stopJob...")
-            try await agent.stopJob(named: testJob.name)
+            try await agent.stopJob(named: testJob.jobName)
             print("✅ [AppIntegration] stopJob succeeded")
         } catch {
             print("⚠️ [AppIntegration] stopJob failed: \(error.localizedDescription)")
@@ -236,14 +188,14 @@ final class AppIntegrationTests: XCTestCase {
         // Test enable/disable job
         do {
             print("🔍 [AppIntegration] Testing enableJob...")
-            try await agent.enableJob(named: testJob.name, enabled: true)
+            try await agent.enableJob(named: testJob.jobName, enabled: true)
             print("✅ [AppIntegration] enableJob succeeded")
 
-            try await agent.enableJob(named: testJob.name, enabled: false)
+            try await agent.enableJob(named: testJob.jobName, enabled: false)
             print("✅ [AppIntegration] disableJob succeeded")
 
             // Restore original state
-            try await agent.enableJob(named: testJob.name, enabled: testJob.enabled)
+            try await agent.enableJob(named: testJob.jobName, enabled: true)
             print("✅ [AppIntegration] restored original state")
         } catch {
             print("❌ [AppIntegration] enable/disable job failed: \(error.localizedDescription)")
@@ -252,11 +204,7 @@ final class AppIntegrationTests: XCTestCase {
 
     /// Test basic API reliability
     func testBasicAPIReliability() async throws {
-        let agent = try await withTimeout(TIMEOUT) {
-            try await self.client.withConnection { connection in
-                SQLServerAgentClient(connection: connection)
-            }
-        }
+        let agent = SQLServerAgentOperations(client: self.client)
 
         print("🔍 [AppIntegration] Testing basic API reliability...")
 

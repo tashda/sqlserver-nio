@@ -4,7 +4,7 @@ import XCTest
 import NIO
 import Logging
 
-final class SQLServerTableDefinitionTests: XCTestCase {
+final class SQLServerTableDefinitionTests: XCTestCase, @unchecked Sendable {
     var group: EventLoopGroup!
     var client: SQLServerClient!
 

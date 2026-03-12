@@ -18,12 +18,45 @@ extension TDSConnection {
         connectTimeout: TimeAmount = .seconds(10),
         on eventLoop: EventLoop
     ) -> EventLoopFuture<TDSConnection> {
+        connect(
+            to: socketAddress,
+            tlsConfiguration: tlsConfiguration,
+            serverHostname: serverHostname,
+            connectTimeout: connectTimeout,
+            on: eventLoop,
+            logger: Logger(label: "swift-tds")
+        )
+    }
+
+    public static func connect(
+        to socketAddress: SocketAddress,
+        tlsConfiguration: TLSConfiguration? = .makeClientConfiguration(),
+        serverHostname: String? = nil,
+        on eventLoop: EventLoop,
+        logger: Logger
+    ) -> EventLoopFuture<TDSConnection> {
+        connect(
+            to: socketAddress,
+            tlsConfiguration: tlsConfiguration,
+            serverHostname: serverHostname,
+            connectTimeout: .seconds(10),
+            on: eventLoop,
+            logger: logger
+        )
+    }
+
+    public static func connect(
+        to socketAddress: SocketAddress,
+        tlsConfiguration: TLSConfiguration? = .makeClientConfiguration(),
+        serverHostname: String? = nil,
+        connectTimeout: TimeAmount = .seconds(10),
+        on eventLoop: EventLoop,
+        logger: Logger
+    ) -> EventLoopFuture<TDSConnection> {
         let bootstrap = ClientBootstrap(group: eventLoop)
             .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
             .connectTimeout(connectTimeout)
-        
-        let logger = Logger(label: "swift-tds")
-        
+
         let firstDecoderName = "tds.firstDecoder"
         let firstEncoderName = "tds.firstEncoder"
         let requestHandlerName = "tds.requestHandler"
@@ -55,7 +88,16 @@ extension TDSConnection {
                     channel.eventLoop.makeFailedFuture(error)
                 }
             }
-            let connection = TDSConnection(channel: channel, logger: logger)
+            let connection = TDSConnection(
+                channel: channel,
+                requestHandler: requestHandler,
+                tlsConfiguration: tlsConfiguration,
+                serverHostname: serverHostname,
+                firstDecoderName: firstDecoderName,
+                firstEncoderName: firstEncoderName,
+                pipelineCoordinatorName: pipelineCoordinatorName,
+                logger: logger
+            )
 
             // Set the connection reference in the request handler for ENVCHANGE token processing
             requestHandler.setConnection(connection)

@@ -6,7 +6,7 @@ import Foundation
 /// Tests TDSData construction and type accessors for every supported primitive type.
 /// These tests exercise the TDSData layer in isolation — no parser, no network.
 /// All buffers are constructed with little-endian byte order to match what SQL Server sends.
-final class TDSDataTypeRoundTripTests: XCTestCase {
+final class TDSDataTypeRoundTripTests: XCTestCase, @unchecked Sendable {
 
     // MARK: - Bool
 

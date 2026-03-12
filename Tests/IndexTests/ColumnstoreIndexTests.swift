@@ -4,17 +4,15 @@ import XCTest
 import NIO
 import Logging
 
-final class SQLServerColumnstoreIndexTests: XCTestCase {
+final class SQLServerColumnstoreIndexTests: XCTestCase, @unchecked Sendable {
     var group: EventLoopGroup!
     var client: SQLServerClient!
-    private var skipDueToEnv = false
-
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
         TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
         group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).get()
-        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1").get() } } catch { skipDueToEnv = true }
+        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1").get() } } catch { throw error }
     }
 
     override func tearDown() async throws {
@@ -24,7 +22,6 @@ final class SQLServerColumnstoreIndexTests: XCTestCase {
 
     @available(macOS 12.0, *)
     func testColumnstoreIndexScripting() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         do {
         try await withTemporaryDatabase(client: self.client, prefix: "csmx") { db in
             let table = "cs_tbl_\(UUID().uuidString.prefix(6))"
