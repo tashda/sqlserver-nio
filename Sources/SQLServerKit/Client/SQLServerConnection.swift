@@ -63,7 +63,7 @@ public final class SQLServerConnection: @unchecked Sendable {
     internal var _isClosed = false
 
     internal var underlying: TDSConnection { base }
-    public var eventLoop: EventLoop { base.eventLoop }
+    internal var eventLoop: EventLoop { base.eventLoop }
     public var logger: Logger { base.logger }
     public var currentDatabase: String { stateLock.withLock { _currentDatabase } }
 
@@ -93,8 +93,7 @@ public final class SQLServerConnection: @unchecked Sendable {
         ).get()
     }
 
-    @available(*, deprecated, message: "Use async connect(configuration:logger:) instead.")
-    public static func connect(
+    internal static func connect(
         configuration: Configuration,
         eventLoopGroupProvider: SQLServerClient.EventLoopGroupProvider = .createNew(numberOfThreads: System.coreCount),
         logger: Logger = Logger(label: "tds.sqlserver.connection")
@@ -127,8 +126,7 @@ public final class SQLServerConnection: @unchecked Sendable {
         return fut
     }
 
-    @available(*, deprecated, message: "Use async connect(configuration:logger:) instead.")
-    public static func connect(
+    internal static func connect(
         configuration: Configuration,
         on eventLoop: EventLoop,
         logger: Logger = Logger(label: "tds.sqlserver.connection")
@@ -258,8 +256,7 @@ public final class SQLServerConnection: @unchecked Sendable {
         )
     }
 
-    @available(*, deprecated, message: "Use async close() instead.")
-    public func close() -> EventLoopFuture<Void> {
+    internal func close() -> EventLoopFuture<Void> {
         let shouldClose = stateLock.withLock { () -> Bool in
             if _isClosed {
                 return false

@@ -29,8 +29,7 @@ extension SQLServerConnection {
         return try await execute(pagedSQL).rows.map { $0.droppingLastColumn() }
     }
 
-    @available(*, deprecated, message: "Use async execute(_:) instead.")
-    public func execute(_ sql: String) -> EventLoopFuture<SQLServerExecutionResult> {
+    internal func execute(_ sql: String) -> EventLoopFuture<SQLServerExecutionResult> {
         let future = executeWithRetry(operationName: "execute") {
             self.runBatch(sql)
         }
@@ -68,8 +67,7 @@ extension SQLServerConnection {
         })
     }
 
-    @available(*, deprecated, message: "Use async query(_:) instead.")
-    public func query(_ sql: String) -> EventLoopFuture<[SQLServerRow]> {
+    internal func query(_ sql: String) -> EventLoopFuture<[SQLServerRow]> {
         execute(sql).map(\.rows)
     }
 
@@ -78,8 +76,7 @@ extension SQLServerConnection {
         try await execute(sql).rows
     }
 
-    @available(*, deprecated, message: "Use async execute(_:timeout:) instead.")
-    public func execute(_ sql: String, timeout seconds: TimeInterval) -> EventLoopFuture<SQLServerExecutionResult> {
+    internal func execute(_ sql: String, timeout seconds: TimeInterval) -> EventLoopFuture<SQLServerExecutionResult> {
         execute(sql, timeout: seconds, invalidateOnTimeout: true)
     }
 
@@ -101,8 +98,7 @@ extension SQLServerConnection {
         return timed
     }
 
-    @available(*, deprecated, message: "Use async queryScalar(_:as:) instead.")
-    public func queryScalar<T: SQLServerDataConvertible & Sendable>(_ sql: String, as type: T.Type = T.self) -> EventLoopFuture<T?> {
+    internal func queryScalar<T: SQLServerDataConvertible & Sendable>(_ sql: String, as type: T.Type = T.self) -> EventLoopFuture<T?> {
         execute(sql).map { result in
             guard
                 let row = result.rows.first,
@@ -121,8 +117,7 @@ extension SQLServerConnection {
         try await queryScalar(sql, as: type).get()
     }
 
-    @available(*, deprecated, message: "Use async call(procedure:parameters:) instead.")
-    public func call(procedure name: String, parameters: [ProcedureParameter] = []) -> EventLoopFuture<SQLServerExecutionResult> {
+    internal func call(procedure name: String, parameters: [ProcedureParameter] = []) -> EventLoopFuture<SQLServerExecutionResult> {
         struct Accumulator: Sendable {
             var rows: [TDSRow] = []
             var dones: [SQLServerStreamDone] = []
@@ -211,8 +206,7 @@ extension SQLServerConnection {
     }
 
     // MARK: - Explicit transaction helpers (SSMS parity)
-    @available(*, deprecated, message: "Use async beginTransaction() instead.")
-    public func beginTransaction() -> EventLoopFuture<Void> {
+    internal func beginTransaction() -> EventLoopFuture<Void> {
         let request = TransactionManagerRequest(
             command: .begin(),
             transactionDescriptor: base.transactionDescriptor,
@@ -221,8 +215,7 @@ extension SQLServerConnection {
         return base.send(request, logger: logger)
     }
 
-    @available(*, deprecated, message: "Use async commit() instead.")
-    public func commit() -> EventLoopFuture<Void> {
+    internal func commit() -> EventLoopFuture<Void> {
         let request = TransactionManagerRequest(
             command: .commit,
             transactionDescriptor: base.transactionDescriptor,
@@ -231,8 +224,7 @@ extension SQLServerConnection {
         return base.send(request, logger: logger)
     }
 
-    @available(*, deprecated, message: "Use async rollback() instead.")
-    public func rollback() -> EventLoopFuture<Void> {
+    internal func rollback() -> EventLoopFuture<Void> {
         let request = TransactionManagerRequest(
             command: .rollback,
             transactionDescriptor: base.transactionDescriptor,
@@ -241,18 +233,15 @@ extension SQLServerConnection {
         return base.send(request, logger: logger)
     }
 
-    @available(*, deprecated, message: "Use async createSavepoint(_:) instead.")
-    public func createSavepoint(_ name: String) -> EventLoopFuture<Void> {
+    internal func createSavepoint(_ name: String) -> EventLoopFuture<Void> {
         execute("SAVE TRANSACTION \(savepointIdentifier(name))").map { _ in () }
     }
 
-    @available(*, deprecated, message: "Use async rollbackToSavepoint(_:) instead.")
-    public func rollbackToSavepoint(_ name: String) -> EventLoopFuture<Void> {
+    internal func rollbackToSavepoint(_ name: String) -> EventLoopFuture<Void> {
         execute("ROLLBACK TRANSACTION \(savepointIdentifier(name))").map { _ in () }
     }
 
-    @available(*, deprecated, message: "Use async setIsolationLevel(_:) instead.")
-    public func setIsolationLevel(_ level: IsolationLevel) -> EventLoopFuture<Void> {
+    internal func setIsolationLevel(_ level: IsolationLevel) -> EventLoopFuture<Void> {
         execute("SET TRANSACTION ISOLATION LEVEL \(level.sqlLiteral)").map { _ in () }
     }
 

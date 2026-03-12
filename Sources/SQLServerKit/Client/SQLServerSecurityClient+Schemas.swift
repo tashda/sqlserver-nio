@@ -4,7 +4,7 @@ import SQLServerTDS
 extension SQLServerSecurityClient {
     // MARK: - Schema helpers (security-flavored)
 
-    public func listSchemas() -> EventLoopFuture<[SchemaInfo]> {
+    internal func listSchemas() -> EventLoopFuture<[SchemaInfo]> {
         let sql = """
         SELECT s.name, dp.name AS owner
         FROM sys.schemas AS s
@@ -17,21 +17,21 @@ extension SQLServerSecurityClient {
         }
     }
 
-    public func createSchema(name: String, authorization: String? = nil) -> EventLoopFuture<Void> {
+    internal func createSchema(name: String, authorization: String? = nil) -> EventLoopFuture<Void> {
         var sql = "CREATE SCHEMA \(Self.escapeIdentifier(name))"
         if let auth = authorization { sql += " AUTHORIZATION \(Self.escapeIdentifier(auth))" }
         sql += ";"
         return run(sql).map { _ in () }
     }
 
-    public func dropSchema(name: String) -> EventLoopFuture<Void> {
+    internal func dropSchema(name: String) -> EventLoopFuture<Void> {
         let sql = "DROP SCHEMA \(Self.escapeIdentifier(name));"
         return run(sql).map { _ in () }
     }
 
     /// Drops a schema. When `cascade` is true, attempts to drop all objects in the schema first (views, functions, procedures, synonyms, foreign keys, tables, types), then drops the schema.
     /// Note: This operates within the current database context and requires appropriate privileges. It mirrors SSMS behavior for manual cascades.
-    public func dropSchema(name: String, cascade: Bool) -> EventLoopFuture<Void> {
+    internal func dropSchema(name: String, cascade: Bool) -> EventLoopFuture<Void> {
         guard cascade else { return dropSchema(name: name) }
         let schemaLit = name.replacingOccurrences(of: "'", with: "''")
         let script = """
@@ -105,13 +105,43 @@ extension SQLServerSecurityClient {
         return run(script).map { _ in () }
     }
 
-    public func alterAuthorizationOnSchema(schema: String, principal: String) -> EventLoopFuture<Void> {
+    internal func alterAuthorizationOnSchema(schema: String, principal: String) -> EventLoopFuture<Void> {
         let sql = "ALTER AUTHORIZATION ON SCHEMA::\(Self.escapeIdentifier(schema)) TO \(Self.escapeIdentifier(principal));"
         return run(sql).map { _ in () }
     }
 
-    public func transferObjectToSchema(objectSchema: String, objectName: String, newSchema: String) -> EventLoopFuture<Void> {
+    internal func transferObjectToSchema(objectSchema: String, objectName: String, newSchema: String) -> EventLoopFuture<Void> {
         let sql = "ALTER SCHEMA \(Self.escapeIdentifier(newSchema)) TRANSFER OBJECT::\(Self.escapeIdentifier(objectSchema)).\(Self.escapeIdentifier(objectName));"
         return run(sql).map { _ in () }
+    }
+
+    @available(macOS 12.0, *)
+    public func listSchemas() async throws -> [SchemaInfo] {
+        try await listSchemas().get()
+    }
+
+    @available(macOS 12.0, *)
+    public func createSchema(name: String, authorization: String? = nil) async throws {
+        _ = try await createSchema(name: name, authorization: authorization).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func dropSchema(name: String) async throws {
+        _ = try await dropSchema(name: name).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func dropSchema(name: String, cascade: Bool) async throws {
+        _ = try await dropSchema(name: name, cascade: cascade).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func alterAuthorizationOnSchema(schema: String, principal: String) async throws {
+        _ = try await alterAuthorizationOnSchema(schema: schema, principal: principal).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func transferObjectToSchema(objectSchema: String, objectName: String, newSchema: String) async throws {
+        _ = try await transferObjectToSchema(objectSchema: objectSchema, objectName: objectName, newSchema: newSchema).get()
     }
 }

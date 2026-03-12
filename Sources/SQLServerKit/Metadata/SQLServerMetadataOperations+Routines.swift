@@ -163,7 +163,7 @@ extension SQLServerMetadataOperations {
         }
     }
 
-    public func fetchObjectDefinitions(_ identifiers: [SQLServerMetadataObjectIdentifier]) -> EventLoopFuture<[ObjectDefinition]> {
+    internal func fetchObjectDefinitions(_ identifiers: [SQLServerMetadataObjectIdentifier]) -> EventLoopFuture<[ObjectDefinition]> {
         let initial = eventLoop.makeSucceededFuture([ObjectDefinition]())
         return identifiers.reduce(initial) { partial, target in
             partial.flatMap { collected in

@@ -5,7 +5,7 @@ import SQLServerTDS
 extension SQLServerMetadataOperations {
     // MARK: - Schemas
 
-    public func listSchemas(in database: String? = nil) -> EventLoopFuture<[SchemaMetadata]> {
+    internal func listSchemas(in database: String? = nil) -> EventLoopFuture<[SchemaMetadata]> {
         let qualifiedSchemas = qualified(database, object: "sys.schemas")
         var predicates: [String] = []
         if !self.configuration.includeSystemSchemas {
@@ -27,7 +27,7 @@ extension SQLServerMetadataOperations {
 
     // MARK: - Tables
 
-    public func listTables(database: String? = nil, schema: String? = nil, includeComments: Bool = false) -> EventLoopFuture<[TableMetadata]> {
+    internal func listTables(database: String? = nil, schema: String? = nil, includeComments: Bool = false) -> EventLoopFuture<[TableMetadata]> {
         let qualifiedObjects = qualified(database, object: "sys.objects")
         let qualifiedSchemas = qualified(database, object: "sys.schemas")
         let qualifiedExtended = qualified(database, object: "sys.extended_properties")

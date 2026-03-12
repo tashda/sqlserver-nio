@@ -111,8 +111,8 @@ public func makeClient(
                     validationQuery: nil
                 )
             ),
-            eventLoopGroupProvider: .shared(group)
-        ).get()
+            numberOfThreads: 1
+        )
     }
 }
 

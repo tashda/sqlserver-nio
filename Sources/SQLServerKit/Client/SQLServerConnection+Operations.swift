@@ -14,11 +14,11 @@ extension SQLServerConnection {
         try await fetchObjectDefinition(database: database, schema: schema, name: name, kind: kind).get()
     }
 
-    public func listDatabases() -> EventLoopFuture<[DatabaseMetadata]> {
+    internal func listDatabases() -> EventLoopFuture<[DatabaseMetadata]> {
         metadataClient.listDatabases()
     }
 
-    public func databaseState(name: String) -> EventLoopFuture<DatabaseMetadata> {
+    internal func databaseState(name: String) -> EventLoopFuture<DatabaseMetadata> {
         let loop = self.eventLoop
         if #available(macOS 12.0, *) {
             return loop.makeFutureWithTask {
@@ -34,88 +34,188 @@ extension SQLServerConnection {
         try await metadataClient.databaseState(name: name)
     }
 
-    public func listSchemas(in database: String? = nil) -> EventLoopFuture<[SchemaMetadata]> {
+    @available(macOS 12.0, *)
+    public func listDatabases() async throws -> [DatabaseMetadata] {
+        try await listDatabases().get()
+    }
+
+    @available(macOS 12.0, *)
+    public func listSchemas(in database: String? = nil) async throws -> [SchemaMetadata] {
+        try await listSchemas(in: database).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func listTables(database: String? = nil, schema: String? = nil, includeComments: Bool = false) async throws -> [TableMetadata] {
+        try await listTables(database: database, schema: schema, includeComments: includeComments).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func listColumns(database: String? = nil, schema: String, table: String, objectTypeHint: String? = nil, includeComments: Bool = false) async throws -> [ColumnMetadata] {
+        try await listColumns(database: database, schema: schema, table: table, objectTypeHint: objectTypeHint, includeComments: includeComments).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func listColumnsForSchema(database: String? = nil, schema: String, includeComments: Bool = false) async throws -> [ColumnMetadata] {
+        try await listColumnsForSchema(database: database, schema: schema, includeComments: includeComments).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func listColumnsForDatabase(database: String? = nil, includeComments: Bool = false) async throws -> [ColumnMetadata] {
+        try await listColumnsForDatabase(database: database, includeComments: includeComments).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func listParameters(database: String? = nil, schema: String, object: String) async throws -> [ParameterMetadata] {
+        try await listParameters(database: database, schema: schema, object: object).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func listPrimaryKeys(database: String? = nil, schema: String? = nil, table: String? = nil) async throws -> [KeyConstraintMetadata] {
+        try await listPrimaryKeys(database: database, schema: schema, table: table).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func listPrimaryKeysFromCatalog(database: String? = nil, schema: String? = nil, table: String? = nil) async throws -> [KeyConstraintMetadata] {
+        try await listPrimaryKeysFromCatalog(database: database, schema: schema, table: table).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func listUniqueConstraints(database: String? = nil, schema: String? = nil, table: String? = nil) async throws -> [KeyConstraintMetadata] {
+        try await listUniqueConstraints(database: database, schema: schema, table: table).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func listIndexes(database: String? = nil, schema: String, table: String) async throws -> [IndexMetadata] {
+        try await listIndexes(database: database, schema: schema, table: table).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func listForeignKeys(database: String? = nil, schema: String, table: String) async throws -> [ForeignKeyMetadata] {
+        try await listForeignKeys(database: database, schema: schema, table: table).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func listDependencies(database: String? = nil, schema: String, object: String) async throws -> [DependencyMetadata] {
+        try await listDependencies(database: database, schema: schema, object: object).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func listTriggers(database: String? = nil, schema: String? = nil, table: String? = nil, includeComments: Bool = false) async throws -> [TriggerMetadata] {
+        try await listTriggers(database: database, schema: schema, table: table, includeComments: includeComments).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func listProcedures(database: String? = nil, schema: String? = nil, includeComments: Bool = false) async throws -> [RoutineMetadata] {
+        try await listProcedures(database: database, schema: schema, includeComments: includeComments).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func listFunctions(database: String? = nil, schema: String? = nil, includeComments: Bool = false) async throws -> [RoutineMetadata] {
+        try await listFunctions(database: database, schema: schema, includeComments: includeComments).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func fetchObjectDefinitions(_ identifiers: [SQLServerMetadataObjectIdentifier]) async throws -> [ObjectDefinition] {
+        try await fetchObjectDefinitions(identifiers).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func loadSchemaStructure(database: String? = nil, schema: String, includeComments: Bool = false) async throws -> SQLServerSchemaStructure {
+        try await loadSchemaStructure(database: database, schema: schema, includeComments: includeComments).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func loadDatabaseStructure(database: String? = nil, includeComments: Bool = false) async throws -> SQLServerDatabaseStructure {
+        try await loadDatabaseStructure(database: database, includeComments: includeComments).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func searchMetadata(query: String, database: String? = nil, schema: String? = nil, scopes: MetadataSearchScope = .default) async throws -> [MetadataSearchHit] {
+        try await searchMetadata(query: query, database: database, schema: schema, scopes: scopes).get()
+    }
+
+    internal func listSchemas(in database: String? = nil) -> EventLoopFuture<[SchemaMetadata]> {
         metadataClient.listSchemas(in: database)
     }
 
-    public func listTables(database: String? = nil, schema: String? = nil, includeComments: Bool = false) -> EventLoopFuture<[TableMetadata]> {
+    internal func listTables(database: String? = nil, schema: String? = nil, includeComments: Bool = false) -> EventLoopFuture<[TableMetadata]> {
         metadataClient.listTables(database: database, schema: schema, includeComments: includeComments)
     }
 
-    public func listColumns(database: String? = nil, schema: String, table: String, objectTypeHint: String? = nil, includeComments: Bool = false) -> EventLoopFuture<[ColumnMetadata]> {
+    internal func listColumns(database: String? = nil, schema: String, table: String, objectTypeHint: String? = nil, includeComments: Bool = false) -> EventLoopFuture<[ColumnMetadata]> {
         metadataClient.listColumns(database: database, schema: schema, table: table, objectTypeHint: objectTypeHint, includeComments: includeComments)
     }
 
-    public func listColumnsForSchema(database: String? = nil, schema: String, includeComments: Bool = false) -> EventLoopFuture<[ColumnMetadata]> {
+    internal func listColumnsForSchema(database: String? = nil, schema: String, includeComments: Bool = false) -> EventLoopFuture<[ColumnMetadata]> {
         metadataClient.listColumnsForSchema(database: database, schema: schema, includeComments: includeComments)
     }
 
-    public func listColumnsForDatabase(database: String? = nil, includeComments: Bool = false) -> EventLoopFuture<[ColumnMetadata]> {
+    internal func listColumnsForDatabase(database: String? = nil, includeComments: Bool = false) -> EventLoopFuture<[ColumnMetadata]> {
         metadataClient.listColumnsForDatabase(database: database, includeComments: includeComments)
     }
 
-    public func listParameters(database: String? = nil, schema: String, object: String) -> EventLoopFuture<[ParameterMetadata]> {
+    internal func listParameters(database: String? = nil, schema: String, object: String) -> EventLoopFuture<[ParameterMetadata]> {
         metadataClient.listParameters(database: database, schema: schema, object: object)
     }
 
-    public func listPrimaryKeys(database: String? = nil, schema: String? = nil, table: String? = nil) -> EventLoopFuture<[KeyConstraintMetadata]> {
+    internal func listPrimaryKeys(database: String? = nil, schema: String? = nil, table: String? = nil) -> EventLoopFuture<[KeyConstraintMetadata]> {
         metadataClient.listPrimaryKeys(database: database, schema: schema, table: table)
     }
 
-    public func listPrimaryKeysFromCatalog(database: String? = nil, schema: String? = nil, table: String? = nil) -> EventLoopFuture<[KeyConstraintMetadata]> {
+    internal func listPrimaryKeysFromCatalog(database: String? = nil, schema: String? = nil, table: String? = nil) -> EventLoopFuture<[KeyConstraintMetadata]> {
         metadataClient.listPrimaryKeysFromCatalog(database: database, schema: schema, table: table)
     }
 
-    public func listUniqueConstraints(database: String? = nil, schema: String? = nil, table: String? = nil) -> EventLoopFuture<[KeyConstraintMetadata]> {
+    internal func listUniqueConstraints(database: String? = nil, schema: String? = nil, table: String? = nil) -> EventLoopFuture<[KeyConstraintMetadata]> {
         metadataClient.listUniqueConstraints(database: database, schema: schema, table: table)
     }
 
-    public func listIndexes(database: String? = nil, schema: String, table: String) -> EventLoopFuture<[IndexMetadata]> {
+    internal func listIndexes(database: String? = nil, schema: String, table: String) -> EventLoopFuture<[IndexMetadata]> {
         metadataClient.listIndexes(database: database, schema: schema, table: table)
     }
 
-    public func listForeignKeys(database: String? = nil, schema: String, table: String) -> EventLoopFuture<[ForeignKeyMetadata]> {
+    internal func listForeignKeys(database: String? = nil, schema: String, table: String) -> EventLoopFuture<[ForeignKeyMetadata]> {
         metadataClient.listForeignKeys(database: database, schema: schema, table: table)
     }
 
-    public func listDependencies(database: String? = nil, schema: String, object: String) -> EventLoopFuture<[DependencyMetadata]> {
+    internal func listDependencies(database: String? = nil, schema: String, object: String) -> EventLoopFuture<[DependencyMetadata]> {
         metadataClient.listDependencies(database: database, schema: schema, object: object)
     }
 
-    public func listTriggers(database: String? = nil, schema: String? = nil, table: String? = nil, includeComments: Bool = false) -> EventLoopFuture<[TriggerMetadata]> {
+    internal func listTriggers(database: String? = nil, schema: String? = nil, table: String? = nil, includeComments: Bool = false) -> EventLoopFuture<[TriggerMetadata]> {
         metadataClient.listTriggers(database: database, schema: schema, table: table, includeComments: includeComments)
     }
 
-    public func listProcedures(database: String? = nil, schema: String? = nil, includeComments: Bool = false) -> EventLoopFuture<[RoutineMetadata]> {
+    internal func listProcedures(database: String? = nil, schema: String? = nil, includeComments: Bool = false) -> EventLoopFuture<[RoutineMetadata]> {
         metadataClient.listProcedures(database: database, schema: schema, includeComments: includeComments)
     }
 
-    public func listFunctions(database: String? = nil, schema: String? = nil, includeComments: Bool = false) -> EventLoopFuture<[RoutineMetadata]> {
+    internal func listFunctions(database: String? = nil, schema: String? = nil, includeComments: Bool = false) -> EventLoopFuture<[RoutineMetadata]> {
         metadataClient.listFunctions(database: database, schema: schema, includeComments: includeComments)
     }
 
-    public func fetchObjectDefinitions(_ identifiers: [SQLServerMetadataObjectIdentifier]) -> EventLoopFuture<[ObjectDefinition]> {
+    internal func fetchObjectDefinitions(_ identifiers: [SQLServerMetadataObjectIdentifier]) -> EventLoopFuture<[ObjectDefinition]> {
         metadataClient.fetchObjectDefinitions(identifiers)
     }
 
-    public func fetchObjectDefinition(database: String? = nil, schema: String, name: String, kind: SQLServerMetadataObjectIdentifier.Kind) -> EventLoopFuture<ObjectDefinition?> {
+    internal func fetchObjectDefinition(database: String? = nil, schema: String, name: String, kind: SQLServerMetadataObjectIdentifier.Kind) -> EventLoopFuture<ObjectDefinition?> {
         let identifier = SQLServerMetadataObjectIdentifier(database: database, schema: schema, name: name, kind: kind)
         return metadataClient.fetchObjectDefinitions([identifier]).map { $0.first }
     }
 
-    public func loadSchemaStructure(database: String? = nil, schema: String, includeComments: Bool = false) -> EventLoopFuture<SQLServerSchemaStructure> {
+    internal func loadSchemaStructure(database: String? = nil, schema: String, includeComments: Bool = false) -> EventLoopFuture<SQLServerSchemaStructure> {
         metadataClient.loadSchemaStructure(database: database, schema: schema, includeComments: includeComments)
     }
 
-    public func loadDatabaseStructure(database: String? = nil, includeComments: Bool = false) -> EventLoopFuture<SQLServerDatabaseStructure> {
+    internal func loadDatabaseStructure(database: String? = nil, includeComments: Bool = false) -> EventLoopFuture<SQLServerDatabaseStructure> {
         metadataClient.loadDatabaseStructure(database: database, includeComments: includeComments)
     }
 
-    public func searchMetadata(query: String, database: String? = nil, schema: String? = nil, scopes: MetadataSearchScope = .default) -> EventLoopFuture<[MetadataSearchHit]> {
+    internal func searchMetadata(query: String, database: String? = nil, schema: String? = nil, scopes: MetadataSearchScope = .default) -> EventLoopFuture<[MetadataSearchHit]> {
         metadataClient.searchMetadata(query: query, database: database, schema: schema, scopes: scopes)
     }
 
-    public func serverVersion() -> EventLoopFuture<String> {
+    internal func serverVersion() -> EventLoopFuture<String> {
         metadataClient.serverVersion()
     }
 
@@ -126,7 +226,7 @@ extension SQLServerConnection {
 
     // MARK: - SQL Agent Operations
 
-    public func fetchAgentStatus() -> EventLoopFuture<SQLServerAgentStatus> {
+    internal func fetchAgentStatus() -> EventLoopFuture<SQLServerAgentStatus> {
         metadataClient.fetchAgentStatus()
     }
 

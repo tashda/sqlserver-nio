@@ -4,7 +4,7 @@ import SQLServerTDS
 extension SQLServerSecurityClient {
     // MARK: - Role Management
     
-    public func createRole(name: String, options: RoleOptions = RoleOptions()) -> EventLoopFuture<Void> {
+    internal func createRole(name: String, options: RoleOptions = RoleOptions()) -> EventLoopFuture<Void> {
         let loop = self.eventLoop
         let promise = loop.makePromise(of: Void.self)
         if #available(macOS 12.0, *) {
@@ -30,7 +30,7 @@ extension SQLServerSecurityClient {
         _ = try await exec(sql)
     }
     
-    public func dropRole(name: String) -> EventLoopFuture<Void> {
+    internal func dropRole(name: String) -> EventLoopFuture<Void> {
         let loop = self.eventLoop
         let promise = loop.makePromise(of: Void.self)
         if #available(macOS 12.0, *) {
@@ -50,7 +50,7 @@ extension SQLServerSecurityClient {
         _ = try await exec(sql)
     }
     
-    public func alterRole(name: String, newName: String) -> EventLoopFuture<Void> {
+    internal func alterRole(name: String, newName: String) -> EventLoopFuture<Void> {
         let loop = self.eventLoop
         let promise = loop.makePromise(of: Void.self)
         if #available(macOS 12.0, *) {
@@ -73,7 +73,7 @@ extension SQLServerSecurityClient {
     
     // MARK: - Role Membership
     
-    public func addUserToRole(user: String, role: String) -> EventLoopFuture<Void> {
+    internal func addUserToRole(user: String, role: String) -> EventLoopFuture<Void> {
         let loop = self.eventLoop
         let promise = loop.makePromise(of: Void.self)
         if #available(macOS 12.0, *) {
@@ -94,7 +94,7 @@ extension SQLServerSecurityClient {
         _ = try await exec(sql)
     }
     
-    public func removeUserFromRole(user: String, role: String) -> EventLoopFuture<Void> {
+    internal func removeUserFromRole(user: String, role: String) -> EventLoopFuture<Void> {
         let loop = self.eventLoop
         let promise = loop.makePromise(of: Void.self)
         if #available(macOS 12.0, *) {
@@ -117,7 +117,7 @@ extension SQLServerSecurityClient {
     
     // MARK: - Database Role Membership
     
-    public func addUserToDatabaseRole(user: String, role: Permission) -> EventLoopFuture<Void> {
+    internal func addUserToDatabaseRole(user: String, role: Permission) -> EventLoopFuture<Void> {
         let loop = self.eventLoop
         let promise = loop.makePromise(of: Void.self)
         if #available(macOS 12.0, *) {
@@ -137,7 +137,7 @@ extension SQLServerSecurityClient {
         _ = try await exec(sql)
     }
     
-    public func removeUserFromDatabaseRole(user: String, role: Permission) -> EventLoopFuture<Void> {
+    internal func removeUserFromDatabaseRole(user: String, role: Permission) -> EventLoopFuture<Void> {
         let loop = self.eventLoop
         let promise = loop.makePromise(of: Void.self)
         if #available(macOS 12.0, *) {
@@ -231,7 +231,7 @@ extension SQLServerSecurityClient {
     
     // MARK: - Application roles
 
-    public func listApplicationRoles() -> EventLoopFuture<[ApplicationRoleInfo]> {
+    internal func listApplicationRoles() -> EventLoopFuture<[ApplicationRoleInfo]> {
         let sql = """
         SELECT name, default_schema_name, create_date, modify_date
         FROM sys.database_principals
@@ -250,14 +250,14 @@ extension SQLServerSecurityClient {
         }
     }
 
-    public func createApplicationRole(name: String, password: String, defaultSchema: String? = nil) -> EventLoopFuture<Void> {
+    internal func createApplicationRole(name: String, password: String, defaultSchema: String? = nil) -> EventLoopFuture<Void> {
         var sql = "CREATE APPLICATION ROLE \(Self.escapeIdentifier(name)) WITH PASSWORD = N'\(password.replacingOccurrences(of: "'", with: "''"))'"
         if let ds = defaultSchema { sql += ", DEFAULT_SCHEMA = \(Self.escapeIdentifier(ds))" }
         sql += ";"
         return run(sql).map { _ in () }
     }
 
-    public func alterApplicationRole(name: String, newName: String? = nil, password: String? = nil) -> EventLoopFuture<Void> {
+    internal func alterApplicationRole(name: String, newName: String? = nil, password: String? = nil) -> EventLoopFuture<Void> {
         var parts: [String] = []
         if let newName { parts.append("NAME = \(Self.escapeIdentifier(newName))") }
         if let password { parts.append("PASSWORD = N'\(password.replacingOccurrences(of: "'", with: "''"))'") }
@@ -266,7 +266,7 @@ extension SQLServerSecurityClient {
         return run(sql).map { _ in () }
     }
 
-    public func dropApplicationRole(name: String) -> EventLoopFuture<Void> {
+    internal func dropApplicationRole(name: String) -> EventLoopFuture<Void> {
         let sql = "DROP APPLICATION ROLE \(Self.escapeIdentifier(name));"
         return run(sql).map { _ in () }
     }

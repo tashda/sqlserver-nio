@@ -5,7 +5,7 @@ import SQLServerTDS
 extension SQLServerMetadataOperations {
     // MARK: - Server Info
 
-    public func serverVersion() -> EventLoopFuture<String> {
+    internal func serverVersion() -> EventLoopFuture<String> {
         let sql = "SELECT CAST(SERVERPROPERTY('ProductVersion') AS NVARCHAR(128)) AS version;"
         return queryExecutor(sql).flatMapThrowing { rows in
             if let value = rows.first?.column("version")?.string, !value.isEmpty {
@@ -15,7 +15,7 @@ extension SQLServerMetadataOperations {
         }
     }
 
-    public func listDatabases() -> EventLoopFuture<[DatabaseMetadata]> {
+    internal func listDatabases() -> EventLoopFuture<[DatabaseMetadata]> {
         queryExecutor("SELECT name, state_desc FROM sys.databases WITH (NOLOCK) ORDER BY name").map { rows in
             rows.compactMap { row in
                 guard let name = row.column("name")?.string else { return nil }

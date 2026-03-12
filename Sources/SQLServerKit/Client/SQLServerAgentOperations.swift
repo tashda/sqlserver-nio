@@ -31,7 +31,7 @@ public final class SQLServerAgentOperations: Sendable {
     /// Agent proxy prerequisites. Throws with actionable guidance when prerequisites are missing.
     /// - Parameter requireProxyPrereqs: When true, also enforces permissions required to manage
     ///   Agent proxies (sysadmin OR ALTER ANY CREDENTIAL + msdb SQLAgentOperatorRole).
-    public func preflightAgentEnvironment(requireProxyPrereqs: Bool = false) -> EventLoopFuture<Void> {
+    internal func preflightAgentEnvironment(requireProxyPrereqs: Bool = false) -> EventLoopFuture<Void> {
         // Check Agent status (enabled/running) using the same metadata query as SQLServerMetadataOperations.
         let agentStatusSQL = """
         SELECT
@@ -94,7 +94,7 @@ public final class SQLServerAgentOperations: Sendable {
         }
     }
 
-    public func addJobServer(jobName: String, serverName: String? = nil) -> EventLoopFuture<Void> {
+    internal func addJobServer(jobName: String, serverName: String? = nil) -> EventLoopFuture<Void> {
         return lookupJobId(jobName: jobName).flatMap { jobId in
             let check = "SELECT 1 AS present FROM msdb.dbo.sysjobservers WHERE job_id = N'\(jobId)'"
             return self.run(check).flatMap { (rows: [TDSRow]) -> EventLoopFuture<Void> in
@@ -113,7 +113,7 @@ public final class SQLServerAgentOperations: Sendable {
         }
     }
 
-    public func getJobDetail(jobName: String) -> EventLoopFuture<SQLServerAgentJobDetail?> {
+    internal func getJobDetail(jobName: String) -> EventLoopFuture<SQLServerAgentJobDetail?> {
         let sql = "EXEC msdb.dbo.sp_help_job @job_name = N'\(Self.escapeLiteral(jobName))';"
         return run(sql).flatMapErrorThrowing { error in
             let message = String(describing: error)
@@ -129,7 +129,7 @@ public final class SQLServerAgentOperations: Sendable {
         }
     }
 
-    public func getJobSchedules(jobName: String) -> EventLoopFuture<[SQLServerAgentJobScheduleDetail]> {
+    internal func getJobSchedules(jobName: String) -> EventLoopFuture<[SQLServerAgentJobScheduleDetail]> {
         let sql = "EXEC msdb.dbo.sp_help_jobschedule @job_name = N'\(Self.escapeLiteral(jobName))';"
         return run(sql).map { rows in
             rows.compactMap { row in
@@ -141,7 +141,7 @@ public final class SQLServerAgentOperations: Sendable {
         }
     }
 
-    public func configureStep(jobName: String, stepName: String, onSuccessAction: Int? = nil, onSuccessStepId: Int? = nil, onFailAction: Int? = nil, onFailStepId: Int? = nil, retryAttempts: Int? = nil, retryIntervalMinutes: Int? = nil, outputFileName: String? = nil, appendOutputFile: Bool? = nil) -> EventLoopFuture<Void> {
+    internal func configureStep(jobName: String, stepName: String, onSuccessAction: Int? = nil, onSuccessStepId: Int? = nil, onFailAction: Int? = nil, onFailStepId: Int? = nil, retryAttempts: Int? = nil, retryIntervalMinutes: Int? = nil, outputFileName: String? = nil, appendOutputFile: Bool? = nil) -> EventLoopFuture<Void> {
         return lookupStepId(jobName: jobName, stepName: stepName).flatMap { stepId in
             var sql = "EXEC msdb.dbo.sp_update_jobstep @job_name = N'\(Self.escapeLiteral(jobName))', @step_id = \(stepId)"
             if let v = onSuccessAction { sql += ", @on_success_action = \(v)" }

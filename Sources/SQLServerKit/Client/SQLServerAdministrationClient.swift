@@ -14,7 +14,7 @@ public final class SQLServerAdministrationClient: @unchecked Sendable {
         SQLServerAdministrationClient(client: client, database: database)
     }
 
-    public func listServerLogins(includeDisabled: Bool = true) -> EventLoopFuture<[SQLServerLoginInfo]> {
+    internal func listServerLogins(includeDisabled: Bool = true) -> EventLoopFuture<[SQLServerLoginInfo]> {
         let filter = includeDisabled ? "" : "WHERE sp.is_disabled = 0"
         let sql = """
         SELECT sp.name, sp.type_desc, sp.is_disabled
@@ -39,7 +39,7 @@ public final class SQLServerAdministrationClient: @unchecked Sendable {
         }
     }
 
-    public func listServerRoles() -> EventLoopFuture<[SQLServerRoleInfo]> {
+    internal func listServerRoles() -> EventLoopFuture<[SQLServerRoleInfo]> {
         let sql = """
         SELECT name, is_fixed_role = CAST(ISNULL(is_fixed_role, 0) AS INT)
         FROM sys.server_principals

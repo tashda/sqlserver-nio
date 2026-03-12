@@ -5,15 +5,13 @@ import NIOConcurrencyHelpers
 import SQLServerTDS
 
 public final class SQLServerClient: @unchecked Sendable {
-    @available(*, deprecated, message: "Use async connect(configuration:logger:) instead.")
-    public enum EventLoopGroupProvider {
+    internal enum EventLoopGroupProvider {
         case shared(EventLoopGroup)
         case createNew(numberOfThreads: Int)
     }
 
     public let configuration: Configuration
-    @available(*, deprecated, message: "Event loops are an implementation detail. Use the async API instead.")
-    public let eventLoopGroup: EventLoopGroup
+    internal let eventLoopGroup: EventLoopGroup
     internal let ownsEventLoopGroup: Bool
     internal let pool: SQLServerConnectionPool
     public let logger: Logger
@@ -78,8 +76,7 @@ public final class SQLServerClient: @unchecked Sendable {
         )
     }
 
-    @available(*, deprecated, message: "Use async connect(configuration:logger:) instead.")
-    public static func connect(
+    internal static func connect(
         configuration: Configuration,
         eventLoopGroupProvider: EventLoopGroupProvider = .createNew(numberOfThreads: System.coreCount),
         logger: Logger = Logger(label: "tds.sqlserver.client")
@@ -97,7 +94,7 @@ public final class SQLServerClient: @unchecked Sendable {
             }
 
             logger.debug("Initial connection attempt \(attempt) failed; retrying with \(normalized)")
-            let delay = configuration.retryConfiguration.backoffStrategy(attempt)
+            let delay = configuration.retryConfiguration.backoffStrategy(attempt).nioTimeAmount
             return eventLoop.scheduleTask(in: delay) {}.futureResult.flatMap { operation() }
         }
 
@@ -241,8 +238,7 @@ public final class SQLServerClient: @unchecked Sendable {
         }
     }
 
-    @available(*, deprecated, message: "Use async shutdownGracefully() instead.")
-    public func shutdownGracefully() -> EventLoopFuture<Void> {
+    internal func shutdownGracefully() -> EventLoopFuture<Void> {
         let loop = eventLoopGroup.next()
         var already = false
         stateLock.withLock {

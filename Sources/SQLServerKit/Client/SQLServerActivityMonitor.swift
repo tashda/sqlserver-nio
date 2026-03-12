@@ -30,7 +30,7 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
     // MARK: - Public API
 
     /// Takes a single snapshot of activity.
-    public func snapshot(options: SQLServerActivityOptions = .init(), on eventLoop: EventLoop? = nil) -> EventLoopFuture<SQLServerActivitySnapshot> {
+    internal func snapshot(options: SQLServerActivityOptions = .init(), on eventLoop: EventLoop? = nil) -> EventLoopFuture<SQLServerActivitySnapshot> {
         let loop = eventLoop ?? client.eventLoopGroup.next()
         let processesFut = fetchProcesses(options: options, on: loop)
         let waitsFut = fetchWaits(on: loop)
@@ -63,7 +63,7 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
     }
 
     /// Kills a session (spid) via KILL <session_id>.
-    public func killSession(sessionId: Int, on eventLoop: EventLoop? = nil) -> EventLoopFuture<Void> {
+    internal func killSession(sessionId: Int, on eventLoop: EventLoop? = nil) -> EventLoopFuture<Void> {
         let sql = "KILL \(sessionId);"
         return client.execute(sql, on: eventLoop).map { _ in () }
     }

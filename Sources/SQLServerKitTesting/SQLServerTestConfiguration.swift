@@ -44,9 +44,8 @@ public func makeSQLServerConnectionConfiguration() -> SQLServerConnection.Config
         retryConfiguration: SQLServerRetryConfiguration(
             maximumAttempts: 5,
             backoffStrategy: { attempt in
-                let base: Int64 = 250
-                let delay = base << (attempt - 1)
-                return .milliseconds(delay)
+                let base = 0.25
+                return base * Double(1 << max(0, attempt - 1))
             },
             shouldRetry: { error in
                 if let se = error as? SQLServerError {

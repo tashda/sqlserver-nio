@@ -118,7 +118,7 @@ public final class SQLServerTriggerClient: @unchecked Sendable {
         _ = try await client.execute(sql)
     }
     
-    public func dropTrigger(name: String, schema: String = "dbo") -> EventLoopFuture<Void> {
+    internal func dropTrigger(name: String, schema: String = "dbo") -> EventLoopFuture<Void> {
         let promise = client.eventLoopGroup.next().makePromise(of: Void.self)
         if #available(macOS 12.0, *) {
             promise.completeWithTask {
@@ -206,7 +206,7 @@ public final class SQLServerTriggerClient: @unchecked Sendable {
     
     // MARK: - Trigger Management
     
-    public func enableTrigger(name: String, table: String, schema: String = "dbo") -> EventLoopFuture<Void> {
+    internal func enableTrigger(name: String, table: String, schema: String = "dbo") -> EventLoopFuture<Void> {
         let promise = client.eventLoopGroup.next().makePromise(of: Void.self)
         if #available(macOS 12.0, *) {
             promise.completeWithTask {
@@ -229,7 +229,7 @@ public final class SQLServerTriggerClient: @unchecked Sendable {
         _ = try await client.execute(sql)
     }
     
-    public func disableTrigger(name: String, table: String, schema: String = "dbo") -> EventLoopFuture<Void> {
+    internal func disableTrigger(name: String, table: String, schema: String = "dbo") -> EventLoopFuture<Void> {
         let promise = client.eventLoopGroup.next().makePromise(of: Void.self)
         if #available(macOS 12.0, *) {
             promise.completeWithTask {
@@ -252,7 +252,7 @@ public final class SQLServerTriggerClient: @unchecked Sendable {
         _ = try await client.execute(sql)
     }
     
-    public func enableAllTriggers(table: String, schema: String = "dbo") -> EventLoopFuture<Void> {
+    internal func enableAllTriggers(table: String, schema: String = "dbo") -> EventLoopFuture<Void> {
         let promise = client.eventLoopGroup.next().makePromise(of: Void.self)
         if #available(macOS 12.0, *) {
             promise.completeWithTask {
@@ -274,7 +274,7 @@ public final class SQLServerTriggerClient: @unchecked Sendable {
         _ = try await client.execute(sql)
     }
     
-    public func disableAllTriggers(table: String, schema: String = "dbo") -> EventLoopFuture<Void> {
+    internal func disableAllTriggers(table: String, schema: String = "dbo") -> EventLoopFuture<Void> {
         let promise = client.eventLoopGroup.next().makePromise(of: Void.self)
         if #available(macOS 12.0, *) {
             promise.completeWithTask {

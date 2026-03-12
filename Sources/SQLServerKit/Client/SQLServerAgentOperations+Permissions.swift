@@ -5,7 +5,7 @@ import SQLServerTDS
 extension SQLServerAgentOperations {
     // MARK: - Permissions
 
-    public func fetchCurrentPrincipalAgentRoles() -> EventLoopFuture<[String]> {
+    internal func fetchCurrentPrincipalAgentRoles() -> EventLoopFuture<[String]> {
         let sql = """
         SELECT role_name = r.name
         FROM msdb.sys.database_role_members AS drm
@@ -22,7 +22,7 @@ extension SQLServerAgentOperations {
         }
     }
 
-    public func fetchProxyAndCredentialPermissions() -> EventLoopFuture<SQLServerAgentPermissionReport> {
+    internal func fetchProxyAndCredentialPermissions() -> EventLoopFuture<SQLServerAgentPermissionReport> {
         return checkServerPermissionFlags().flatMap { flags in
             self.fetchCurrentPrincipalAgentRoles().map { roles in
                 SQLServerAgentPermissionReport(isSysadmin: flags.isSysadmin, hasAlterAnyCredential: flags.hasAlterAnyCredential, msdbRoles: roles)
@@ -50,6 +50,7 @@ extension SQLServerAgentOperations {
 
     @available(macOS 12.0, *)
     public func fetchCurrentPrincipalAgentRoles() async throws -> [String] {
-        try await fetchCurrentPrincipalAgentRoles().get()
+        let future: EventLoopFuture<[String]> = self.fetchCurrentPrincipalAgentRoles()
+        return try await future.get()
     }
 }

@@ -4,7 +4,7 @@ import SQLServerTDS
 extension SQLServerIndexClient {
     // MARK: - Index Management
     
-    public func dropIndex(name: String, table: String, schema: String = "dbo") -> EventLoopFuture<Void> {
+    internal func dropIndex(name: String, table: String, schema: String = "dbo") -> EventLoopFuture<Void> {
         let promise = client.eventLoopGroup.next().makePromise(of: Void.self)
         if #available(macOS 12.0, *) {
             promise.completeWithTask {
@@ -27,7 +27,7 @@ extension SQLServerIndexClient {
         _ = try await client.execute(sql)
     }
     
-    public func rebuildIndex(name: String, table: String, schema: String = "dbo", options: IndexOptions? = nil) -> EventLoopFuture<Void> {
+    internal func rebuildIndex(name: String, table: String, schema: String = "dbo", options: IndexOptions? = nil) -> EventLoopFuture<Void> {
         let promise = client.eventLoopGroup.next().makePromise(of: Void.self)
         if #available(macOS 12.0, *) {
             promise.completeWithTask {
@@ -85,7 +85,7 @@ extension SQLServerIndexClient {
         _ = try await client.execute(sql)
     }
     
-    public func reorganizeIndex(name: String, table: String, schema: String = "dbo") -> EventLoopFuture<Void> {
+    internal func reorganizeIndex(name: String, table: String, schema: String = "dbo") -> EventLoopFuture<Void> {
         let promise = client.eventLoopGroup.next().makePromise(of: Void.self)
         if #available(macOS 12.0, *) {
             promise.completeWithTask {

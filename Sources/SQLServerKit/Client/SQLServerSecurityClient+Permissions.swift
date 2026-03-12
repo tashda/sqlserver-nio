@@ -110,24 +110,24 @@ extension SQLServerSecurityClient {
 
     // MARK: - Securable-aware permissions
 
-    public func grant(permission: DatabasePermissionName, on securable: Securable, to principal: String, withGrantOption: Bool = false) -> EventLoopFuture<Void> {
+    internal func grant(permission: DatabasePermissionName, on securable: Securable, to principal: String, withGrantOption: Bool = false) -> EventLoopFuture<Void> {
         emitPermission(kind: "GRANT", permission: permission.rawValue, on: securable, principal: principal, withGrantOption: withGrantOption, cascade: nil)
     }
-    public func grant(permission: ObjectPermissionName, on securable: Securable, to principal: String, withGrantOption: Bool = false) -> EventLoopFuture<Void> {
+    internal func grant(permission: ObjectPermissionName, on securable: Securable, to principal: String, withGrantOption: Bool = false) -> EventLoopFuture<Void> {
         emitPermission(kind: "GRANT", permission: permission.rawValue, on: securable, principal: principal, withGrantOption: withGrantOption, cascade: nil)
     }
 
-    public func revoke(permission: DatabasePermissionName, on securable: Securable, from principal: String, cascade: Bool = false) -> EventLoopFuture<Void> {
+    internal func revoke(permission: DatabasePermissionName, on securable: Securable, from principal: String, cascade: Bool = false) -> EventLoopFuture<Void> {
         emitPermission(kind: "REVOKE", permission: permission.rawValue, on: securable, principal: principal, withGrantOption: nil, cascade: cascade)
     }
-    public func revoke(permission: ObjectPermissionName, on securable: Securable, from principal: String, cascade: Bool = false) -> EventLoopFuture<Void> {
+    internal func revoke(permission: ObjectPermissionName, on securable: Securable, from principal: String, cascade: Bool = false) -> EventLoopFuture<Void> {
         emitPermission(kind: "REVOKE", permission: permission.rawValue, on: securable, principal: principal, withGrantOption: nil, cascade: cascade)
     }
 
-    public func deny(permission: DatabasePermissionName, on securable: Securable, to principal: String) -> EventLoopFuture<Void> {
+    internal func deny(permission: DatabasePermissionName, on securable: Securable, to principal: String) -> EventLoopFuture<Void> {
         emitPermission(kind: "DENY", permission: permission.rawValue, on: securable, principal: principal, withGrantOption: nil, cascade: nil)
     }
-    public func deny(permission: ObjectPermissionName, on securable: Securable, to principal: String) -> EventLoopFuture<Void> {
+    internal func deny(permission: ObjectPermissionName, on securable: Securable, to principal: String) -> EventLoopFuture<Void> {
         emitPermission(kind: "DENY", permission: permission.rawValue, on: securable, principal: principal, withGrantOption: nil, cascade: nil)
     }
 
