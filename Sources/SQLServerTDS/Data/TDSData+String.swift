@@ -89,6 +89,8 @@ extension TDSData {
             let d4a = [bytes[8], bytes[9]].map(hex).joined()
             let d4b = bytes[10...15].map(hex).joined()
             return "\(d1)-\(d2)-\(d3)-\(d4a)-\(d4b)"
+        case .smallDateTime, .datetime, .date, .time, .datetime2, .datetimeOffset:
+            return self.date.map { ISO8601DateFormatter().string(from: $0) }
         default:
             if let bytes = value.readBytes(length: value.readableBytes), !bytes.isEmpty {
                 if bytes.count.isMultiple(of: 2), let utf16 = String(bytes: bytes, encoding: .utf16LittleEndian) {
