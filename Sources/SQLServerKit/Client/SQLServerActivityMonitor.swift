@@ -165,8 +165,8 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
 
         // We wrap each query in its own future and handle them with timeouts if possible via client configuration
         // For now, we rely on snapshot() level recovery.
-        let cpuFut = client.query(cpuSql, on: loop).map { $0.first?.column("cpu_usage")?.int ?? 0 }.recover { _ in 0 }
-        let waitsFut = client.query(waitsSql, on: loop).map { $0.first?.column("waiting_tasks")?.int ?? 0 }.recover { _ in 0 }
+        let cpuFut = client.query(cpuSql, on: loop).map { self.extractInt("cpu_usage", from: $0.first) ?? 0 }.recover { _ in 0 }
+        let waitsFut = client.query(waitsSql, on: loop).map { self.extractInt("waiting_tasks", from: $0.first) ?? 0 }.recover { _ in 0 }
         let batchFut = client.query(batchSql, on: loop).map { $0.first?.column("cntr_value")?.int64 ?? 0 }.recover { _ in 0 }
 
         return cpuFut.and(waitsFut).flatMap { cpu, waits in
@@ -238,19 +238,19 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
 
         return client.query(sql, on: loop).map { rows in
             rows.compactMap { row in
-                guard let sid = row.column("session_id")?.int else { return nil }
-                let pages = row.column("session_memory_pages")?.int ?? 0
+                guard let sid = self.extractInt("session_id", from: row) else { return nil }
+                let pages = self.extractInt("session_memory_pages", from: row) ?? 0
                 let memKB = pages * 8 
                 let req = SQLServerProcessInfo.Request(
                     status: row.column("request_status")?.string,
                     command: row.column("command")?.string,
-                    cpuTimeMs: row.column("request_cpu_time_ms")?.int,
-                    totalElapsedMs: row.column("request_total_elapsed_ms")?.int,
+                    cpuTimeMs: self.extractInt("request_cpu_time_ms", from: row),
+                    totalElapsedMs: self.extractInt("request_total_elapsed_ms", from: row),
                     waitType: row.column("wait_type")?.string,
-                    waitTimeMs: row.column("request_wait_time_ms")?.int,
+                    waitTimeMs: self.extractInt("request_wait_time_ms", from: row),
                     lastWaitType: row.column("last_wait_type")?.string,
-                    blockingSessionId: row.column("blocking_session_id")?.int,
-                    databaseId: row.column("database_id")?.int,
+                    blockingSessionId: self.extractInt("blocking_session_id", from: row),
+                    databaseId: self.extractInt("database_id", from: row),
                     startTime: row.column("start_time")?.date,
                     percentComplete: row.column("percent_complete")?.double,
                     sqlText: row.column("sql_text")?.string,
@@ -263,9 +263,9 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
                     programName: row.column("program_name")?.string,
                     clientNetAddress: row.column("client_net_address")?.string,
                     sessionStatus: row.column("session_status")?.string,
-                    sessionCpuTimeMs: row.column("session_cpu_time_ms")?.int,
-                    sessionReads: row.column("session_reads")?.int,
-                    sessionWrites: row.column("session_writes")?.int,
+                    sessionCpuTimeMs: self.extractInt("session_cpu_time_ms", from: row),
+                    sessionReads: self.extractInt("session_reads", from: row),
+                    sessionWrites: self.extractInt("session_writes", from: row),
                     memoryUsageKB: memKB,
                     request: row.column("request_status") == nil ? nil : req
                 )
@@ -285,9 +285,9 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
         return client.query(sql, on: loop).map { rows in
             rows.compactMap { row in
                 guard let wt = row.column("wait_type")?.string,
-                      let tasks = row.column("waiting_tasks_count")?.int,
-                      let time = row.column("wait_time_ms")?.int,
-                      let signal = row.column("signal_wait_time_ms")?.int
+                      let tasks = self.extractInt("waiting_tasks_count", from: row),
+                      let time = self.extractInt("wait_time_ms", from: row),
+                      let signal = self.extractInt("signal_wait_time_ms", from: row)
                 else { return nil }
                 return SQLServerWaitStat(waitType: wt, waitingTasksCount: tasks, waitTimeMs: time, signalWaitTimeMs: signal)
             }
@@ -314,18 +314,19 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
         """
         return client.query(sql, on: loop).map { rows in
             rows.compactMap { row in
-                guard let dbid = row.column("database_id")?.int, let fid = row.column("file_id")?.int else { return nil }
+                guard let dbid = self.extractInt("database_id", from: row), 
+                      let fid = self.extractInt("file_id", from: row) else { return nil }
                 return SQLServerFileIOStat(
                     databaseId: dbid,
                     fileId: fid,
                     databaseName: row.column("database_name")?.string,
                     fileName: row.column("file_name")?.string,
-                    numReads: row.column("num_of_reads")?.int ?? 0,
-                    numWrites: row.column("num_of_writes")?.int ?? 0,
-                    bytesRead: Int64(row.column("num_of_bytes_read")?.int64 ?? 0),
-                    bytesWritten: Int64(row.column("num_of_bytes_written")?.int64 ?? 0),
-                    ioStallReadMs: Int64(row.column("io_stall_read_ms")?.int64 ?? 0),
-                    ioStallWriteMs: Int64(row.column("io_stall_write_ms")?.int64 ?? 0)
+                    numReads: self.extractInt("num_of_reads", from: row) ?? 0,
+                    numWrites: self.extractInt("num_of_writes", from: row) ?? 0,
+                    bytesRead: row.column("num_of_bytes_read")?.int64 ?? Int64(self.extractInt("num_of_bytes_read", from: row) ?? 0),
+                    bytesWritten: row.column("num_of_bytes_written")?.int64 ?? Int64(self.extractInt("num_of_bytes_written", from: row) ?? 0),
+                    ioStallReadMs: row.column("io_stall_read_ms")?.int64 ?? Int64(self.extractInt("io_stall_read_ms", from: row) ?? 0),
+                    ioStallWriteMs: row.column("io_stall_write_ms")?.int64 ?? Int64(self.extractInt("io_stall_write_ms", from: row) ?? 0)
                 )
             }
         }
@@ -359,13 +360,13 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
                 let hashHex = hashBytes.isEmpty ? nil : ("0x" + hashBytes.map { String(format: "%02X", $0) }.joined())
                 return SQLServerExpensiveQuery(
                     queryHashHex: hashHex,
-                    executionCount: row.column("execution_count")?.int ?? 0,
-                    totalWorkerTime: Int64(row.column("total_worker_time")?.int64 ?? 0),
-                    totalElapsedTime: Int64(row.column("total_elapsed_time")?.int64 ?? 0),
-                    totalLogicalReads: Int64(row.column("total_logical_reads")?.int64 ?? 0),
-                    totalLogicalWrites: Int64(row.column("total_logical_writes")?.int64 ?? 0),
-                    maxWorkerTime: Int64(row.column("max_worker_time")?.int64 ?? 0),
-                    maxElapsedTime: Int64(row.column("max_elapsed_time")?.int64 ?? 0),
+                    executionCount: self.extractInt("execution_count", from: row) ?? 0,
+                    totalWorkerTime: row.column("total_worker_time")?.int64 ?? Int64(self.extractInt("total_worker_time", from: row) ?? 0),
+                    totalElapsedTime: row.column("total_elapsed_time")?.int64 ?? Int64(self.extractInt("total_elapsed_time", from: row) ?? 0),
+                    totalLogicalReads: row.column("total_logical_reads")?.int64 ?? Int64(self.extractInt("total_logical_reads", from: row) ?? 0),
+                    totalLogicalWrites: row.column("total_logical_writes")?.int64 ?? Int64(self.extractInt("total_logical_writes", from: row) ?? 0),
+                    maxWorkerTime: row.column("max_worker_time")?.int64 ?? Int64(self.extractInt("max_worker_time", from: row) ?? 0),
+                    maxElapsedTime: row.column("max_elapsed_time")?.int64 ?? Int64(self.extractInt("max_elapsed_time", from: row) ?? 0),
                     lastExecutionTime: row.column("last_execution_time")?.date,
                     sqlText: row.column("sql_text")?.string,
                     planXml: row.column("plan_xml")?.string
@@ -424,5 +425,15 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
             lastFileIO = Dictionary(uniqueKeysWithValues: current.map { (key($0), $0) })
         }
         return deltas
+    }
+
+    private func extractInt(_ name: String, from row: SQLServerRow?) -> Int? {
+        guard let col = row?.column(name) else { return nil }
+        if let i = col.int { return i }
+        if let i32 = col.int32 { return Int(i32) }
+        if let i16 = col.int16 { return Int(i16) }
+        if let i8 = col.int8 { return Int(i8) }
+        if let i64 = col.int64 { return Int(i64) }
+        return nil
     }
 }
