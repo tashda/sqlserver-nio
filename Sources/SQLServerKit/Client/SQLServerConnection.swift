@@ -19,7 +19,7 @@ public final class SQLServerConnection: @unchecked Sendable {
         public var hostname: String
         public var port: Int
         public var login: Login
-        public var tlsConfiguration: TLSConfiguration?
+        public var tlsConfiguration: SQLServerTLSConfiguration?
         public var transparentNetworkIPResolution: Bool
         public var metadataConfiguration: SQLServerMetadataOperations.Configuration
         public var retryConfiguration: SQLServerRetryConfiguration
@@ -31,7 +31,7 @@ public final class SQLServerConnection: @unchecked Sendable {
             hostname: String,
             port: Int = 1433,
             login: Login,
-            tlsConfiguration: TLSConfiguration? = .makeClientConfiguration(),
+            tlsConfiguration: SQLServerTLSConfiguration? = .makeClientConfiguration(),
             metadataConfiguration: SQLServerMetadataOperations.Configuration = .init(),
             retryConfiguration: SQLServerRetryConfiguration = .init(),
             sessionOptions: SessionOptions = .ssmsDefaults,

@@ -182,6 +182,39 @@ final class AgentEnhancedAPITests: AgentTestBase, @unchecked Sendable {
         print("✅ Enhanced APIs successfully use Microsoft stored procedures")
     }
 
+    func testRenameJobAsync() async throws {
+        let agent = SQLServerAgentOperations(client: self.client)
+        let managedJob = try await createManagedJob()
+        let renamedJob = "agent_renamed_\(UUID().uuidString.prefix(8))"
+
+        try await withTimeout(operationTimeout) {
+            try await agent.renameJob(named: managedJob.jobName, to: renamedJob)
+        }
+
+        if let index = managedJobNames.firstIndex(of: managedJob.jobName) {
+            managedJobNames[index] = renamedJob
+        }
+
+        let oldDetail = try await withTimeout(operationTimeout) {
+            try await agent.getJobDetail(jobName: managedJob.jobName)
+        }
+        XCTAssertNil(oldDetail, "Old job name should no longer resolve after rename")
+
+        let newDetail = try await withTimeout(operationTimeout) {
+            try await agent.getJobDetail(jobName: renamedJob)
+        }
+        XCTAssertEqual(newDetail?.name, renamedJob)
+    }
+
+    func testListRunningJobsAsync() async throws {
+        let agent = SQLServerAgentOperations(client: self.client)
+        let jobs = try await withTimeout(operationTimeout) {
+            try await agent.listRunningJobs()
+        }
+
+        XCTAssertGreaterThanOrEqual(jobs.count, 0)
+    }
+
     func testDateConversionInEnhancedAPIs() async throws {
         let agent = SQLServerAgentOperations(client: self.client)
 

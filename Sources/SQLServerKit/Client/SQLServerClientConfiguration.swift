@@ -1,5 +1,7 @@
 import NIOSSL
 
+public typealias SQLServerTLSConfiguration = TLSConfiguration
+
 extension SQLServerClient {
     public struct Configuration: Sendable {
         public var connection: SQLServerConnection.Configuration
@@ -25,7 +27,7 @@ extension SQLServerClient {
             hostname: String,
             port: Int = 1433,
             login: SQLServerConnection.Configuration.Login,
-            tlsConfiguration: TLSConfiguration? = .makeClientConfiguration(),
+            tlsConfiguration: SQLServerTLSConfiguration? = .makeClientConfiguration(),
             poolConfiguration: SQLServerConnectionPool.Configuration = .init(),
             metadataConfiguration: SQLServerMetadataOperations.Configuration = .init(),
             retryConfiguration: SQLServerRetryConfiguration = .init(),
@@ -59,7 +61,7 @@ extension SQLServerClient {
             set { connection.login = newValue }
         }
 
-        public var tlsConfiguration: TLSConfiguration? {
+        public var tlsConfiguration: SQLServerTLSConfiguration? {
             get { connection.tlsConfiguration }
             set { connection.tlsConfiguration = newValue }
         }

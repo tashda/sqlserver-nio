@@ -41,13 +41,18 @@ extension SQLServerAgentOperations {
     }
 
     @available(macOS 12.0, *)
+    public func renameJob(named jobName: String, to newName: String) async throws {
+        _ = try await renameJob(named: jobName, to: newName).get()
+    }
+
+    @available(macOS 12.0, *)
     public func deleteJob(named jobName: String) async throws {
         _ = try await deleteJob(named: jobName).get()
     }
 
     @available(macOS 12.0, *)
-    public func updateJob(named jobName: String, description: String? = nil, ownerLoginName: String? = nil, categoryName: String? = nil, enabled: Bool? = nil, startStepId: Int? = nil) async throws {
-        _ = try await updateJob(named: jobName, description: description, ownerLoginName: ownerLoginName, categoryName: categoryName, enabled: enabled, startStepId: startStepId).get()
+    public func updateJob(named jobName: String, newName: String? = nil, description: String? = nil, ownerLoginName: String? = nil, categoryName: String? = nil, enabled: Bool? = nil, startStepId: Int? = nil) async throws {
+        _ = try await updateJob(named: jobName, newName: newName, description: description, ownerLoginName: ownerLoginName, categoryName: categoryName, enabled: enabled, startStepId: startStepId).get()
     }
 
     @available(macOS 12.0, *)
@@ -148,6 +153,11 @@ extension SQLServerAgentOperations {
     @available(macOS 12.0, *)
     public func listSchedules(forJob jobName: String? = nil) async throws -> [SQLServerAgentScheduleInfo] {
         try await listSchedules(forJob: jobName).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func listRunningJobs() async throws -> [SQLServerAgentRunningJob] {
+        try await listRunningJobs().get()
     }
 
     @available(macOS 12.0, *)
