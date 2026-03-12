@@ -1,47 +1,38 @@
 import XCTest
 import Logging
-import NIO
 @testable import SQLServerKit
 import SQLServerKitTesting
 
-final class SQLServerRoutineTests: XCTestCase {
-    private var group: EventLoopGroup!
+final class SQLServerRoutineTests: XCTestCase, @unchecked Sendable {
     private var baseClient: SQLServerClient!
     private var client: SQLServerClient!
     private var routineClient: SQLServerRoutineClient!
     private var testDatabase: String!
-    private var skipDueToEnv: Bool = false
-
-    private var eventLoop: EventLoop { self.group.next() }
 
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
         TestEnvironmentManager.loadEnvironmentVariables()
-        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        self.baseClient = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).get()
+        self.baseClient = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
         do {
-            _ = try await withTimeout(5) { try await self.baseClient.query("SELECT 1").get() }
+            _ = try await withTimeout(5) { try await self.baseClient.query("SELECT 1") }
         } catch {
-            skipDueToEnv = true
-            return
+            throw error
         }
         testDatabase = try await createTemporaryDatabase(client: baseClient, prefix: "rtn")
-        self.client = try await makeClient(forDatabase: testDatabase, using: group)
+        self.client = try await makeClient(forDatabase: testDatabase)
         self.routineClient = SQLServerRoutineClient(client: self.client)
     }
 
     override func tearDown() async throws {
-        try? await client?.shutdownGracefully().get()
+        try? await client?.shutdownGracefully()
         if let db = testDatabase { try? await dropTemporaryDatabase(client: baseClient, name: db) }
-        try await baseClient?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
-        testDatabase = nil; group = nil
+        try? await baseClient?.shutdownGracefully()
+        testDatabase = nil
     }
 
     // MARK: - Stored Procedure Tests
 
     func testCreateSimpleStoredProcedure() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let procedureName = "test_simple_proc_\(UUID().uuidString.prefix(8))"
         let body = """
         BEGIN
@@ -56,7 +47,6 @@ final class SQLServerRoutineTests: XCTestCase {
     }
 
     func testCreateStoredProcedureWithParameters() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let procedureName = "test_param_proc_\(UUID().uuidString.prefix(8))"
 
         let parameters = [
@@ -86,7 +76,6 @@ final class SQLServerRoutineTests: XCTestCase {
     }
 
     func testCreateStoredProcedureWithOptions() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let procedureName = "test_options_proc_\(UUID().uuidString.prefix(8))"
 
         let options = RoutineOptions(schema: "dbo", withRecompile: true)
@@ -103,7 +92,6 @@ final class SQLServerRoutineTests: XCTestCase {
     }
 
     func testCreateStoredProcedureWithExecuteAsOption() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let procedureName = "test_exec_as_proc_\(UUID().uuidString.prefix(8))"
 
         let options = RoutineOptions(schema: "dbo", executeAs: "dbo")
@@ -128,7 +116,6 @@ final class SQLServerRoutineTests: XCTestCase {
     }
 
     func testAlterStoredProcedure() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let procedureName = "test_alter_proc_\(UUID().uuidString.prefix(8))"
 
         let initialBody = """
@@ -151,7 +138,6 @@ final class SQLServerRoutineTests: XCTestCase {
     }
 
     func testDropStoredProcedure() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let procedureName = "test_drop_proc_\(UUID().uuidString.prefix(8))"
 
         let body = """
@@ -173,7 +159,6 @@ final class SQLServerRoutineTests: XCTestCase {
     // MARK: - Scalar Function Tests
 
     func testCreateSimpleScalarFunction() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let functionName = "test_simple_func_\(UUID().uuidString.prefix(8))"
 
         let body = """
@@ -197,7 +182,6 @@ final class SQLServerRoutineTests: XCTestCase {
     }
 
     func testCreateScalarFunctionWithParameters() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let functionName = "test_param_func_\(UUID().uuidString.prefix(8))"
 
         let parameters = [
@@ -227,7 +211,6 @@ final class SQLServerRoutineTests: XCTestCase {
     }
 
     func testCreateScalarFunctionWithDefaultParameter() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let functionName = "test_default_func_\(UUID().uuidString.prefix(8))"
 
         let parameters = [
@@ -255,7 +238,6 @@ final class SQLServerRoutineTests: XCTestCase {
     // MARK: - Table-Valued Function Tests
 
     func testCreateTableValuedFunction() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let functionName = "test_table_func_\(UUID().uuidString.prefix(8))"
 
         let parameters = [
@@ -294,7 +276,6 @@ final class SQLServerRoutineTests: XCTestCase {
     }
 
     func testDropFunction() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let functionName = "test_drop_func_\(UUID().uuidString.prefix(8))"
 
         let body = """
@@ -316,7 +297,6 @@ final class SQLServerRoutineTests: XCTestCase {
     // MARK: - Complex Scenarios
 
     func testCreateComplexStoredProcedureWithMultipleParameterTypes() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let procedureName = "test_complex_proc_\(UUID().uuidString.prefix(8))"
 
         let parameters = [
@@ -358,7 +338,6 @@ final class SQLServerRoutineTests: XCTestCase {
     }
 
     func testCreateFunctionWithStringReturnType() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let functionName = "test_string_func_\(UUID().uuidString.prefix(8))"
 
         let parameters = [
@@ -387,7 +366,6 @@ final class SQLServerRoutineTests: XCTestCase {
     // MARK: - Error Handling Tests
 
     func testCreateDuplicateStoredProcedure() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let procedureName = "test_duplicate_proc_\(UUID().uuidString.prefix(8))"
 
         let body = """
@@ -407,7 +385,6 @@ final class SQLServerRoutineTests: XCTestCase {
     }
 
     func testDropNonExistentStoredProcedure() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let procedureName = "non_existent_proc_\(UUID().uuidString.prefix(8))"
 
         do {
@@ -419,7 +396,6 @@ final class SQLServerRoutineTests: XCTestCase {
     }
 
     func testCreateStoredProcedureWithInvalidSyntax() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let procedureName = "test_invalid_proc_\(UUID().uuidString.prefix(8))"
 
         let invalidBody = """

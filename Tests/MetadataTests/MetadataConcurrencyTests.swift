@@ -1,27 +1,19 @@
 @testable import SQLServerKit
 import SQLServerKitTesting
-import NIO
 import XCTest
 
-final class SQLServerMetadataConcurrencyTests: XCTestCase {
-    var group: EventLoopGroup!
+final class SQLServerMetadataConcurrencyTests: XCTestCase, @unchecked Sendable {
     var client: SQLServerClient!
 
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
         TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
-        group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        client = try await SQLServerClient.connect(
-            configuration: makeSQLServerClientConfiguration(),
-            eventLoopGroupProvider: .shared(group)
-        ).get()
+        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
     }
 
     override func tearDown() async throws {
-        try await client?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
+        try? await client?.shutdownGracefully()
         client = nil
-        group = nil
     }
 
     @available(macOS 12.0, *)
@@ -30,37 +22,38 @@ final class SQLServerMetadataConcurrencyTests: XCTestCase {
             let tableA = "tbl_" + UUID().uuidString.prefix(8)
             let tableB = "tbl_" + UUID().uuidString.prefix(8)
             let viewName = "vw_" + UUID().uuidString.prefix(8)
-
-            // Create tables in one batch
-            let tablesSQL = """
-            CREATE TABLE dbo.[\(tableA)] (
-                id INT NOT NULL PRIMARY KEY,
-                name NVARCHAR(40) NOT NULL,
-                info XML NULL
-            );
-
-            CREATE TABLE dbo.[\(tableB)] (
-                id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
-                ref INT NOT NULL,
-                created DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
-            );
-            """
-            _ = try await executeInDb(client: self.client, database: database, tablesSQL)
-
-            // Create view in its own batch (CREATE VIEW must be first in batch)
-            let viewSQL = """
-            CREATE VIEW dbo.[\(viewName)] AS
-            SELECT a.id, a.name, COALESCE(b.created, SYSUTCDATETIME()) AS snapshotDate
-            FROM dbo.[\(tableA)] AS a
-            LEFT JOIN dbo.[\(tableB)] AS b ON CAST(b.id AS uniqueidentifier) = CAST(NEWID() AS uniqueidentifier);
-            """
-            _ = try await executeInDb(client: self.client, database: database, viewSQL)
+            try await withDbConnection(client: self.client, database: database) { connection in
+                try await connection.createTable(
+                    name: String(tableA),
+                    columns: [
+                        SQLServerColumnDefinition(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
+                        SQLServerColumnDefinition(name: "name", definition: .standard(.init(dataType: .nvarchar(length: .length(40))))),
+                        SQLServerColumnDefinition(name: "info", definition: .standard(.init(dataType: .xml, isNullable: true)))
+                    ]
+                )
+                try await connection.createTable(
+                    name: String(tableB),
+                    columns: [
+                        SQLServerColumnDefinition(name: "id", definition: .standard(.init(dataType: .uniqueidentifier, isPrimaryKey: true))),
+                        SQLServerColumnDefinition(name: "ref", definition: .standard(.init(dataType: .int))),
+                        SQLServerColumnDefinition(name: "created", definition: .standard(.init(dataType: .datetime2(precision: 7), defaultValue: "SYSUTCDATETIME()")))
+                    ]
+                )
+                try await connection.createView(
+                    name: String(viewName),
+                    query: """
+                    SELECT a.id, a.name, COALESCE(b.created, SYSUTCDATETIME()) AS snapshotDate
+                    FROM dbo.[\(tableA)] AS a
+                    LEFT JOIN dbo.[\(tableB)] AS b ON CAST(b.id AS uniqueidentifier) = CAST(NEWID() AS uniqueidentifier)
+                    """
+                )
+            }
 
             try await withDbConnection(client: self.client, database: database) { connection in
-                async let tables = connection.listTables(database: database, schema: "dbo").get()
-                async let columnsA = connection.listColumns(database: database, schema: "dbo", table: tableA).get()
-                async let columnsB = connection.listColumns(database: database, schema: "dbo", table: viewName).get()
-                async let primaryKeys = connection.listPrimaryKeys(database: database, schema: "dbo").get()
+                async let tables = connection.listTables(database: database, schema: "dbo")
+                async let columnsA = connection.listColumns(database: database, schema: "dbo", table: tableA)
+                async let columnsB = connection.listColumns(database: database, schema: "dbo", table: viewName)
+                async let primaryKeys = connection.listPrimaryKeys(database: database, schema: "dbo")
 
                 let (tableMetadata, tableAColumns, viewColumns, pkMetadata) = try await (tables, columnsA, columnsB, primaryKeys)
 

@@ -1,5 +1,4 @@
 import XCTest
-import NIOCore
 import Logging
 @testable import SQLServerTDS
 @testable import SQLServerKit
@@ -7,8 +6,7 @@ import SQLServerKitTesting
 
 /// Simple performance tests for SQLServerNIO
 /// Tests basic performance characteristics
-final class PerformanceTests: XCTestCase {
-    private var group: EventLoopGroup!
+final class PerformanceTests: XCTestCase, @unchecked Sendable {
     private var client: SQLServerClient!
     private let logger = Logger(label: "PerformanceTests")
 
@@ -19,16 +17,14 @@ final class PerformanceTests: XCTestCase {
         config.poolConfiguration.connectionIdleTimeout = nil
         config.poolConfiguration.minimumIdleConnections = 0
 
-        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         self.client = try await SQLServerClient.connect(
             configuration: config,
-            eventLoopGroupProvider: .shared(group)
-        ).get()
+            numberOfThreads: 1
+        )
     }
 
     override func tearDown() async throws {
-        try await client?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
+        try? await client?.shutdownGracefully()
     }
 
     // MARK: - Connection Performance Tests
@@ -38,7 +34,6 @@ final class PerformanceTests: XCTestCase {
 
         let connectionCount = 3
         var connectionTimes: [TimeInterval] = []
-        var createdEventLoopGroups: [EventLoopGroup] = []
 
         for i in 1...connectionCount {
             let startTime = Date()
@@ -47,13 +42,10 @@ final class PerformanceTests: XCTestCase {
             config.poolConfiguration.connectionIdleTimeout = nil
             config.poolConfiguration.minimumIdleConnections = 0
 
-            let testGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-            createdEventLoopGroups.append(testGroup)
-
             let testClient = try await SQLServerClient.connect(
                 configuration: config,
-                eventLoopGroupProvider: .shared(testGroup)
-            ).get()
+                numberOfThreads: 1
+            )
 
             let connectionTime = Date().timeIntervalSince(startTime)
             connectionTimes.append(connectionTime)
@@ -63,17 +55,10 @@ final class PerformanceTests: XCTestCase {
 
             // Properly shutdown the client with timeout and error handling
             try await withTimeout(10.0) {
-                try await testClient.shutdownGracefully().get()
+                try await testClient.shutdownGracefully()
             }
 
             logger.info("   Connection \(i): \(String(format: "%.3f", connectionTime))s")
-        }
-
-        // Clean up all created EventLoopGroups
-        for group in createdEventLoopGroups {
-            try await withTimeout(5.0) {
-                try await group.shutdownGracefully()
-            }
         }
 
         let averageConnectionTime = connectionTimes.reduce(0, +) / Double(connectionTimes.count)
@@ -91,6 +76,9 @@ final class PerformanceTests: XCTestCase {
 
     func testQueryPerformance() async throws {
         logger.info("🔧 Testing query performance...")
+
+        // Warm the session so we measure query latency instead of first-use setup noise.
+        _ = try await client.query("SELECT 1 AS warmup")
 
         let queries = [
             "Simple Query": "SELECT 1 as test",
@@ -112,7 +100,8 @@ final class PerformanceTests: XCTestCase {
         // Performance assertions
         // Allow for network latency and connection overhead
         // Based on sqlcmd baseline of ~0.075s, allow reasonable margin
-        XCTAssertLessThanOrEqual(performanceResults["Simple Query"] ?? 0, 0.3, "Simple query should be under 300ms")
+        let simpleQueryBudget = envFlagEnabled("USE_DOCKER") ? 0.5 : 0.3
+        XCTAssertLessThanOrEqual(performanceResults["Simple Query"] ?? 0, simpleQueryBudget, "Simple query should stay within the configured latency budget")
         XCTAssertLessThanOrEqual(performanceResults["System Table Query"] ?? 0, 1.0, "System table query should complete in reasonable time")
 
         logger.info("✅ Query performance test completed!")

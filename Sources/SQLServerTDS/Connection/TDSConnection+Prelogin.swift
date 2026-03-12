@@ -16,14 +16,14 @@ internal final class PreloginRequest: TDSRequest {
 
     private var accumulatedData = ByteBuffer()
 
-    public let onRow: ((TDSRow) -> Void)? = nil
-    public let onMetadata: (([TDSTokens.ColMetadataToken.ColumnData]) -> Void)? = nil
-    public let onDone: ((TDSTokens.DoneToken) -> Void)? = nil
-    public let onMessage: ((TDSTokens.ErrorInfoToken, Bool) -> Void)? = nil
-    public let onReturnValue: ((TDSTokens.ReturnValueToken) -> Void)? = nil
-    public let onEnvChange: ((TDSTokens.EnvchangeToken<[Byte]>) -> Void)? = nil // Prelogin requests don't use onEnvChange
+    public let onRow: (@Sendable (TDSRow) -> Void)? = nil
+    public let onMetadata: (@Sendable ([TDSTokens.ColMetadataToken.ColumnData]) -> Void)? = nil
+    public let onDone: (@Sendable (TDSTokens.DoneToken) -> Void)? = nil
+    public let onMessage: (@Sendable (TDSTokens.ErrorInfoToken, Bool) -> Void)? = nil
+    public let onReturnValue: (@Sendable (TDSTokens.ReturnValueToken) -> Void)? = nil
+    public let onEnvChange: (@Sendable (TDSTokens.EnvchangeToken<[Byte]>) -> Void)? = nil // Prelogin requests don't use onEnvChange
     public let stream: Bool = false // Prelogin requests are always non-streaming
-    public let onData: ((TDSData) -> Void)? = nil // Prelogin requests don't use onData
+    public let onData: (@Sendable (TDSData) -> Void)? = nil // Prelogin requests don't use onData
 
     init(_ shouldNegotiateEncryption: Bool) {
         self.clientEncryption = shouldNegotiateEncryption ? .encryptOn : .encryptNotSup
@@ -31,6 +31,12 @@ internal final class PreloginRequest: TDSRequest {
 
     func log(to logger: Logger) {
         logger.debug("Sending Prelogin message.")
+    }
+
+    var packetType: TDSPacket.HeaderType { .prelogin }
+
+    func serialize(into buffer: inout ByteBuffer) throws {
+        try TDSMessages.PreloginMessage(version: "9.0.0", encryption: clientEncryption).serialize(into: &buffer)
     }
 
     func handle(dataStream: ByteBuffer, allocator: ByteBufferAllocator) throws -> TDSPacketResponse {
@@ -47,27 +53,18 @@ internal final class PreloginRequest: TDSRequest {
             }
 
             // Encryption Negotiation - Supports all or nothing encryption
-            if let serverEncryption = parsedMessage.encryption {
-                switch (serverEncryption, clientEncryption) {
-                case (.encryptReq, .encryptOn),
-                     (.encryptOn, .encryptOn):
-                    // encrypt connection
-                    return .kickoffSSL
-                case (.encryptNotSup, .encryptNotSup):
-                    // no encryption
-                    return .done
-                default:
-                    throw TDSError.protocolError("PRELOGIN Error: Incompatible client/server encyption configuration. Client: \(clientEncryption), Server: \(serverEncryption)")
-                }
+            let serverEncryption = parsedMessage.encryption
+            switch (serverEncryption, clientEncryption) {
+            case (.encryptReq, .encryptOn),
+                 (.encryptOn, .encryptOn):
+                return .kickoffSSL
+            case (.encryptNotSup, .encryptNotSup):
+                return .done
+            default:
+                throw TDSError.protocolError("PRELOGIN Error: Incompatible client/server encyption configuration. Client: \(clientEncryption), Server: \(serverEncryption)")
             }
         }
 
         return .continue
-    }
-
-    func start(allocator: ByteBufferAllocator) throws -> [TDSPacket] {
-        let prelogin = TDSMessages.PreloginMessage(version: "9.0.0", encryption: clientEncryption)
-        let message = try TDSMessage(payload: prelogin, allocator: allocator)
-        return message.packets
     }
 }

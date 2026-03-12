@@ -2,7 +2,7 @@
 import NIOCore
 import XCTest
 
-final class ReturnStatusTokenTests: XCTestCase {
+final class ReturnStatusTokenTests: XCTestCase, @unchecked Sendable {
     func testParserConsumesReturnStatusToken() throws {
         var buffer = ByteBufferAllocator().buffer(capacity: 6)
         buffer.writeInteger(TDSTokens.TokenType.returnStatus.rawValue)
@@ -11,7 +11,7 @@ final class ReturnStatusTokenTests: XCTestCase {
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
 
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
         let tokens = try parser.parse()
         XCTAssertEqual(tokens.count, 1)
 

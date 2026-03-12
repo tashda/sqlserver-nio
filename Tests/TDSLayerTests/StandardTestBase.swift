@@ -1,5 +1,4 @@
 import XCTest
-import NIOCore
 import Logging
 @testable import SQLServerTDS
 @testable import SQLServerKit
@@ -8,12 +7,9 @@ import SQLServerKitTesting
 /// Standard base class for all SQLServer tests
 /// Provides consistent setup, teardown, and query execution patterns
 /// All tests should inherit from this class unless they specifically test connection lifecycle
-open class StandardTestBase: XCTestCase {
+open class StandardTestBase: XCTestCase, @unchecked Sendable {
 
     // MARK: - Properties
-
-    /// Shared event loop group for the test
-    public var group: EventLoopGroup!
 
     /// Shared SQLServer client for the test
     public var client: SQLServerClient!
@@ -33,30 +29,20 @@ open class StandardTestBase: XCTestCase {
         config.poolConfiguration.connectionIdleTimeout = nil
         config.poolConfiguration.minimumIdleConnections = 0
 
-        // Create event loop group
-        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-
-        // Create client using shared event loop group (this is the key!)
+        // Create client
         self.client = try await SQLServerClient.connect(
             configuration: config,
-            eventLoopGroupProvider: .shared(group)
-        ).get()
+            numberOfThreads: 1
+        )
 
         logger.info("✅ Test setup completed successfully")
     }
 
     override open func tearDown() async throws {
-        // Shutdown client first
+        // Shutdown client
         if let client = client {
-            try await client.shutdownGracefully().get()
+            try? await client.shutdownGracefully()
             self.client = nil
-        }
-
-        // Then shutdown the event loop group
-        if let group = group {
-            // Use async shutdown to avoid Swift 6 warnings
-            try await group.shutdownGracefully()
-            self.group = nil
         }
 
         logger.info("✅ Test teardown completed successfully")
@@ -66,19 +52,19 @@ open class StandardTestBase: XCTestCase {
 
     /// Execute a simple SQL query with the shared client
     /// This is the standard way to execute queries in tests
-    public func executeQuery(_ sql: String) async throws -> [TDSRow] {
+    public func executeQuery(_ sql: String) async throws -> [SQLServerRow] {
         return try await client.query(sql)
     }
 
     /// Execute a query and verify it returns the expected number of rows
-    public func executeQuery(_ sql: String, expectedRows: Int) async throws -> [TDSRow] {
+    public func executeQuery(_ sql: String, expectedRows: Int) async throws -> [SQLServerRow] {
         let result = try await executeQuery(sql)
         XCTAssertEqual(result.count, expectedRows, "Expected \(expectedRows) rows, but got \(result.count)")
         return result
     }
 
     /// Execute a query and verify it returns exactly one row
-    public func executeSingleRowQuery(_ sql: String) async throws -> TDSRow {
+    public func executeSingleRowQuery(_ sql: String) async throws -> SQLServerRow {
         let result = try await executeQuery(sql, expectedRows: 1)
         return result.first!
     }
@@ -128,7 +114,7 @@ open class StandardTestBase: XCTestCase {
     }
 
     /// Select all data from a table
-    public func selectAllFromTable(_ tableName: String) async throws -> [TDSRow] {
+    public func selectAllFromTable(_ tableName: String) async throws -> [SQLServerRow] {
         return try await executeQuery("SELECT * FROM \(tableName)")
     }
 

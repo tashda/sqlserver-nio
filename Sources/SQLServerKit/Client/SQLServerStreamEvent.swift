@@ -3,7 +3,7 @@ import SQLServerTDS
 
 public struct SQLServerColumnDescription: Sendable {
     public let name: String
-    public let type: TDSDataType
+    public let type: SQLServerDataType
     public let length: Int
     public let precision: Int?
     public let scale: Int?
@@ -30,8 +30,7 @@ public struct SQLServerStreamMessage: Sendable {
 
 public enum SQLServerStreamEvent: Sendable {
     case metadata([SQLServerColumnDescription])
-    case row(TDSRow)
+    case row(SQLServerRow)
     case done(SQLServerStreamDone)
     case message(SQLServerStreamMessage)
 }
-

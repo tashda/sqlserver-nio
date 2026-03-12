@@ -1,24 +1,19 @@
 @testable import SQLServerKit
 import SQLServerKitTesting
-import NIO
 import XCTest
 
-final class SQLServerMetadataViewColumnsTests: XCTestCase {
-    var group: EventLoopGroup!
+final class SQLServerMetadataViewColumnsTests: XCTestCase, @unchecked Sendable {
     var client: SQLServerClient!
 
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
         TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
-        group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).get()
+        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
     }
 
     override func tearDown() async throws {
-        try await client?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
+        try? await client?.shutdownGracefully()
         client = nil
-        group = nil
     }
 
     @available(macOS 12.0, *)
@@ -27,37 +22,39 @@ final class SQLServerMetadataViewColumnsTests: XCTestCase {
             let tableName = "tbl_" + UUID().uuidString.prefix(8)
             let viewName = "vw_" + UUID().uuidString.prefix(8)
 
-            let tableSQL = """
-            CREATE TABLE dbo.[\(tableName)] (
-                id INT NOT NULL PRIMARY KEY,
-                displayName NVARCHAR(200) NOT NULL,
-                extra XML NULL,
-                lastUpdated DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
-            );
-            """
-            _ = try await executeInDb(client: self.client, database: database, tableSQL)
-
-            let viewSQL = """
-            CREATE VIEW dbo.[\(viewName)] AS
-            SELECT
-                t.id,
-                t.displayName,
-                t.lastUpdated,
-                COALESCE(
-                    bcast.Phone.value('(./number/text())[1]', 'nvarchar(32)'),
-                    '(none)'
-                ) AS phoneNumber
-            FROM dbo.[\(tableName)] AS t
-            OUTER APPLY t.extra.nodes('/broadcast') AS bcast(Phone);
-            """
-            _ = try await executeInDb(client: self.client, database: database, viewSQL)
+            try await withDbConnection(client: self.client, database: database) { connection in
+                try await connection.createTable(
+                    name: String(tableName),
+                    columns: [
+                        SQLServerColumnDefinition(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
+                        SQLServerColumnDefinition(name: "displayName", definition: .standard(.init(dataType: .nvarchar(length: .length(200))))),
+                        SQLServerColumnDefinition(name: "extra", definition: .standard(.init(dataType: .xml, isNullable: true))),
+                        SQLServerColumnDefinition(name: "lastUpdated", definition: .standard(.init(dataType: .datetime2(precision: 7), defaultValue: "SYSUTCDATETIME()")))
+                    ]
+                )
+                try await connection.createView(
+                    name: String(viewName),
+                    query: """
+                    SELECT
+                        t.id,
+                        t.displayName,
+                        t.lastUpdated,
+                        COALESCE(
+                            bcast.Phone.value('(./number/text())[1]', 'nvarchar(32)'),
+                            '(none)'
+                        ) AS phoneNumber
+                    FROM dbo.[\(tableName)] AS t
+                    OUTER APPLY t.extra.nodes('/broadcast') AS bcast(Phone)
+                    """
+                )
+            }
 
             let tableColumns = try await withDbConnection(client: self.client, database: database) { connection in
-                try await connection.listColumns(database: database, schema: "dbo", table: tableName).get()
+                try await connection.listColumns(database: database, schema: "dbo", table: tableName)
             }
 
             let viewColumns = try await withDbConnection(client: self.client, database: database) { connection in
-                try await connection.listColumns(database: database, schema: "dbo", table: viewName).get()
+                try await connection.listColumns(database: database, schema: "dbo", table: viewName)
             }
 
             // Expect the view to project: id, displayName, lastUpdated, phoneNumber
@@ -88,7 +85,7 @@ final class SQLServerMetadataViewColumnsTests: XCTestCase {
                 (schema: "HumanResources", name: "vEmployeeDepartmentHistory")
             ]
             for (schema, name) in viewNames {
-                let columns = try await connection.listColumns(database: db, schema: schema, table: name).get()
+                let columns = try await connection.listColumns(database: db, schema: schema, table: name)
                 XCTAssertFalse(columns.isEmpty, "Expected columns for \(schema).\(name)")
             }
         }
@@ -100,7 +97,7 @@ final class SQLServerMetadataViewColumnsTests: XCTestCase {
         let db = env("TDS_AW_DATABASE")!
         let start = DispatchTime.now()
         try await withDbConnection(client: self.client, database: db) { connection in
-            let columns = try await connection.listColumns(database: db, schema: "HumanResources", table: "vJobCandidate").get()
+            let columns = try await connection.listColumns(database: db, schema: "HumanResources", table: "vJobCandidate")
             XCTAssertFalse(columns.isEmpty, "Expected metadata for HumanResources.vJobCandidate")
         }
         let elapsedMs = Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000
@@ -117,7 +114,7 @@ final class SQLServerMetadataViewColumnsTests: XCTestCase {
                 database: db,
                 schema: "Production",
                 table: "vProductModelCatalogDescription"
-            ).get()
+            )
             XCTAssertFalse(columns.isEmpty, "Expected columns for Production.vProductModelCatalogDescription")
             XCTAssertFalse(columns.contains { $0.name.isEmpty }, "Column names should not be empty")
         }

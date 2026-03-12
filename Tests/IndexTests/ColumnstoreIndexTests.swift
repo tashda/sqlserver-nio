@@ -1,35 +1,32 @@
 @testable import SQLServerKit
 import SQLServerKitTesting
 import XCTest
-import NIO
 import Logging
 
-final class SQLServerColumnstoreIndexTests: XCTestCase {
-    var group: EventLoopGroup!
+final class SQLServerColumnstoreIndexTests: XCTestCase, @unchecked Sendable {
     var client: SQLServerClient!
-    private var skipDueToEnv = false
-
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
-        group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).get()
-        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1").get() } } catch { skipDueToEnv = true }
+        TestEnvironmentManager.loadEnvironmentVariables()
+        client = try await SQLServerClient.connect(
+            configuration: makeSQLServerClientConfiguration(),
+            numberOfThreads: 1
+        )
+        _ = try await withTimeout(5) { try await self.client.query("SELECT 1") }
     }
 
     override func tearDown() async throws {
-        try await client?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
+        try? await client?.shutdownGracefully()
+        client = nil
     }
 
     @available(macOS 12.0, *)
     func testColumnstoreIndexScripting() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         do {
         try await withTemporaryDatabase(client: self.client, prefix: "csmx") { db in
             let table = "cs_tbl_\(UUID().uuidString.prefix(6))"
 
-            try await withDbClient(for: db, using: self.group) { dbClient in
+            try await withDbClient(for: db) { dbClient in
                 let dbAdminClient = SQLServerAdministrationClient(client: dbClient)
                 let indexClient = SQLServerIndexClient(client: dbClient)
 
@@ -77,14 +74,14 @@ final class SQLServerColumnstoreIndexTests: XCTestCase {
                     } catch {
                         // spin a fresh client bound to DB and retry once
                         if let se = error as? SQLServerError, case .connectionClosed = se, remaining > 0 {
-                            let dbClient = try await makeClient(forDatabase: db, using: self.group)
+                            let dbClient = try await makeClient(forDatabase: db)
                             def = try? await dbClient.withConnection { conn in
                                 try await conn
                                     .fetchObjectDefinition(schema: "dbo", name: table, kind: .table)
                                     .withTimeout(on: conn.eventLoop, seconds: 8, reason: "fetchObjectDefinition(columnstore,alt)")
                                     .get()
                             }
-                            _ = try? await dbClient.shutdownGracefully().get()
+                            try? await dbClient.shutdownGracefully()
                         } else {
                             throw error
                         }

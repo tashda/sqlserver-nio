@@ -1,36 +1,31 @@
 @testable import SQLServerKit
 import SQLServerKitTesting
 import XCTest
-import NIO
 import Logging
 
-final class SQLServerIndexMatrixTests: XCTestCase {
-    var group: EventLoopGroup!
+final class SQLServerIndexMatrixTests: XCTestCase, @unchecked Sendable {
     var client: SQLServerClient!
-    private var skipDueToEnv = false
-
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
-        group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).get()
-        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1").get() } } catch { skipDueToEnv = true }
+        TestEnvironmentManager.loadEnvironmentVariables()
+        client = try await SQLServerClient.connect(
+            configuration: makeSQLServerClientConfiguration(),
+            numberOfThreads: 1
+        )
+        _ = try await withTimeout(5) { try await self.client.query("SELECT 1") }
     }
 
     override func tearDown() async throws {
-        try await client?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
+        try? await client?.shutdownGracefully()
         client = nil
-        group = nil
     }
 
     @available(macOS 12.0, *)
     func testIndexOptionMatrixScripting() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         try await withTemporaryDatabase(client: self.client, prefix: "imx") { db in
             let table = "ix_tbl_\(UUID().uuidString.prefix(6))"
 
-            try await withDbClient(for: db, using: self.group) { dbClient in
+            try await withDbClient(for: db) { dbClient in
                 let dbAdminClient = SQLServerAdministrationClient(client: dbClient)
                 let indexClient = SQLServerIndexClient(client: dbClient)
                 let constraintClient = SQLServerConstraintClient(client: dbClient)
@@ -102,7 +97,7 @@ final class SQLServerIndexMatrixTests: XCTestCase {
                     }
 
                     guard let def = try await withDbConnection(client: self.client, database: db, operation: { conn in
-                        try await conn.fetchObjectDefinition(schema: "dbo", name: table, kind: .table).get()
+                        try await conn.objectDefinition(schema: "dbo", name: table, kind: .table)
                     }), let ddl = def.definition else { XCTFail("No DDL returned"); continue }
 
                     // Check the scripted DDL contains our index with key features
@@ -133,7 +128,7 @@ final class SQLServerIndexMatrixTests: XCTestCase {
                 )
 
                 guard let def2 = try await withDbConnection(client: self.client, database: db, operation: { conn in
-                    try await conn.fetchObjectDefinition(schema: "dbo", name: table, kind: .table).get()
+                    try await conn.objectDefinition(schema: "dbo", name: table, kind: .table)
                 }), let ddl2 = def2.definition else { XCTFail("No DDL returned"); return }
                 XCTAssertTrue(ddl2.contains("DATA_COMPRESSION"), "Scripted index should include DATA_COMPRESSION when present")
             }

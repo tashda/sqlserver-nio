@@ -4,7 +4,7 @@ import NIO
 
 /// Tests token types and row formats that were previously uncovered.
 /// All byte sequences are crafted to match the TDS wire format exactly.
-final class TDSTokenParserCoverageTests: XCTestCase {
+final class TDSTokenOperationsCoverageTests: XCTestCase, @unchecked Sendable {
 
     // MARK: - EnvChange
 
@@ -21,7 +21,7 @@ final class TDSTokenParserCoverageTests: XCTestCase {
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
 
         let tokens = try parser.parse()
         XCTAssertEqual(tokens.count, 1)
@@ -47,7 +47,7 @@ final class TDSTokenParserCoverageTests: XCTestCase {
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
 
         let tokens = try parser.parse()
         XCTAssertEqual(tokens.count, 1)
@@ -79,7 +79,7 @@ final class TDSTokenParserCoverageTests: XCTestCase {
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
 
         let tokens = try parser.parse()
         XCTAssertEqual(tokens.count, 1)
@@ -113,7 +113,7 @@ final class TDSTokenParserCoverageTests: XCTestCase {
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
 
         let tokens = try parser.parse()
         XCTAssertEqual(tokens.count, 1)
@@ -145,7 +145,7 @@ final class TDSTokenParserCoverageTests: XCTestCase {
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
 
         let tokens = try parser.parse()
         XCTAssertEqual(tokens.count, 1)
@@ -168,7 +168,7 @@ final class TDSTokenParserCoverageTests: XCTestCase {
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
 
         let token = try XCTUnwrap(parser.parseDoneToken())
         XCTAssertEqual(token.type, .doneInProc)
@@ -186,7 +186,7 @@ final class TDSTokenParserCoverageTests: XCTestCase {
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
 
         let token = try XCTUnwrap(parser.parseDoneToken())
         XCTAssertEqual(token.type, .doneProc)
@@ -201,7 +201,7 @@ final class TDSTokenParserCoverageTests: XCTestCase {
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
         let positionBefore = stream.position
 
         let result = try parser.parseDoneToken()
@@ -232,7 +232,7 @@ final class TDSTokenParserCoverageTests: XCTestCase {
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
         parser.colMetadata = meta
 
         let tokens = try parser.parse()
@@ -269,7 +269,7 @@ final class TDSTokenParserCoverageTests: XCTestCase {
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
         parser.colMetadata = meta
 
         let tokens = try parser.parse()
@@ -296,7 +296,7 @@ final class TDSTokenParserCoverageTests: XCTestCase {
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
         parser.colMetadata = meta
 
         let row = try XCTUnwrap(parser.parseRowToken())
@@ -320,7 +320,7 @@ final class TDSTokenParserCoverageTests: XCTestCase {
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
         parser.colMetadata = meta
 
         let row = try XCTUnwrap(parser.parseRowToken())
@@ -343,7 +343,7 @@ final class TDSTokenParserCoverageTests: XCTestCase {
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
         parser.colMetadata = meta
 
         let row = try XCTUnwrap(parser.parseRowToken())
