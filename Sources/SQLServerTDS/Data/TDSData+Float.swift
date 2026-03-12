@@ -20,6 +20,19 @@ extension TDSData {
             return value.getInteger(at: value.readerIndex, endianness: .little, as: UInt64.self)
                 .map(Double.init(bitPattern:))
                 .map(Float.init)
+        case .floatn:
+            switch value.readableBytes {
+            case 0:
+                return nil
+            case 4:
+                return value.getInteger(at: value.readerIndex, endianness: .little, as: UInt32.self).map(Float.init(bitPattern:))
+            case 8:
+                return value.getInteger(at: value.readerIndex, endianness: .little, as: UInt64.self)
+                    .map(Double.init(bitPattern:))
+                    .map(Float.init)
+            default:
+                return nil
+            }
         default:
             return nil
         }
