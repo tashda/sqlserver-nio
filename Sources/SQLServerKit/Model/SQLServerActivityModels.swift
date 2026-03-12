@@ -14,6 +14,7 @@ public struct SQLServerActivityOptions: Sendable, Equatable {
 
 public struct SQLServerActivitySnapshot: Sendable {
     public let capturedAt: Date
+    public let overview: SQLServerActivityOverview?
     public let processes: [SQLServerProcessInfo]
     public let waits: [SQLServerWaitStat]
     public let waitsDelta: [SQLServerWaitStatDelta]?
@@ -23,6 +24,7 @@ public struct SQLServerActivitySnapshot: Sendable {
 
     public init(
         capturedAt: Date = Date(),
+        overview: SQLServerActivityOverview? = nil,
         processes: [SQLServerProcessInfo],
         waits: [SQLServerWaitStat],
         waitsDelta: [SQLServerWaitStatDelta]? = nil,
@@ -31,12 +33,32 @@ public struct SQLServerActivitySnapshot: Sendable {
         expensiveQueries: [SQLServerExpensiveQuery]
     ) {
         self.capturedAt = capturedAt
+        self.overview = overview
         self.processes = processes
         self.waits = waits
         self.waitsDelta = waitsDelta
         self.fileIO = fileIO
         self.fileIODelta = fileIODelta
         self.expensiveQueries = expensiveQueries
+    }
+}
+
+public struct SQLServerActivityOverview: Sendable {
+    public let processorTimePercent: Double
+    public let waitingTasksCount: Int
+    public let databaseIOMBPerSec: Double
+    public let batchRequestsPerSec: Double
+
+    public init(
+        processorTimePercent: Double,
+        waitingTasksCount: Int,
+        databaseIOMBPerSec: Double,
+        batchRequestsPerSec: Double
+    ) {
+        self.processorTimePercent = processorTimePercent
+        self.waitingTasksCount = waitingTasksCount
+        self.databaseIOMBPerSec = databaseIOMBPerSec
+        self.batchRequestsPerSec = batchRequestsPerSec
     }
 }
 
