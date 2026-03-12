@@ -58,10 +58,10 @@ final class SQLServerMetadataConcurrencyTests: XCTestCase, @unchecked Sendable {
             }
 
             try await withDbConnection(client: self.client, database: database) { connection in
-                async let tables = connection.listTables(database: database, schema: "dbo").get()
-                async let columnsA = connection.listColumns(database: database, schema: "dbo", table: tableA).get()
-                async let columnsB = connection.listColumns(database: database, schema: "dbo", table: viewName).get()
-                async let primaryKeys = connection.listPrimaryKeys(database: database, schema: "dbo").get()
+                async let tables = connection.listTables(database: database, schema: "dbo")
+                async let columnsA = connection.listColumns(database: database, schema: "dbo", table: tableA)
+                async let columnsB = connection.listColumns(database: database, schema: "dbo", table: viewName)
+                async let primaryKeys = connection.listPrimaryKeys(database: database, schema: "dbo")
 
                 let (tableMetadata, tableAColumns, viewColumns, pkMetadata) = try await (tables, columnsA, columnsB, primaryKeys)
 

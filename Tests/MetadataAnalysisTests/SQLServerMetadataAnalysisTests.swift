@@ -56,7 +56,7 @@ final class SQLServerMetadataAnalysisTests: XCTestCase, @unchecked Sendable {
 
         // Step 1: Connect and get all schemas using the public metadata API
         print("\n📋 STEP 1: Enumerating all schemas...")
-        let schemaMetadata = try await client.listSchemas(in: testDatabase).get()
+        let schemaMetadata = try await client.metadata.listSchemas(in: testDatabase)
         let schemaNames = schemaMetadata.map { $0.name }
         print("✅ Found \(schemaNames.count) schemas: \(schemaNames.joined(separator: ", "))")
         analysisResults.totalSchemas = schemaNames.count
@@ -74,7 +74,7 @@ final class SQLServerMetadataAnalysisTests: XCTestCase, @unchecked Sendable {
             do {
                 print("   🔁 listTables(schema: \(schemaName)) - start")
                 rawSchemaObjects = try await withTimeout(6) {
-                    try await self.client.listTables(database: self.testDatabase, schema: schemaName).get()
+                    try await self.client.metadata.listTables(database: self.testDatabase, schema: schemaName)
                 }
                 print("   🔁 listTables(schema: \(schemaName)) - returned \(rawSchemaObjects.count) objects")
             } catch {
@@ -150,27 +150,27 @@ final class SQLServerMetadataAnalysisTests: XCTestCase, @unchecked Sendable {
         let operations: [(String, () async throws -> Void)] = [
             ("listColumns", {
                 try await withTimeout(10) {
-                    _ = try await self.client.listColumns(database: self.testDatabase, schema: schema, table: table).get()
+                    _ = try await self.client.metadata.listColumns(database: self.testDatabase, schema: schema, table: table)
                 }
             }),
             ("listPrimaryKeys", {
                 try await withTimeout(10) {
-                    _ = try await self.client.listPrimaryKeys(database: self.testDatabase, schema: schema, table: table).get()
+                    _ = try await self.client.metadata.listPrimaryKeys(database: self.testDatabase, schema: schema, table: table)
                 }
             }),
             ("listForeignKeys", {
                 try await withTimeout(10) {
-                    _ = try await self.client.listForeignKeys(database: self.testDatabase, schema: schema, table: table).get()
+                    _ = try await self.client.metadata.listForeignKeys(database: self.testDatabase, schema: schema, table: table)
                 }
             }),
             ("listIndexes", {
                 try await withTimeout(10) {
-                    _ = try await self.client.listIndexes(database: self.testDatabase, schema: schema, table: table).get()
+                    _ = try await self.client.metadata.listIndexes(database: self.testDatabase, schema: schema, table: table)
                 }
             }),
             ("listTriggers", {
                 try await withTimeout(10) {
-                    _ = try await self.client.listTriggers(database: self.testDatabase, schema: schema, table: table).get()
+                    _ = try await self.client.metadata.listTriggers(database: self.testDatabase, schema: schema, table: table)
                 }
             })
         ]
@@ -203,17 +203,17 @@ final class SQLServerMetadataAnalysisTests: XCTestCase, @unchecked Sendable {
         let operations: [(String, () async throws -> Void)] = [
             ("listColumns", {
                 try await withTimeout(10) {
-                    _ = try await self.client.listColumns(database: self.testDatabase, schema: schema, table: view).get()
+                    _ = try await self.client.metadata.listColumns(database: self.testDatabase, schema: schema, table: view)
                 }
             }),
             ("listIndexes", {
                 try await withTimeout(10) {
-                    _ = try await self.client.listIndexes(database: self.testDatabase, schema: schema, table: view).get()
+                    _ = try await self.client.metadata.listIndexes(database: self.testDatabase, schema: schema, table: view)
                 }
             }),
             ("listTriggers", {
                 try await withTimeout(10) {
-                    _ = try await self.client.listTriggers(database: self.testDatabase, schema: schema, table: view).get()
+                    _ = try await self.client.metadata.listTriggers(database: self.testDatabase, schema: schema, table: view)
                 }
             })
         ]

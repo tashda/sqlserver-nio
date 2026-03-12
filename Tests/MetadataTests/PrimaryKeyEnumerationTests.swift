@@ -37,14 +37,14 @@ final class SQLServerPrimaryKeySchemaEnumerationTests: XCTestCase, @unchecked Se
 
             // When querying by schema only, we should still receive our PK without error
             let bySchema = try await withDbConnection(client: self.client, database: db) { conn in
-                try await conn.listPrimaryKeys(schema: "dbo").get()
+                try await conn.listPrimaryKeys(schema: "dbo")
             }
             XCTAssertTrue(bySchema.contains(where: { $0.schema.caseInsensitiveCompare("dbo") == .orderedSame && $0.table.caseInsensitiveCompare(String(table)) == .orderedSame }),
                           "Expected primary key for \(table) when listing by schema only")
 
             // And querying with explicit table returns a single matching PK entry marked as clustered
             let byTable = try await withDbConnection(client: self.client, database: db) { conn in
-                try await conn.listPrimaryKeys(schema: "dbo", table: String(table)).get()
+                try await conn.listPrimaryKeys(schema: "dbo", table: String(table))
             }
             guard let pk = byTable.first(where: { $0.table.caseInsensitiveCompare(String(table)) == .orderedSame }) else {
                 XCTFail("Missing primary key entry for \(table)")
@@ -81,7 +81,7 @@ final class SQLServerPrimaryKeySchemaEnumerationTests: XCTestCase, @unchecked Se
             }
 
             let metadata = try await withDbConnection(client: self.client, database: db) { conn in
-                try await conn.listPrimaryKeys(database: db, schema: "dbo").get()
+                try await conn.listPrimaryKeys(database: db, schema: "dbo")
             }
 
             XCTAssertEqual(metadata.count, tables.count, "Expected one primary key per base table")

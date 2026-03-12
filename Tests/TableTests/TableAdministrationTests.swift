@@ -118,10 +118,10 @@ final class SQLServerTableAdministrationTests: XCTestCase, @unchecked Sendable {
 
         try await self.adminClient.createTable(name: tableName, columns: columns)
 
-        let uniqueConstraints = try await self.client.listUniqueConstraints(schema: "dbo", table: tableName).get()
+        let uniqueConstraints = try await self.client.metadata.listUniqueConstraints(schema: "dbo", table: tableName)
         XCTAssertEqual(uniqueConstraints.count, 1, "Should find one unique constraint.")
 
-        let tableColumns = try await self.client.listColumns(schema: "dbo", table: tableName, includeComments: true).get()
+        let tableColumns = try await self.client.metadata.listColumns(schema: "dbo", table: tableName, includeComments: true)
         let sparseColumn = tableColumns.first { $0.name == "sparse_col" }
         XCTAssertNotNil(sparseColumn, "Should find sparse_col.")
         if let sparseColumn = sparseColumn {
@@ -140,7 +140,7 @@ final class SQLServerTableAdministrationTests: XCTestCase, @unchecked Sendable {
 
         try await self.adminClient.createTable(name: tableName, columns: columns)
 
-        let primaryKeys = try await self.client.listPrimaryKeys(schema: "dbo", table: tableName).get()
+        let primaryKeys = try await self.client.metadata.listPrimaryKeys(schema: "dbo", table: tableName)
         XCTAssertEqual(primaryKeys.count, 1, "Should have one primary key constraint.")
 
         if let pk = primaryKeys.first {
@@ -186,7 +186,7 @@ final class SQLServerTableAdministrationTests: XCTestCase, @unchecked Sendable {
 
         try await self.adminClient.createTable(name: tableName, columns: columns)
 
-        let metadataColumns = try await self.client.listColumns(schema: "dbo", table: tableName, includeComments: true).get()
+        let metadataColumns = try await self.client.metadata.listColumns(schema: "dbo", table: tableName, includeComments: true)
 
         let expected = [
             "t_tinyint": "tinyint",
@@ -244,7 +244,7 @@ final class SQLServerTableAdministrationTests: XCTestCase, @unchecked Sendable {
         try await self.adminClient.createTable(name: tableName, columns: columns)
         try await self.adminClient.addTableComment(tableName: tableName, comment: "Test table with comments")
 
-        let metadataColumns = try await self.client.listColumns(schema: "dbo", table: tableName, includeComments: true).get()
+        let metadataColumns = try await self.client.metadata.listColumns(schema: "dbo", table: tableName, includeComments: true)
         let columnsWithComments = metadataColumns.filter { $0.comment != nil }
         XCTAssertEqual(columnsWithComments.count, 3, "Should find three column comments.")
 
@@ -263,14 +263,14 @@ final class SQLServerTableAdministrationTests: XCTestCase, @unchecked Sendable {
             }
         }
 
-        let tables = try await self.client.listTables(schema: "dbo", includeComments: true).get()
+        let tables = try await self.client.metadata.listTables(schema: "dbo", includeComments: true)
         let testTable = tables.first { $0.name == tableName }
         XCTAssertNotNil(testTable, "Should find the created table.")
         if let testTable = testTable {
             XCTAssertEqual(testTable.comment, "Test table with comments", "Table comment should match")
         }
 
-        let metadataColumns2 = try await self.client.listColumns(schema: "dbo", table: tableName, includeComments: true).get()
+        let metadataColumns2 = try await self.client.metadata.listColumns(schema: "dbo", table: tableName, includeComments: true)
         let columnsWithComments2 = metadataColumns2.filter { $0.comment != nil }
         XCTAssertEqual(columnsWithComments2.count, 3, "Should find three column comments on subsequent fetch.")
     }
@@ -287,7 +287,7 @@ final class SQLServerTableAdministrationTests: XCTestCase, @unchecked Sendable {
 
         try await self.adminClient.createTable(name: tableName, columns: columns)
 
-        let metadataColumns = try await self.client.listColumns(schema: "dbo", table: tableName, includeComments: true).get()
+        let metadataColumns = try await self.client.metadata.listColumns(schema: "dbo", table: tableName, includeComments: true)
         let descriptionColumn = metadataColumns.first { $0.name == "description" }
         XCTAssertNotNil(descriptionColumn, "Should find description column.")
         if let descriptionColumn = descriptionColumn {
@@ -298,7 +298,7 @@ final class SQLServerTableAdministrationTests: XCTestCase, @unchecked Sendable {
     // MARK: - Helpers
 
     private func getTableCount(client: SQLServerClient, name: String) async throws -> Int {
-        let tables = try await client.listTables(schema: "dbo").get()
+        let tables = try await client.metadata.listTables(schema: "dbo")
         return tables.filter { $0.name == name }.count
     }
 

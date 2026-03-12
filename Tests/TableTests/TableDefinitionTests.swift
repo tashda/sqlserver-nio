@@ -89,7 +89,7 @@ final class SQLServerTableDefinitionTests: XCTestCase, @unchecked Sendable {
                 let def = try await withRetry(attempts: 5) {
                     try await withTimeout(60) {
                         try await dbClient.withConnection { conn in
-                            try await conn.fetchObjectDefinition(schema: "dbo", name: child, kind: .table).get()
+                            try await conn.objectDefinition(schema: "dbo", name: child, kind: .table)
                         }
                     }
                 }

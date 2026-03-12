@@ -137,7 +137,7 @@ final class QueryTests: StandardTestBase, @unchecked Sendable {
                 _ = try await connection.execute("CREATE VIEW [dbo].[echo_view] AS SELECT 42 AS value")
             }
 
-            let definition = try await self.client.objectDefinition(
+            let definition = try await self.client.metadata.objectDefinition(
                 database: dbName,
                 schema: "dbo",
                 name: "echo_view",
