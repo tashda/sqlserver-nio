@@ -11,11 +11,11 @@ extension SQLServerClient {
         let batches = sql.components(separatedBy: "\nGO\n").filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
         guard !batches.isEmpty else {
-            return loop.makeSucceededFuture(.init(rows: [], done: [], messages: []))
+            return loop.makeSucceededFuture(SQLServerExecutionResult(rows: [TDSRow](), done: [], messages: []))
         }
 
         let fut = withConnection(on: loop) { connection in
-            var last: EventLoopFuture<SQLServerExecutionResult> = connection.eventLoop.makeSucceededFuture(.init(rows: [], done: [], messages: []))
+            var last: EventLoopFuture<SQLServerExecutionResult> = connection.eventLoop.makeSucceededFuture(SQLServerExecutionResult(rows: [TDSRow](), done: [], messages: []))
             for batchSql in batches {
                 last = last.flatMap { _ in connection.execute(batchSql) }
             }
@@ -38,9 +38,9 @@ extension SQLServerClient {
     public func query(
         _ sql: String,
         on eventLoop: EventLoop? = nil
-    ) -> EventLoopFuture<[TDSRow]> {
+    ) -> EventLoopFuture<[SQLServerRow]> {
         let loop = eventLoop ?? eventLoopGroup.next()
-        let fut: EventLoopFuture<[TDSRow]> = withConnection(on: loop) { connection in
+        let fut: EventLoopFuture<[SQLServerRow]> = withConnection(on: loop) { connection in
             connection.query(sql)
         }
         return fut.withTestTimeoutIfEnabled(on: loop)
@@ -50,14 +50,14 @@ extension SQLServerClient {
         _ sql: String,
         on eventLoop: EventLoop? = nil,
         timeout seconds: TimeInterval
-    ) -> EventLoopFuture<[TDSRow]> {
+    ) -> EventLoopFuture<[SQLServerRow]> {
         let loop = eventLoop ?? eventLoopGroup.next()
         return self.withConnection(on: loop) { conn in
             conn.execute(sql, timeout: seconds).map(\.rows)
         }
     }
 
-    public func queryScalar<T: TDSDataConvertible & Sendable>(
+    public func queryScalar<T: SQLServerDataConvertible & Sendable>(
         _ sql: String,
         as type: T.Type = T.self,
         on eventLoop: EventLoop? = nil

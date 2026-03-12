@@ -42,8 +42,8 @@ final class SQLServerRPCTests: XCTestCase, @unchecked Sendable {
             )
 
             // Call via RPC
-            let pIn = SQLServerConnection.ProcedureParameter(name: "@InVal", value: TDSData(int32: 7), direction: .in)
-            let pOut = SQLServerConnection.ProcedureParameter(name: "@OutVal", value: TDSData(int32: 0), direction: .out)
+            let pIn = SQLServerConnection.ProcedureParameter(name: "@InVal", value: SQLServerValue(int32: 7), direction: .in)
+            let pOut = SQLServerConnection.ProcedureParameter(name: "@OutVal", value: SQLServerValue(int32: 0), direction: .out)
             let result = try await dbClient.withConnection { conn in
                 try await conn.call(procedure: "dbo.\(procName)", parameters: [pIn, pOut]).get()
             }
@@ -79,11 +79,11 @@ final class SQLServerRPCTests: XCTestCase, @unchecked Sendable {
             )
 
             let x = try TDSData(decimal: Decimal(string: "123.45")!, precision: 10, scale: 2)
-            let px = SQLServerConnection.ProcedureParameter(name: "@X", value: x, direction: .in)
+            let px = SQLServerConnection.ProcedureParameter(name: "@X", value: SQLServerValue(base: x), direction: .in)
             // Provide TYPE_INFO by sending a zero DECIMAL for the OUT param
             let py = SQLServerConnection.ProcedureParameter(
                 name: "@Y",
-                value: try! TDSData(decimal: 0, precision: 10, scale: 2),
+                value: SQLServerValue(base: try! TDSData(decimal: 0, precision: 10, scale: 2)),
                 direction: .out
             )
             let result = try await dbClient.withConnection { conn in

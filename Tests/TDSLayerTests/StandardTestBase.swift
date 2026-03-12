@@ -66,19 +66,19 @@ open class StandardTestBase: XCTestCase, @unchecked Sendable {
 
     /// Execute a simple SQL query with the shared client
     /// This is the standard way to execute queries in tests
-    public func executeQuery(_ sql: String) async throws -> [TDSRow] {
+    public func executeQuery(_ sql: String) async throws -> [SQLServerRow] {
         return try await client.query(sql)
     }
 
     /// Execute a query and verify it returns the expected number of rows
-    public func executeQuery(_ sql: String, expectedRows: Int) async throws -> [TDSRow] {
+    public func executeQuery(_ sql: String, expectedRows: Int) async throws -> [SQLServerRow] {
         let result = try await executeQuery(sql)
         XCTAssertEqual(result.count, expectedRows, "Expected \(expectedRows) rows, but got \(result.count)")
         return result
     }
 
     /// Execute a query and verify it returns exactly one row
-    public func executeSingleRowQuery(_ sql: String) async throws -> TDSRow {
+    public func executeSingleRowQuery(_ sql: String) async throws -> SQLServerRow {
         let result = try await executeQuery(sql, expectedRows: 1)
         return result.first!
     }
@@ -128,7 +128,7 @@ open class StandardTestBase: XCTestCase, @unchecked Sendable {
     }
 
     /// Select all data from a table
-    public func selectAllFromTable(_ tableName: String) async throws -> [TDSRow] {
+    public func selectAllFromTable(_ tableName: String) async throws -> [SQLServerRow] {
         return try await executeQuery("SELECT * FROM \(tableName)")
     }
 

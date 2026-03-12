@@ -25,9 +25,9 @@ public final class SQLServerMetadataOperations: @unchecked Sendable {
                 return eventLoop.makeFailedFuture(SQLServerError.connectionClosed)
             }
             if let timeout {
-                return connection.execute(sql, timeout: timeout, invalidateOnTimeout: false).map(\.rows)
+                return connection.execute(sql, timeout: timeout, invalidateOnTimeout: false).map(\.rawRows)
             }
-            return connection.execute(sql).map(\.rows)
+            return connection.execute(sql).map(\.rawRows)
         }
         self.init(
             connection: connection,
@@ -78,9 +78,9 @@ public final class SQLServerMetadataOperations: @unchecked Sendable {
                     return eventLoop.makeFailedFuture(SQLServerError.connectionClosed)
                 }
                 if let timeout {
-                    return connection.execute(sql, timeout: timeout, invalidateOnTimeout: false).map(\.rows)
+                    return connection.execute(sql, timeout: timeout, invalidateOnTimeout: false).map(\.rawRows)
                 }
-                return connection.execute(sql).map(\.rows)
+                return connection.execute(sql).map(\.rawRows)
             }
         }
     }

@@ -8,9 +8,9 @@ public final class SQLServerConnection: @unchecked Sendable {
     public struct Configuration: Sendable {
         public struct Login: Sendable {
             public var database: String
-            public var authentication: TDSAuthentication
+            public var authentication: SQLServerAuthentication
 
-            public init(database: String, authentication: TDSAuthentication) {
+            public init(database: String, authentication: SQLServerAuthentication) {
                 self.database = database
                 self.authentication = authentication
             }
@@ -50,7 +50,7 @@ public final class SQLServerConnection: @unchecked Sendable {
         }
     }
 
-    public let base: TDSConnection
+    internal let base: TDSConnection
     public let configuration: Configuration
     internal var metadataClient: SQLServerMetadataOperations!
     internal let reuseOnClose: Bool
@@ -62,7 +62,7 @@ public final class SQLServerConnection: @unchecked Sendable {
     internal var _isSessionPrimed = false
     internal var _isClosed = false
 
-    public var underlying: TDSConnection { base }
+    internal var underlying: TDSConnection { base }
     public var eventLoop: EventLoop { base.eventLoop }
     public var logger: Logger { base.logger }
     public var currentDatabase: String { stateLock.withLock { _currentDatabase } }
@@ -119,7 +119,7 @@ public final class SQLServerConnection: @unchecked Sendable {
                 serverName: cfg.hostname,
                 port: cfg.port,
                 database: cfg.login.database,
-                authentication: cfg.login.authentication
+                authentication: cfg.login.authentication.tdsAuthentication
             )
 
             return resolveSocketAddresses(
@@ -152,7 +152,7 @@ public final class SQLServerConnection: @unchecked Sendable {
                             serverName: cfg.hostname,
                             port: cfg.port,
                             database: "master",
-                            authentication: cfg.login.authentication
+                            authentication: cfg.login.authentication.tdsAuthentication
                         )
                         return connection.login(configuration: masterLogin)
                             .flatMap {
@@ -226,9 +226,9 @@ public final class SQLServerConnection: @unchecked Sendable {
                 }
                 let timeout = self.configuration.metadataConfiguration.commandTimeout
                 if let timeout {
-                    return self.execute(sql, timeout: timeout, invalidateOnTimeout: false).map(\.rows)
+                    return self.execute(sql, timeout: timeout, invalidateOnTimeout: false).map(\.rawRows)
                 }
-                return self.execute(sql).map(\.rows)
+                return self.execute(sql).map(\.rawRows)
             }
         )
     }

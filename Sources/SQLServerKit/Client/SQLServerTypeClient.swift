@@ -111,7 +111,7 @@ public final class SQLServerTypeClient: @unchecked Sendable {
 
     /// Lists all user-defined table types in the database
     public func listUserDefinedTableTypes(schema: String? = nil) -> EventLoopFuture<[UserDefinedTableTypeDefinition]> {
-        let queryFuture: EventLoopFuture<[TDSRow]>
+        let queryFuture: EventLoopFuture<[SQLServerRow]>
 
         if let schema = schema {
             // Query for specific schema - use string interpolation for parameter
@@ -223,7 +223,7 @@ public final class SQLServerTypeClient: @unchecked Sendable {
 
     // MARK: - Helper Methods
 
-    private func parseDataType(from typeName: String, row: TDSRow) -> SQLDataType {
+    private func parseDataType(from typeName: String, row: SQLServerRow) -> SQLDataType {
         switch typeName.uppercased() {
         case "INT": return .int
         case "BIGINT": return .bigint

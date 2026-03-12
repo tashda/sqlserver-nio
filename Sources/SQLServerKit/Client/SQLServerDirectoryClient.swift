@@ -45,11 +45,10 @@ public final class SQLServerDirectoryClient {
         }
     }
 
-    private func run(sql: String) -> EventLoopFuture<[TDSRow]> {
+    private func run(sql: String) -> EventLoopFuture<[SQLServerRow]> {
         switch backing {
         case .client(let c): return c.query(sql)
         case .connection(let conn): return conn.query(sql)
         }
     }
 }
-

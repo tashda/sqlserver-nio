@@ -15,10 +15,10 @@ public final class NodeMSSQLRequest: @unchecked Sendable {
     public let parameters: [String: Any]
 
     // node-mssql style callbacks
-    public var onRow: (@Sendable (TDSRow) -> Void)?
-    public var onDone: (@Sendable (TDSTokens.DoneToken) -> Void)?
+    public var onRow: (@Sendable (SQLServerRow) -> Void)?
+    public var onDone: (@Sendable (SQLServerStreamDone) -> Void)?
     public var onError: (@Sendable (Error) -> Void)?
-    public var onInfo: (@Sendable (TDSTokens.ErrorInfoToken) -> Void)?
+    public var onInfo: (@Sendable (SQLServerStreamMessage) -> Void)?
 
     // Internal state
     private let onComplete: @Sendable (Error?, Any?) -> Void
@@ -80,12 +80,12 @@ public final class NodeMSSQLRequest: @unchecked Sendable {
             onRow: { [weak self] row in
                 guard let self = self else { return }
                 print("📡 node-mssql: Row received")
-                self.onRow?(row)
+                self.onRow?(SQLServerRow(base: row))
             },
             onDone: { [weak self] doneToken in
                 guard let self = self else { return }
                 print("🏁 node-mssql: Done token received")
-                self.onDone?(doneToken)
+                self.onDone?(SQLServerStreamDone(status: doneToken.status, rowCount: doneToken.doneRowCount))
             }
         )
         tdsConnection.send(rawRequest, logger: tdsConnection.logger).whenComplete { [weak self] result in

@@ -1,5 +1,4 @@
 import Foundation
-import SQLServerTDS
 
 public struct SQLServerProcedureParameter: Sendable {
     public enum Direction: Sendable {
@@ -9,13 +8,17 @@ public struct SQLServerProcedureParameter: Sendable {
     }
 
     public var name: String
-    public var value: TDSData?
+    public var value: SQLServerValue?
     public var direction: Direction
 
-    public init(name: String, value: TDSData?, direction: Direction = .in) {
+    public init(name: String, value: SQLServerValue?, direction: Direction = .in) {
         self.name = name
         self.value = value
         self.direction = direction
+    }
+
+    public init<T: SQLServerDataConvertible>(name: String, value: T?, direction: Direction = .in) {
+        self.init(name: name, value: value?.sqlServerValue, direction: direction)
     }
 }
 

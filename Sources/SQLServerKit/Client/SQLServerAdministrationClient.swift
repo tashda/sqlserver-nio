@@ -49,7 +49,7 @@ public final class SQLServerAdministrationClient: @unchecked Sendable {
 
         return client.query(sql).map {
             rows in
-            rows.compactMap { (row: TDSRow) -> SQLServerRoleInfo? in
+            rows.compactMap { row -> SQLServerRoleInfo? in
                 guard let name = row.column("name")?.string else { return nil }
                 let isFixed = row.column("is_fixed_role")?.int ?? 0
                 return SQLServerRoleInfo(name: name, isFixedRole: isFixed != 0)
