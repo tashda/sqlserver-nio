@@ -4,17 +4,15 @@ import XCTest
 import NIO
 import Logging
 
-final class SQLServerViewIndexMatrixTests: XCTestCase {
+final class SQLServerViewIndexMatrixTests: XCTestCase, @unchecked Sendable {
     var group: EventLoopGroup!
     var client: SQLServerClient!
-    private var skipDueToEnv = false
-
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
         TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
         group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).get()
-        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1").get() } } catch { skipDueToEnv = true }
+        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1").get() } } catch { throw error }
     }
 
     override func tearDown() async throws {
@@ -26,7 +24,6 @@ final class SQLServerViewIndexMatrixTests: XCTestCase {
 
     @available(macOS 12.0, *)
     func testIndexedViewScripting() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         try await withTemporaryDatabase(client: self.client, prefix: "vimx") { db in
             try await withDbClient(for: db, using: self.group) { dbClient in
                 let dbAdminClient = SQLServerAdministrationClient(client: dbClient)

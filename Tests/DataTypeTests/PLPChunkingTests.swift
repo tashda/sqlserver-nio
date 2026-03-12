@@ -4,7 +4,7 @@ import XCTest
 import NIO
 import Logging
 
-final class SQLServerPlpChunkingTests: XCTestCase {
+final class SQLServerPlpChunkingTests: XCTestCase, @unchecked Sendable {
     var group: EventLoopGroup!
     var client: SQLServerClient!
 
@@ -42,11 +42,9 @@ final class SQLServerPlpChunkingTests: XCTestCase {
                         // Use a BMP character so NVARCHAR stores 2 bytes per char deterministically
                         let nv = String(repeating: "ユ", count: s/2)
                         let vb = Array((0..<s).map { UInt8($0 & 0xFF) })
-                        let nvLit = SQLServerLiteralValue.nString(nv).sqlLiteral()
-                        let vbLit = SQLServerLiteralValue.bytes(vb).sqlLiteral()
-
-                        // Insert data using SQLServerKit APIs
-                        _ = try await dbClient.query("INSERT INTO [dbo].[\(table)] (nv, vb) VALUES (\(nvLit), \(vbLit))").get()
+                        try await dbClient.withConnection { connection in
+                            try await connection.insertRow(into: table, values: ["nv": .nString(nv), "vb": .bytes(vb)])
+                        }
                     }
 
                     // Query data back using SQLServerKit APIs

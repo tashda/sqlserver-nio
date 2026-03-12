@@ -70,6 +70,12 @@ public struct SQLServerProcessInfo: Sendable {
     public let request: Request?
 }
 
+public struct SQLServerSessionMemoryStat: Sendable {
+    public let sessionId: Int
+    public let memoryUsageKB: Int
+    public let request: SQLServerProcessInfo.Request?
+}
+
 public struct SQLServerWaitStat: Sendable {
     public let waitType: String
     public let waitingTasksCount: Int

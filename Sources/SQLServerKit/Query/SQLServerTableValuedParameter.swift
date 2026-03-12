@@ -1,111 +1,193 @@
 import Foundation
+import NIO
+import NIOCore
+import SQLServerTDS
 
+/// Represents a Table-Valued Parameter (TVP) for SQL Server stored procedure calls.
+///
+/// In this implementation, TVPs are handled by generating a sequence of T-SQL commands:
+/// 1. DECLARE a table variable of the target user-defined table type.
+/// 2. INSERT the row data into that table variable.
+/// 3. Pass the table variable as a parameter to the stored procedure.
 public struct SQLServerTableValuedParameter: Sendable {
-    public struct Column: Sendable {
-        public var name: String
-        public var dataType: SQLDataType
-        
-        public init(name: String, dataType: SQLDataType) {
-            self.name = name
-            self.dataType = dataType
-        }
-    }
-    
     public struct Row: Sendable {
-        public var values: [SQLServerLiteralValue]
-        
+        public let values: [SQLServerLiteralValue]
+
         public init(values: [SQLServerLiteralValue]) {
             self.values = values
         }
     }
-    
-    public var name: String
-    public var columns: [Column]
-    public var rows: [Row]
-    
-    public init(name: String, columns: [Column], rows: [Row] = []) {
-        self.name = name
+
+    public let typeName: String?
+    public let parameterName: String
+    public let columns: [ColumnInfo]
+    public let rows: [Row]
+
+    public init(typeName: String, parameterName: String, columns: [ColumnInfo], rows: [[SQLServerLiteralValue]]) {
+        self.init(
+            typeName: typeName,
+            parameterName: parameterName,
+            columns: columns,
+            rows: rows.map(Row.init(values:))
+        )
+    }
+
+    public init(typeName: String? = nil, parameterName: String, columns: [ColumnInfo], rows: [Row]) {
+        self.typeName = typeName
+        self.parameterName = parameterName
         self.columns = columns
         self.rows = rows
     }
-    
-    internal func declarationSQL() throws -> String {
-        guard !columns.isEmpty else {
-            throw SQLServerError.invalidArgument("Table-valued parameter \(name) has no columns.")
-        }
-        let columnList = columns.map { column in
-            "[\(Self.escapeIdentifier(column.name))] \(column.dataType.toSqlString())"
-        }.joined(separator: ",\n    ")
-        return """
-        DECLARE @\(name) TABLE (
-            \(columnList)
-        );
-        """
+
+    public init(name: String, columns: [ColumnInfo], rows: [Row]) {
+        self.init(typeName: nil, parameterName: "@\(name)", columns: columns, rows: rows)
     }
-    
-    internal func insertStatements() throws -> String {
-        guard !rows.isEmpty else {
-            return ""
+
+    /// Internal helper to build the T-SQL script for this TVP.
+    internal func buildDeclarationAndInsert() throws -> String {
+        let variableName = "@tvp_" + parameterName.replacingOccurrences(of: "@", with: "")
+        let declaration: String
+        if let typeName {
+            declaration = "DECLARE \(variableName) AS \(typeName);\n"
+        } else {
+            let definitions = columns.map { "[\($0.name)] \($0.dataType)" }.joined(separator: ", ")
+            declaration = "DECLARE \(variableName) TABLE (\(definitions));\n"
         }
-        let expected = columns.count
-        for row in rows where row.values.count != expected {
-            throw SQLServerError.invalidArgument("Row for TVP \(name) contains \(row.values.count) values but \(expected) columns were defined.")
+        var script = declaration
+
+        for row in rows {
+            guard row.values.count == columns.count else {
+                throw SQLServerError.invalidArgument("Row column count (\(row.values.count)) does not match schema column count (\(columns.count))")
+            }
+
+            let columnNames = columns.map { "[\($0.name)]" }.joined(separator: ", ")
+            let values = row.values.map { $0.sqlLiteral() }.joined(separator: ", ")
+            script += "INSERT INTO \(variableName) (\(columnNames)) VALUES (\(values));\n"
         }
-        
-        let columnList = columns.map { "[\(Self.escapeIdentifier($0.name))]" }.joined(separator: ", ")
-        let valueBatches = rows.map { row -> String in
-            let literals = row.values.map { $0.sqlLiteral() }.joined(separator: ", ")
-            return "(\(literals))"
-        }.joined(separator: ",\n")
-        
-        return """
-        INSERT INTO @\(name) (\(columnList))
-        VALUES
-        \(valueBatches);
-        """
+
+        return script
     }
-    
-    private static func escapeIdentifier(_ identifier: String) -> String {
-        identifier.replacingOccurrences(of: "]", with: "]]")
+
+    internal var variableName: String {
+        "@tvp_" + parameterName.replacingOccurrences(of: "@", with: "")
+    }
+}
+
+extension SQLServerConnection {
+    /// Executes a SQL command or stored procedure with one or more Table-Valued Parameters.
+    ///
+    /// This is a convenience wrapper that orchestrates the declaration, population, and passing
+    /// of TVPs using a single T-SQL batch execution.
+    public func executeWithTableParameters(
+        _ sql: String,
+        tableParameters: [SQLServerTableValuedParameter]
+    ) -> EventLoopFuture<SQLServerExecutionResult> {
+        do {
+            let script = try Self.buildScript(sql: sql, parameters: tableParameters)
+            return self.execute(script)
+        } catch {
+            return self.eventLoop.makeFailedFuture(error)
+        }
+    }
+
+    /// Async/await version of executeWithTableParameters.
+    @available(macOS 12.0, *)
+    public func executeWithTableParameters(
+        _ sql: String,
+        tableParameters: [SQLServerTableValuedParameter]
+    ) async throws -> SQLServerExecutionResult {
+        let script = try Self.buildScript(sql: sql, parameters: tableParameters)
+        return try await self.execute(script).get()
+    }
+
+    private static func buildScript(sql: String, parameters: [SQLServerTableValuedParameter]) throws -> String {
+        var script = ""
+        for param in parameters {
+            script += try param.buildDeclarationAndInsert()
+        }
+
+        // Replace parameter references in the original SQL with our generated variable names
+        var finalSql = sql
+        for param in parameters {
+            finalSql = finalSql.replacingOccurrences(of: param.parameterName, with: param.variableName)
+        }
+
+        script += finalSql
+        return script
+    }
+
+    public func execute(
+        _ sql: String,
+        tableParameters: [SQLServerTableValuedParameter]
+    ) -> EventLoopFuture<SQLServerExecutionResult> {
+        executeWithTableParameters(sql, tableParameters: tableParameters)
+    }
+
+    @available(macOS 12.0, *)
+    public func execute(
+        _ sql: String,
+        tableParameters: [SQLServerTableValuedParameter]
+    ) async throws -> SQLServerExecutionResult {
+        try await executeWithTableParameters(sql, tableParameters: tableParameters)
     }
 }
 
 extension SQLServerClient {
-    public func execute(
+    /// Executes a SQL command or stored procedure with one or more Table-Valued Parameters using a connection from the pool.
+    public func executeWithTableParameters(
         _ sql: String,
         tableParameters: [SQLServerTableValuedParameter],
         on eventLoop: EventLoop? = nil
     ) -> EventLoopFuture<SQLServerExecutionResult> {
         do {
             let script = try Self.buildScript(sql: sql, parameters: tableParameters)
-            return execute(script, on: eventLoop)
+            return self.execute(script, on: eventLoop)
         } catch {
             let loop = eventLoop ?? eventLoopGroup.next()
             return loop.makeFailedFuture(error)
         }
     }
-    
+
+    /// Async/await version of executeWithTableParameters for SQLServerClient.
+    @available(macOS 12.0, *)
+    public func executeWithTableParameters(
+        _ sql: String,
+        tableParameters: [SQLServerTableValuedParameter],
+        on eventLoop: EventLoop? = nil
+    ) async throws -> SQLServerExecutionResult {
+        let script = try Self.buildScript(sql: sql, parameters: tableParameters)
+        return try await self.execute(script, on: eventLoop)
+    }
+
+    private static func buildScript(sql: String, parameters: [SQLServerTableValuedParameter]) throws -> String {
+        var script = ""
+        for param in parameters {
+            script += try param.buildDeclarationAndInsert()
+        }
+
+        var finalSql = sql
+        for param in parameters {
+            finalSql = finalSql.replacingOccurrences(of: param.parameterName, with: param.variableName)
+        }
+
+        script += finalSql
+        return script
+    }
+
+    public func execute(
+        _ sql: String,
+        tableParameters: [SQLServerTableValuedParameter],
+        on eventLoop: EventLoop? = nil
+    ) -> EventLoopFuture<SQLServerExecutionResult> {
+        executeWithTableParameters(sql, tableParameters: tableParameters, on: eventLoop)
+    }
+
     @available(macOS 12.0, *)
     public func execute(
         _ sql: String,
         tableParameters: [SQLServerTableValuedParameter],
         on eventLoop: EventLoop? = nil
     ) async throws -> SQLServerExecutionResult {
-        let script = try Self.buildScript(sql: sql, parameters: tableParameters)
-        return try await execute(script, on: eventLoop)
-    }
-    
-    private static func buildScript(sql: String, parameters: [SQLServerTableValuedParameter]) throws -> String {
-        guard !parameters.isEmpty else { return sql }
-        var statements: [String] = []
-        for parameter in parameters {
-            statements.append(try parameter.declarationSQL())
-            let inserts = try parameter.insertStatements()
-            if !inserts.isEmpty {
-                statements.append(inserts)
-            }
-        }
-        statements.append(sql)
-        return statements.joined(separator: "\n")
+        try await executeWithTableParameters(sql, tableParameters: tableParameters, on: eventLoop)
     }
 }

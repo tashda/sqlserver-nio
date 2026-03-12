@@ -2,7 +2,7 @@ import XCTest
 @testable import SQLServerKit
 import SQLServerKitTesting
 
-final class TestNameTests: XCTestCase {
+final class TestNameTests: XCTestCase, @unchecked Sendable {
     var group: EventLoopGroup!
     var client: SQLServerClient!
 

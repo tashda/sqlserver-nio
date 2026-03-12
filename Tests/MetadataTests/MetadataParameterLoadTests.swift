@@ -3,7 +3,7 @@ import SQLServerKitTesting
 import NIO
 import XCTest
 
-final class SQLServerMetadataParameterLoadTests: XCTestCase {
+final class SQLServerMetadataParameterLoadTests: XCTestCase, @unchecked Sendable {
     var group: EventLoopGroup!
     var client: SQLServerClient!
 
@@ -37,51 +37,62 @@ final class SQLServerMetadataParameterLoadTests: XCTestCase {
     @available(macOS 12.0, *)
     func testRepeatedParameterIntrospectionStaysStable() async throws {
         try await withTemporaryDatabase(client: self.client, prefix: "paramload") { database in
-            let statements: [String] = [
-                """
-                CREATE TYPE dbo.PhoneList AS TABLE (
-                    phone NVARCHAR(32) NOT NULL,
-                    extension NVARCHAR(12) NULL
-                );
-                """,
-                """
-                CREATE PROCEDURE dbo.InsertPhones
-                    @customerId INT,
-                    @phones dbo.PhoneList READONLY
-                AS
-                BEGIN
-                    SET NOCOUNT ON;
-                    SELECT @customerId AS customerId, COUNT(*) AS phoneCount FROM @phones;
-                END;
-                """,
-                """
-                CREATE PROCEDURE dbo.UpdateContact
-                    @contactId UNIQUEIDENTIFIER,
-                    @firstName NVARCHAR(50) = N'',
-                    @lastName NVARCHAR(50) = N'',
-                    @email NVARCHAR(128) = NULL,
-                    @debug BIT = 0
-                AS
-                BEGIN
-                    SELECT @contactId, @firstName, @lastName, @email, @debug;
-                END;
-                """,
-                """
-                CREATE FUNCTION dbo.FormatFullName (
-                    @first NVARCHAR(50),
-                    @middle NVARCHAR(50) = NULL,
-                    @last NVARCHAR(50)
-                )
-                RETURNS NVARCHAR(200)
-                AS
-                BEGIN
-                    RETURN CONCAT(@first, N' ', COALESCE(@middle + N' ', N''), @last);
-                END;
-                """
-            ]
+            try await withDbClient(for: database, using: self.group) { dbClient in
+                let typeClient = SQLServerTypeClient(client: dbClient)
+                let routineClient = SQLServerRoutineClient(client: dbClient)
 
-            for statement in statements {
-                _ = try await executeInDb(client: self.client, database: database, statement)
+                try await typeClient.createUserDefinedTableType(.init(
+                    name: "PhoneList",
+                    columns: [
+                        .init(name: "phone", dataType: .nvarchar(length: .length(32)), isNullable: false),
+                        .init(name: "extension", dataType: .nvarchar(length: .length(12)), isNullable: true)
+                    ]
+                ))
+
+                try await routineClient.createStoredProcedure(
+                    name: "InsertPhones",
+                    parameters: [
+                        .init(name: "customerId", dataType: .int),
+                        .init(name: "phones", dataType: .userDefinedTable(name: "PhoneList", schema: "dbo"))
+                    ],
+                    body: """
+                    BEGIN
+                        SET NOCOUNT ON;
+                        SELECT @customerId AS customerId, COUNT(*) AS phoneCount FROM @phones;
+                    END
+                    """
+                )
+
+                try await routineClient.createStoredProcedure(
+                    name: "UpdateContact",
+                    parameters: [
+                        .init(name: "contactId", dataType: .uniqueidentifier),
+                        .init(name: "firstName", dataType: .nvarchar(length: .length(50)), defaultValue: "N''"),
+                        .init(name: "lastName", dataType: .nvarchar(length: .length(50)), defaultValue: "N''"),
+                        .init(name: "email", dataType: .nvarchar(length: .length(128)), defaultValue: "NULL"),
+                        .init(name: "debug", dataType: .bit, defaultValue: "0")
+                    ],
+                    body: """
+                    BEGIN
+                        SELECT @contactId, @firstName, @lastName, @email, @debug;
+                    END
+                    """
+                )
+
+                try await routineClient.createFunction(
+                    name: "FormatFullName",
+                    parameters: [
+                        .init(name: "first", dataType: .nvarchar(length: .length(50))),
+                        .init(name: "middle", dataType: .nvarchar(length: .length(50)), defaultValue: "NULL"),
+                        .init(name: "last", dataType: .nvarchar(length: .length(50)))
+                    ],
+                    returnType: .nvarchar(length: .length(200)),
+                    body: """
+                    BEGIN
+                        RETURN CONCAT(@first, N' ', COALESCE(@middle + N' ', N''), @last);
+                    END
+                    """
+                )
             }
 
             let objects = [
@@ -100,11 +111,6 @@ final class SQLServerMetadataParameterLoadTests: XCTestCase {
                         let inputParameters = metadata.filter { !$0.isReturnValue }
                         XCTAssertEqual(inputParameters.count, expectedCount, "Unexpected parameter count for \(name) on iteration \(iteration)")
 
-                        // Debug: print actual vs expected for failing case
-                        if name == "FormatFullName" && inputParameters.count != expectedCount {
-                            print("DEBUG: FormatFullName parameters on iteration \(iteration): \(inputParameters.map { $0.name })")
-                            print("DEBUG: All parameters including return values: \(metadata.map { ($0.name, $0.isReturnValue) })")
-                        }
                     }
                 }
             }

@@ -95,7 +95,7 @@ public struct SQLServerAgentJobNotification: Sendable {
 /// A high-level, composable job builder that orchestrates creation of Agent jobs,
 /// steps, schedules and notifications with best-effort rollback on failure.
 public final class SQLServerAgentJobBuilder: @unchecked Sendable {
-    private let agent: SQLServerAgentClient
+    private let agent: SQLServerAgentOperations
 
     // Core job fields
     private let jobName: String
@@ -111,7 +111,7 @@ public final class SQLServerAgentJobBuilder: @unchecked Sendable {
     private var notification: SQLServerAgentJobNotification?
     private var startStepId: Int?
 
-    public init(agent: SQLServerAgentClient,
+    public init(agent: SQLServerAgentOperations,
                 jobName: String,
                 description: String? = nil,
                 enabled: Bool = true,
@@ -136,6 +136,8 @@ public final class SQLServerAgentJobBuilder: @unchecked Sendable {
     /// - Returns: The created job name (and, if resolvable, the job_id as string)
     @available(macOS 12.0, *)
     public func commit() async throws -> (name: String, jobId: String) {
+        try validate()
+
         // Create base job
         do {
             try await agent.createJob(named: jobName, description: description, enabled: enabled, ownerLoginName: ownerLoginName)
@@ -171,16 +173,16 @@ public final class SQLServerAgentJobBuilder: @unchecked Sendable {
                             let successStep = s.onSuccess?.stepId
                             let failAction = s.onFail?.actionCode
                             let failStep = s.onFail?.stepId
-                            _ = try await agent.configureStep(jobName: jobName,
-                                                              stepName: s.name,
-                                                              onSuccessAction: successAction,
-                                                              onSuccessStepId: successStep,
-                                                              onFailAction: failAction,
-                                                              onFailStepId: failStep,
-                                                              retryAttempts: s.retryAttempts,
-                                                              retryIntervalMinutes: s.retryIntervalMinutes,
-                                                              outputFileName: s.outputFile,
-                                                              appendOutputFile: s.appendOutputFile).get()
+                            try await agent.configureStep(jobName: jobName,
+                                                          stepName: s.name,
+                                                          onSuccessAction: successAction,
+                                                          onSuccessStepId: successStep,
+                                                          onFailAction: failAction,
+                                                          onFailStepId: failStep,
+                                                          retryAttempts: s.retryAttempts,
+                                                          retryIntervalMinutes: s.retryIntervalMinutes,
+                                                          outputFileName: s.outputFile,
+                                                          appendOutputFile: s.appendOutputFile)
                         }
                     }
                 }
@@ -188,7 +190,7 @@ public final class SQLServerAgentJobBuilder: @unchecked Sendable {
 
             // Start step id
             if let startId = startStepId {
-                _ = try await agent.setJobStartStep(jobName: jobName, stepId: startId).get()
+                try await agent.setJobStartStep(jobName: jobName, stepId: startId)
             }
 
             // Schedules
@@ -232,10 +234,10 @@ public final class SQLServerAgentJobBuilder: @unchecked Sendable {
                 let present = try await agent.listOperators()
                 if let op = present.first(where: { $0.name.caseInsensitiveCompare(n.operatorName) == .orderedSame }) {
                     if let email = n.operatorEmail, (op.emailAddress ?? "") != email {
-                        _ = try? await agent.updateOperator(name: n.operatorName, emailAddress: email, enabled: nil, pagerAddress: nil, weekdayPagerStartTime: nil, weekdayPagerEndTime: nil).get()
+                        _ = try? await agent.updateOperator(name: n.operatorName, emailAddress: email, enabled: nil)
                     }
                 } else {
-                    _ = try? await agent.createOperator(name: n.operatorName, emailAddress: n.operatorEmail, enabled: true).get()
+                    _ = try? await agent.createOperator(name: n.operatorName, emailAddress: n.operatorEmail, enabled: true)
                 }
                 try await agent.setJobEmailNotification(jobName: jobName, operatorName: n.operatorName, notifyLevel: n.level.rawValue)
             }
@@ -245,9 +247,31 @@ public final class SQLServerAgentJobBuilder: @unchecked Sendable {
             return (name: jobName, jobId: jobId)
         } catch {
             // Rollback: delete job and any schedules we created
-            _ = try? await agent.deleteJob(named: jobName).get()
-            for sch in schedules { _ = try? await agent.deleteSchedule(named: sch.name).get() }
+            _ = try? await agent.deleteJob(named: jobName)
+            for sch in schedules { _ = try? await agent.deleteSchedule(named: sch.name) }
             throw error
+        }
+    }
+
+    private func validate() throws {
+        let trimmedJobName = jobName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedJobName.isEmpty else {
+            throw NSError(domain: "SQLServerAgentJobBuilder", code: 1, userInfo: [NSLocalizedDescriptionKey: "Job name must not be empty."])
+        }
+
+        for step in steps {
+            guard !step.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw NSError(domain: "SQLServerAgentJobBuilder", code: 2, userInfo: [NSLocalizedDescriptionKey: "Job step name must not be empty."])
+            }
+            guard !step.command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw NSError(domain: "SQLServerAgentJobBuilder", code: 3, userInfo: [NSLocalizedDescriptionKey: "Job step command must not be empty."])
+            }
+        }
+
+        for schedule in schedules {
+            guard !schedule.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw NSError(domain: "SQLServerAgentJobBuilder", code: 4, userInfo: [NSLocalizedDescriptionKey: "Schedule name must not be empty."])
+            }
         }
     }
 }

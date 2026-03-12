@@ -8,7 +8,7 @@ import SQLServerKitTesting
 /// Standard base class for all SQLServer tests
 /// Provides consistent setup, teardown, and query execution patterns
 /// All tests should inherit from this class unless they specifically test connection lifecycle
-open class StandardTestBase: XCTestCase {
+open class StandardTestBase: XCTestCase, @unchecked Sendable {
 
     // MARK: - Properties
 

@@ -4,7 +4,7 @@ import XCTest
 import NIO
 import Logging
 
-final class SQLServerLegacyLobRoundTripTests: XCTestCase {
+final class SQLServerLegacyLobRoundTripTests: XCTestCase, @unchecked Sendable {
     var group: EventLoopGroup!
     var client: SQLServerClient!
 
@@ -46,14 +46,13 @@ final class SQLServerLegacyLobRoundTripTests: XCTestCase {
                     let textPayload = String(repeating: "A", count: 8_192)
                     let ntextPayload = String(repeating: "Ω", count: 4_096)
                     let imagePayload = Array((0..<8192).map { UInt8($0 & 0xFF) })
-                    let textLiteral = SQLServerLiteralValue.string(textPayload).sqlLiteral()
-                    let ntextLiteral = SQLServerLiteralValue.nString(ntextPayload).sqlLiteral()
-                    let imageLiteral = SQLServerLiteralValue.bytes(imagePayload).sqlLiteral()
-
-                    // Insert data using SQLServerKit APIs
-                    _ = try await dbClient.query("""
-                        INSERT INTO [\(table)] (t, n, i) VALUES (\(textLiteral), \(ntextLiteral), \(imageLiteral))
-                    """).get()
+                    try await dbClient.withConnection { connection in
+                        try await connection.insertRow(into: table, values: [
+                            "t": .string(textPayload),
+                            "n": .nString(ntextPayload),
+                            "i": .bytes(imagePayload)
+                        ])
+                    }
 
                     // Query data back using SQLServerKit APIs
                     let rows = try await dbClient.query("SELECT DATALENGTH(t) AS tl, DATALENGTH(n) AS nl, DATALENGTH(i) AS il FROM [\(table)]").get()
@@ -64,7 +63,9 @@ final class SQLServerLegacyLobRoundTripTests: XCTestCase {
                     XCTAssertEqual(row.column("il")?.int, imagePayload.count)
 
                     // Also verify NBCROW behavior with nulls
-                    _ = try await dbClient.query("INSERT INTO [\(table)] (t, n, i) VALUES (NULL, NULL, NULL)").get()
+                    try await dbClient.withConnection { connection in
+                        try await connection.insertRow(into: table, values: ["t": .null, "n": .null, "i": .null])
+                    }
                     let nullRow = try await dbClient.query("SELECT t, n, i FROM [\(table)] WHERE t IS NULL").get().first
                     XCTAssertNil(nullRow?.column("t")?.string)
                     XCTAssertNil(nullRow?.column("n")?.string)

@@ -459,7 +459,7 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
         case .connection(let conn): return conn.execute(sql)
         }
     }
-    private func futureSucceeded<T>(_ value: T) -> EventLoopFuture<T> {
+    private func futureSucceeded<T: Sendable>(_ value: T) -> EventLoopFuture<T> {
         switch backing {
         case .client(let c): return c.eventLoopGroup.next().makeSucceededFuture(value)
         case .connection(let conn): return conn.eventLoop.makeSucceededFuture(value)

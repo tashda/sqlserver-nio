@@ -21,4 +21,20 @@ public struct ColumnInfo: Sendable {
         self.isNullable = isNullable
         self.maxLength = maxLength
     }
+
+    public init(
+        name: String,
+        dataType: SQLDataType,
+        isPrimaryKey: Bool = false,
+        isNullable: Bool = false,
+        maxLength: Int? = nil
+    ) {
+        self.init(
+            name: name,
+            dataType: dataType.sqlLiteral,
+            isPrimaryKey: isPrimaryKey,
+            isNullable: isNullable,
+            maxLength: maxLength
+        )
+    }
 }

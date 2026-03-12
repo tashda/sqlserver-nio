@@ -5,8 +5,8 @@ import NIOConcurrencyHelpers
 import Logging
 import SQLServerTDS
 
-public final class SQLServerConnectionPool {
-    public struct Configuration {
+public final class SQLServerConnectionPool: @unchecked Sendable {
+    public struct Configuration: Sendable {
         public var maximumConcurrentConnections: Int
         public var minimumIdleConnections: Int
         public var connectionIdleTimeout: TimeAmount?
@@ -43,7 +43,7 @@ public final class SQLServerConnectionPool {
         var idleTask: Scheduled<Void>?
     }
 
-    public final class PooledConnection {
+    public final class PooledConnection: @unchecked Sendable {
         fileprivate let connection: TDSConnection
         fileprivate unowned let pool: SQLServerConnectionPool
         private let releaseLock = NIOLock()
@@ -103,6 +103,7 @@ public final class SQLServerConnectionPool {
     private let connectionFactory: (EventLoop) -> EventLoopFuture<TDSConnection>
     private let lock = NIOLock()
     private var idle: [IdleConnection] = []
+    private var leased: [Swift.ObjectIdentifier: TDSConnection] = [:]
     private var waiters = CircularBuffer<PoolRequest>()
     private var activeConnections = 0
     private var isShuttingDown = false
@@ -133,9 +134,9 @@ public final class SQLServerConnectionPool {
     }
 
     @discardableResult
-    public func withConnection<Result>(
+    public func withConnection<Result: Sendable>(
         on eventLoop: EventLoop? = nil,
-        _ closure: @escaping (TDSConnection) -> EventLoopFuture<Result>
+        _ closure: @Sendable @escaping (TDSConnection) -> EventLoopFuture<Result>
     ) -> EventLoopFuture<Result> {
         return checkout(on: eventLoop).flatMap { pooled in
             let connection = pooled.base
@@ -159,8 +160,10 @@ public final class SQLServerConnectionPool {
             }
             isShuttingDown = true
             connectionsToClose = idle.map { $0.connection }
+            connectionsToClose.append(contentsOf: leased.values)
             idle.forEach { $0.idleTask?.cancel() }
             idle.removeAll(keepingCapacity: true)
+            leased.removeAll(keepingCapacity: true)
             waiting = Array(waiters)
             waiters.removeAll(keepingCapacity: true)
         }
@@ -192,6 +195,17 @@ public final class SQLServerConnectionPool {
         }
     }
 
+    internal func statusSnapshot() -> SQLServerConnectionPoolStatus {
+        lock.withLock {
+            SQLServerConnectionPoolStatus(
+                active: activeConnections,
+                idle: idle.count,
+                waiting: waiters.count,
+                isShuttingDown: isShuttingDown
+            )
+        }
+    }
+
     private func makeImmediateSucceededFuture(on group: EventLoopGroup) -> EventLoopFuture<Void> {
         // Always use a real event loop from the group to avoid EmbeddedEventLoop thread safety issues
         let loop = group.next()
@@ -207,6 +221,7 @@ public final class SQLServerConnectionPool {
             if !idle.isEmpty {
                 let entry = idle.removeLast()
                 entry.idleTask?.cancel()
+                leased[Swift.ObjectIdentifier(entry.connection)] = entry.connection
                 return .succeed(request: request, connection: entry.connection)
             }
 
@@ -226,6 +241,7 @@ public final class SQLServerConnectionPool {
         var shouldEnsure = false
 
         let action: Action = lock.withLock {
+            leased.removeValue(forKey: Swift.ObjectIdentifier(connection))
             if isShuttingDown {
                 activeConnections = max(0, activeConnections - 1)
                 return .close(connection: connection)
@@ -242,6 +258,7 @@ public final class SQLServerConnectionPool {
             }
 
             if let waiter = waiters.popFirst() {
+                leased[Swift.ObjectIdentifier(connection)] = connection
                 return .succeed(request: waiter, connection: connection)
             }
 
@@ -344,6 +361,7 @@ public final class SQLServerConnectionPool {
                         shouldClose = true
                     } else if let request = self.waiters.popFirst() {
                         waiter = request
+                        self.leased[Swift.ObjectIdentifier(connection)] = connection
                     } else {
                         let task = self.scheduleIdleClose(for: connection)
                         self.idle.append(IdleConnection(connection: connection, idleTask: task))
@@ -400,6 +418,9 @@ public final class SQLServerConnectionPool {
     }
 
     private func deliver(connection: TDSConnection, to request: PoolRequest) {
+        self.lock.withLock {
+            self.leased[Swift.ObjectIdentifier(connection)] = connection
+        }
         if let validationQuery = configuration.validationQuery {
             connection.rawSql(validationQuery).whenComplete { result in
                 switch result {
@@ -409,6 +430,7 @@ public final class SQLServerConnectionPool {
                     self.logger.warning("Validation query failed: \(error)")
                     _ = connection.close()
                     self.lock.withLock {
+                        self.leased.removeValue(forKey: Swift.ObjectIdentifier(connection))
                         self.activeConnections = max(0, self.activeConnections - 1)
                     }
                     self.process(request: request)

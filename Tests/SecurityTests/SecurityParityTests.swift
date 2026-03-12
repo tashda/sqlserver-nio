@@ -1,8 +1,9 @@
 import XCTest
+import NIO
 @testable import SQLServerKit
 import SQLServerKitTesting
 
-final class SQLServerSecurityParityTests: XCTestCase {
+final class SQLServerSecurityParityTests: XCTestCase, @unchecked Sendable {
     private var group: EventLoopGroup!
     private var client: SQLServerClient!
     private let TIMEOUT: TimeInterval = 60
@@ -33,9 +34,16 @@ final class SQLServerSecurityParityTests: XCTestCase {
 
     func testSecurableAwareGrantAndList() async throws {
         let dbSec = SQLServerSecurityClient(client: client)
+        let adminClient = SQLServerAdministrationClient(client: client)
         // Create a temp object and grant SELECT to public
         let table = makeSchemaQualifiedName(prefix: "secobj")
-        _ = try await client.execute("CREATE TABLE \(table.bracketed) (id INT, name NVARCHAR(50));").get()
+        try await adminClient.createTable(
+            name: table.nameOnly,
+            columns: [
+                .init(name: "id", definition: .standard(.init(dataType: .int, isNullable: true))),
+                .init(name: "name", definition: .standard(.init(dataType: .nvarchar(length: .length(50)), isNullable: true)))
+            ]
+        )
 
         let oid = ObjectIdentifier(database: nil, schema: "dbo", name: table.nameOnly, kind: .table)
         _ = try await dbSec.grant(permission: .select, on: .object(oid), to: "public").get()
@@ -47,7 +55,7 @@ final class SQLServerSecurityParityTests: XCTestCase {
         _ = try await dbSec.revoke(permission: .select, on: .object(oid), from: "public").get()
 
         // Cleanup
-        _ = try? await client.execute("DROP TABLE \(table.bracketed);").get()
+        try? await adminClient.dropTable(name: table.nameOnly)
     }
 
     func testApplicationRoleLifecycle() async throws {
@@ -61,6 +69,7 @@ final class SQLServerSecurityParityTests: XCTestCase {
 
     func testSchemaHelpers() async throws {
         let dbSec = SQLServerSecurityClient(client: client)
+        let adminClient = SQLServerAdministrationClient(client: client)
         let schema = "nio_ops"
         _ = try? await dbSec.dropSchema(name: schema).get()
         _ = try await dbSec.createSchema(name: schema, authorization: "dbo").get()
@@ -68,18 +77,21 @@ final class SQLServerSecurityParityTests: XCTestCase {
         XCTAssertTrue(schemas.contains(where: { $0.name.caseInsensitiveCompare(schema) == .orderedSame }))
         // Transfer a simple object
         let table = makeSchemaQualifiedName(prefix: "xfer")
-        _ = try await client.execute("CREATE TABLE \(table.bracketed) (id INT);").get()
+        try await adminClient.createTable(
+            name: table.nameOnly,
+            columns: [.init(name: "id", definition: .standard(.init(dataType: .int, isNullable: true)))]
+        )
 
         // Cleanup using defer alternative
         do {
             _ = try await dbSec.transferObjectToSchema(objectSchema: "dbo", objectName: table.nameOnly, newSchema: schema).get()
             _ = try await dbSec.alterAuthorizationOnSchema(schema: schema, principal: "dbo").get()
             // Must drop the table first before dropping the schema
-            _ = try await client.execute("DROP TABLE [\(schema)].[\(table.nameOnly)];").get()
+            try await adminClient.dropTable(name: table.nameOnly, schema: schema)
             _ = try await dbSec.dropSchema(name: schema).get()
         } catch {
             // Best effort cleanup - drop table first, then schema
-            _ = try? await client.execute("DROP TABLE [\(schema)].[\(table.nameOnly)];").get()
+            try? await adminClient.dropTable(name: table.nameOnly, schema: schema)
             _ = try? await dbSec.dropSchema(name: schema).get()
             throw error
         }

@@ -1,39 +1,31 @@
-import NIO
+import NIOCore
 
-public protocol TDSToken {
-    var type: TDSTokens.TokenType { get set }
-}
-
-public protocol Metadata {
-    var userType: ULong { get set }
-    var flags: UShort { get set }
-    var dataType: TDSDataType { get set }
-    var collation: [Byte] { get set }
-    var precision: Int? { get set }
-    var scale: Int? { get set }
-}
-
-public struct TypeMetadata: Metadata {
-    public var userType: ULong
-    public var flags: UShort
-    public var dataType: TDSDataType
-    public var collation: [Byte]
-    public var precision: Int?
-    public var scale: Int?
-    
-    public init(userType: ULong = 0, flags: UShort = 0, dataType: TDSDataType, collation: [Byte] = [], precision: Int? = nil, scale: Int? = nil) {
-        self.userType = userType
-        self.flags = flags
-        self.dataType = dataType
-        self.collation = collation
-        self.precision = precision
-        self.scale = scale
-    }
+public protocol TDSToken: Sendable {
+    var type: TDSTokens.TokenType { get }
 }
 
 public enum TDSTokens {
+    public enum EnvChangeType: UInt8, Sendable {
+        case database = 0x01
+        case language = 0x02
+        case charset = 0x03
+        case packetSize = 0x04
+        case sqlCollation = 0x07
+        case beginTransaction = 0x08
+        case commitTransaction = 0x09
+        case rollbackTransaction = 0x0A
+        case enlistDTCTransaction = 0x0B
+        case defectTransaction = 0x0C
+        case promoteTransaction = 0x0F
+        case transactionManagerAddress = 0x10
+        case transactionEnded = 0x11
+        case resetConnectionAck = 0x12
+        case userInstance = 0x13
+        case routing = 0x14
+        case enhancedRouting = 0x15
+    }
 
-    public enum TokenType: UInt8 {
+    public enum TokenType: UInt8, Sendable {
         /// ALTMETADATA
         case altMetadata = 0x88
         /// ALTROW
@@ -42,20 +34,6 @@ public enum TDSTokens {
         case colInfo = 0xA5
         /// COLMETADATA
         case colMetadata = 0x81
-        /// COLUMNSTATUS - Provides column status information
-        case columnStatus = 0x65
-        /// UNKNOWN_0x04 - Undocumented Microsoft TDS token, appears during parsing
-        case unknown0x04 = 0x04
-        /// UNKNOWN_0x61 - Undocumented Microsoft TDS token, appears during metadata operations
-        case unknown0x61 = 0x61
-        /// UNKNOWN_0x74 - Undocumented Microsoft TDS token, appears during metadata operations
-        case unknown0x74 = 0x74
-        /// UNKNOWN_0xc1 - Undocumented Microsoft TDS token, appears during parsing
-        case unknown0xc1 = 0xc1
-        /// RESULTSET - Microsoft JDBC compatible result set token (0x38)
-        case resultSet = 0x38
-        /// DATACLASSIFICATION
-        case dataClassification = 0xA3
         /// DONE
         case done = 0xFD
         /// DONEINPROC
@@ -92,240 +70,346 @@ public enum TDSTokens {
         case sspi = 0xED
         /// TABNAME
         case tabName = 0xA4
-        /// TVP_ROW
-        case tvpRow = 0x01
+        /// DATA_CLASSIFICATION
+        case dataClassification = 0xA3
         /// SQL_RESULT_COLUMN_SOURCES
-        case sqlResultColumnSources = 0xA1
+        case sqlResultColumnSources = 0xAF // Adjusted value
+        
+        // Extended/Unknown types from tracing
+        case unknown0x04 = 0x04
+        case unknown0x61 = 0x61
+        case unknown0x74 = 0x74
+        case unknown0xc1 = 0xC1
+        case columnStatus = 0x12 // Placeholder
+        case tvpRow = 0xD4 // Placeholder for TVP rows
     }
 
-    public struct LoginAckToken: TDSToken {
-        public var type: TokenType = .loginAck
-        var interface: Byte
-        var tdsVersion: DWord
-        var progName: String
-        var majorVer: Byte
-        var minorVer: Byte
-        var buildNumHi: Byte
-        var buildNumLow: Byte
+    public struct DoneToken: TDSToken {
+        public typealias Status = UInt16
+        public var type: TokenType = .done
+        public var status: Status
+        public var curCmd: UInt16
+        public var doneRowCount: UInt64
+
+        public init(status: Status, curCmd: UInt16, doneRowCount: UInt64) {
+            self.status = status
+            self.curCmd = curCmd
+            self.doneRowCount = doneRowCount
+        }
+
+        static func parse(from buffer: inout ByteBuffer) throws -> DoneToken {
+            guard let status: UInt16 = buffer.readInteger(endianness: .little),
+                  let curCmd: UInt16 = buffer.readInteger(endianness: .little),
+                  let rowCount: UInt64 = buffer.readInteger(endianness: .little) else {
+                throw TDSError.needMoreData
+            }
+            return DoneToken(status: status, curCmd: curCmd, doneRowCount: rowCount)
+        }
     }
 
     public struct ColMetadataToken: TDSToken {
         public var type: TokenType = .colMetadata
-        public var count: UShort
         public var colData: [ColumnData]
+        public var count: Int { colData.count }
 
         public struct ColumnData: Metadata, Sendable {
-            public var userType: ULong
-            public var flags: UShort
+            public var userType: UInt32
+            public var flags: UInt16
             public var dataType: TDSDataType
-            public var length: Int
-            public var collation: [Byte]
-            public var tableName: String?
+            // Type-specific metadata
+            public var length: Int32
+            public var precision: UInt8
+            public var scale: UInt8
+            public var collation: [UInt8]
             public var colName: String
-            public var precision: Int?
-            public var scale: Int?
+            public var isView: Bool = false
+            
+            public init(userType: UInt32, flags: UInt16, dataType: TDSDataType, length: Int32, precision: UInt8, scale: UInt8, collation: [UInt8] = [], colName: String) {
+                self.userType = userType
+                self.flags = flags
+                self.dataType = dataType
+                self.length = length
+                self.precision = precision
+                self.scale = scale
+                self.collation = collation
+                self.colName = colName
+            }
 
-            /// Provides enhanced type information for the column
-            public var typeInfo: TypeInfo {
-                return TypeInfo(
-                    name: String(describing: self.dataType),
-                    maxColumnLength: self.normalizedLength
+            public init(
+                userType: UInt32,
+                flags: UInt16,
+                dataType: TDSDataType,
+                length: Int32,
+                collation: [UInt8] = [],
+                tableName: String? = nil,
+                colName: String,
+                precision: UInt8? = nil,
+                scale: UInt8? = nil
+            ) {
+                let _ = tableName
+                self.init(
+                    userType: userType,
+                    flags: flags,
+                    dataType: dataType,
+                    length: length,
+                    precision: precision ?? 0,
+                    scale: scale ?? 0,
+                    collation: collation,
+                    colName: colName
                 )
             }
-
-            /// Returns the display name for the data type
-            public var displayName: String {
-                return String(describing: self.dataType)
-            }
-
-            /// Returns the normalized length for the column
-            public var normalizedLength: Int? {
-                return self.length
-            }
+        }
+        
+        public init(colData: [ColumnData]) {
+            self.colData = colData
         }
 
-        /// Enhanced type information for column metadata
-        public struct TypeInfo: Sendable {
-            public let name: String
-            public let maxColumnLength: Int?
-
-            public init(name: String, maxColumnLength: Int? = nil) {
-                self.name = name
-                self.maxColumnLength = maxColumnLength
-            }
+        public init(count: Int, colData: [ColumnData]) {
+            let _ = count
+            self.init(colData: colData)
         }
     }
 
     public struct RowToken: TDSToken {
         public var type: TokenType = .row
+        public var colMetadata: [ColMetadataToken.ColumnData]
         public var colData: [ColumnData]
 
         public struct ColumnData: Sendable {
             public var textPointer: [Byte]
             public var timestamp: [Byte]
             public var data: ByteBuffer?
+            
+            public init(textPointer: [Byte] = [], timestamp: [Byte] = [], data: ByteBuffer?) {
+                self.textPointer = textPointer
+                self.timestamp = timestamp
+                self.data = data
+            }
+        }
+        
+        public init(colMetadata: [ColMetadataToken.ColumnData], colData: [ColumnData]) {
+            self.colMetadata = colMetadata
+            self.colData = colData
         }
     }
 
     public struct NbcRowToken: TDSToken {
         public var type: TokenType = .nbcRow
         public var nullBitmap: [Byte]
+        public var colMetadata: [ColMetadataToken.ColumnData]
         public var colData: [RowToken.ColumnData]
+        
+        public init(nullBitmap: [Byte] = [], colMetadata: [ColMetadataToken.ColumnData], colData: [RowToken.ColumnData]) {
+            self.nullBitmap = nullBitmap
+            self.colMetadata = colMetadata
+            self.colData = colData
+        }
     }
 
-    public struct TVPRowToken: TDSToken {
+    public struct TvpRowToken: TDSToken {
         public var type: TokenType = .tvpRow
-        public var nullBitmap: [Byte]
+        public var colMetadata: [ColMetadataToken.ColumnData]
         public var colData: [RowToken.ColumnData]
+
+        public init(
+            colMetadata: [ColMetadataToken.ColumnData] = [],
+            colData: [RowToken.ColumnData] = []
+        ) {
+            self.colMetadata = colMetadata
+            self.colData = colData
+        }
     }
 
-    public struct OrderToken: TDSToken {
-        public var type: TokenType = .order
-        var columnOrdinals: [UInt16]
+    public typealias TVPRowToken = TvpRowToken
+
+    public struct EnvchangeToken<T: Sendable>: TDSToken {
+        public var type: TokenType = .envchange
+        public var envType: UInt8
+        public var newValue: T
+        public var oldValue: T
+        
+        public init(envType: UInt8, newValue: T, oldValue: T) {
+            self.envType = envType
+            self.newValue = newValue
+            self.oldValue = oldValue
+        }
+
+        public var envchangeType: EnvChangeType? {
+            EnvChangeType(rawValue: envType)
+        }
     }
 
-    public struct ReturnStatusToken: TDSToken {
-        public var type: TokenType = .returnStatus
-        public var value: Int32
+    public struct ErrorInfoToken: TDSToken {
+        public var type: TokenType
+        public var number: Int32
+        public var state: UInt8
+        public var classValue: UInt8
+        public var messageText: String
+        public var serverName: String
+        public var procName: String
+        public var lineNumber: Int32
+        
+        public init(type: TokenType, number: Int32, state: UInt8, classValue: UInt8, messageText: String, serverName: String, procName: String, lineNumber: Int32) {
+            self.type = type
+            self.number = number
+            self.state = state
+            self.classValue = classValue
+            self.messageText = messageText
+            self.serverName = serverName
+            self.procName = procName
+            self.lineNumber = lineNumber
+        }
+
+        public var procedureName: String {
+            procName
+        }
     }
 
-    public struct TabNameToken: TDSToken {
-        public var type: TokenType = .tabName
-        public var data: [Byte]
-    }
+    public struct LoginAckToken: TDSToken {
+        public var type: TokenType = .loginAck
+        public var interface: UInt8
+        public var tdsVersion: UInt32
+        public var progName: String
+        public var version: UInt32
+        
+        public init(interface: UInt8, tdsVersion: UInt32, progName: String, version: UInt32) {
+            self.interface = interface
+            self.tdsVersion = tdsVersion
+            self.progName = progName
+            self.version = version
+        }
 
-    public struct ColInfoToken: TDSToken {
-        public var type: TokenType = .colInfo
-        public var data: [Byte]
-    }
+        public var majorVer: UInt8 {
+            UInt8((version >> 24) & 0xFF)
+        }
 
-    public struct OffsetToken: TDSToken {
-        public var type: TokenType = .offset
-        public var data: [Byte]
+        public var minorVer: UInt8 {
+            UInt8((version >> 16) & 0xFF)
+        }
     }
 
     public struct FeatureExtAckToken: TDSToken {
         public var type: TokenType = .featureExtAck
         public var payload: ByteBuffer
+        public init(payload: ByteBuffer) { self.payload = payload }
     }
 
     public struct FedAuthInfoToken: TDSToken {
         public var type: TokenType = .fedAuthInfo
         public var payload: ByteBuffer
+        public init(payload: ByteBuffer) { self.payload = payload }
     }
 
     public struct SessionStateToken: TDSToken {
         public var type: TokenType = .sessionState
         public var payload: ByteBuffer
+        public init(payload: ByteBuffer) { self.payload = payload }
+    }
+
+    public struct TabNameToken: TDSToken {
+        public var type: TokenType = .tabName
+        public var data: [Byte]
+        public init(data: [Byte]) { self.data = data }
+    }
+
+    public struct ColInfoToken: TDSToken {
+        public var type: TokenType = .colInfo
+        public var data: [Byte]
+        public init(data: [Byte]) { self.data = data }
+    }
+
+    public struct OffsetToken: TDSToken {
+        public var type: TokenType = .offset
+        public var data: [Byte]
+        public init(data: [Byte]) { self.data = data }
     }
 
     public struct DataClassificationToken: TDSToken {
         public var type: TokenType = .dataClassification
         public var payload: ByteBuffer
+        public init(payload: ByteBuffer) { self.payload = payload }
     }
+
     public struct SQLResultColumnSourcesToken: TDSToken {
         public var type: TokenType = .sqlResultColumnSources
         public var payload: ByteBuffer
+        public init(payload: ByteBuffer) { self.payload = payload }
     }
 
     public struct Unknown0x61Token: TDSToken {
         public var type: TokenType = .unknown0x61
         public var payload: ByteBuffer
+        public init(payload: ByteBuffer) { self.payload = payload }
     }
+
     public struct Unknown0x74Token: TDSToken {
         public var type: TokenType = .unknown0x74
         public var payload: ByteBuffer
+        public init(payload: ByteBuffer) { self.payload = payload }
     }
+
     public struct Unknown0xC1Token: TDSToken {
         public var type: TokenType = .unknown0xc1
         public var payload: ByteBuffer
+        public init(payload: ByteBuffer) { self.payload = payload }
+    }
+
+    public struct ReturnStatusToken: TDSToken {
+        public var type: TokenType = .returnStatus
+        public var value: Int32
+        public init(value: Int32) { self.value = value }
     }
 
     public struct ReturnValueToken: TDSToken {
         public var type: TokenType = .returnValue
-        public var paramOrdinal: UInt16
+        public var ordinal: UInt16
         public var name: String
-        public var status: Byte
-        public var userType: ULong
-        public var flags: UShort
-        public var metadata: TypeMetadata
+        public var status: UInt8
+        public var userType: UInt32
+        public var flags: UInt16
+        public var metadata: TDSTokens.ColMetadataToken.ColumnData
         public var value: ByteBuffer?
-    }
+        
+        public init(ordinal: UInt16, name: String, status: UInt8, userType: UInt32, flags: UInt16, metadata: TDSTokens.ColMetadataToken.ColumnData, value: ByteBuffer?) {
+            self.ordinal = ordinal
+            self.name = name
+            self.status = status
+            self.userType = userType
+            self.flags = flags
+            self.metadata = metadata
+            self.value = value
+        }
 
-    public struct SSPIToken: TDSToken {
-        public var type: TokenType = .sspi
-        var payload: ByteBuffer
+        public var paramOrdinal: UInt16 {
+            ordinal
+        }
     }
 
     public struct ColumnStatusToken: TDSToken {
         public var type: TokenType = .columnStatus
-        public var status: UShort
+        public var status: UInt16
         public var data: [Byte]
+        public init(status: UInt16, data: [Byte]) { self.status = status; self.data = data }
     }
 
-    /// RESULTSET token - Microsoft JDBC compatible result set metadata token
-    public struct ResultSetToken: TDSToken {
-        public var type: TokenType = .resultSet
-        public var data: ByteBuffer
-    }
-
-    public struct DoneToken: TDSToken {
-        public var type: TokenType = .done
-        public var status: UShort
-        public var curCmd: UShort
-        public var doneRowCount: ULongLong
-    }
-
-    public struct ErrorInfoToken: TDSToken {
-        public var type: TokenType = .error
-        public var number: Int
-        public var state: Byte
-        public var classValue: Byte
-        public var messageText: String
-        public var serverName: String
-        public var procedureName: String
-        public var lineNumber: Int
-    }
-
-    public struct EnvchangeToken<T>: TDSToken {
-        public var type: TokenType = .envchange
-        public var envchangeType: EnvchangeType
-        public var newValue: T
-        public var oldValue: T
-    }
-
-    public struct RoutingEnvchangeToken: TDSToken {
-
-        struct RoutingData {
-            var port: Int
-            var alternateServer: String
+    public struct OrderToken: TDSToken {
+        public var type: TokenType = .order
+        public var columns: [UInt16]
+        public init(columns: [UInt16]) { self.columns = columns }
+        
+        static func parse(from buffer: inout ByteBuffer) throws -> OrderToken {
+            guard let length: UInt16 = buffer.readInteger(endianness: .little) else {
+                throw TDSError.needMoreData
+            }
+            let count = Int(length) / 2
+            var cols: [UInt16] = []
+            for _ in 0..<count {
+                guard let col: UInt16 = buffer.readInteger(endianness: .little) else {
+                    throw TDSError.needMoreData
+                }
+                cols.append(col)
+            }
+            return OrderToken(columns: cols)
         }
-
-        public var type: TokenType = .envchange
-        var envchangeType: EnvchangeType
-        var newValue: RoutingData
-        var oldValue: [Byte]
-    }
-
-    public enum EnvchangeType: Byte {
-        case database = 1
-        case language = 2
-        case characterSet = 3 // TDS 7.0 or ealier
-        case packetSize = 4
-        case unicodeSortingLocalId = 5 // TDS 7.0 or ealier
-        case unicodeSortingFlags = 6
-        case sqlCollation = 7
-        case beingTransaction = 8
-        case commitTransaction = 9 // TDS 7.0 or ealier
-        case rollbackTransaction = 10
-        case enlistDTCTransaction = 11
-        case defectTransaction = 12
-        case realTimeLogShipping = 13
-        case promoteTransaction = 15
-        case transactionManagerAddress = 16
-        case transactionEnded = 17
-        case resetConnectionAck = 18
-        case userInstanceStarted = 19
-        case routingInfo = 20
     }
 }

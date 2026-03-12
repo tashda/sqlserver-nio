@@ -4,17 +4,15 @@ import XCTest
 import NIO
 import Logging
 
-final class SQLServerRoutineParameterMatrixTests: XCTestCase {
+final class SQLServerRoutineParameterMatrixTests: XCTestCase, @unchecked Sendable {
     var group: EventLoopGroup!
     var client: SQLServerClient!
-    private var skipDueToEnv = false
-
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
         TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
         group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).get()
-        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1").get() } } catch { skipDueToEnv = true }
+        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1").get() } } catch { throw error }
     }
 
     override func tearDown() async throws {
@@ -48,7 +46,6 @@ final class SQLServerRoutineParameterMatrixTests: XCTestCase {
 
     @available(macOS 12.0, *)
     func testProcedureParameterMatrix() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         try await withTemporaryDatabase(client: self.client, prefix: "pmx") { db in
             try await withDbClient(for: db, using: self.group) { dbClient in
                 let routineClient = SQLServerRoutineClient(client: dbClient)
@@ -119,10 +116,22 @@ final class SQLServerRoutineParameterMatrixTests: XCTestCase {
 
                 // TVP case: READONLY parameter must be surfaced as readOnly
                 let tvpProc = "proc_with_tvp_\(uniqueId)"
-                // TODO: This needs a future SQLServerRoutineClient API that supports table-valued parameters
-                _ = try await executeInDb(client: self.client, database: db, """
-                    CREATE PROCEDURE [dbo].[\(tvpProc)] @T dbo.ParamTableType_\(uniqueId) READONLY AS BEGIN SELECT COUNT(*) FROM @T; END
-                """)
+                try await routineClient.createStoredProcedure(
+                    name: tvpProc,
+                    parameters: [
+                        ProcedureParameter(
+                            name: "T",
+                            dataType: .userDefinedTable(name: "ParamTableType_\(uniqueId)", schema: "dbo"),
+                            direction: .input
+                        )
+                    ],
+                    body: """
+                    BEGIN
+                        SET NOCOUNT ON;
+                        SELECT COUNT(*) FROM @T;
+                    END
+                    """
+                )
                 let tvpParams = try await withDbConnection(client: dbClient, database: db) { conn in
                     try await conn.listParameters(schema: "dbo", object: tvpProc).get()
                 }
@@ -216,7 +225,6 @@ final class SQLServerRoutineParameterMatrixTests: XCTestCase {
 
     @available(macOS 12.0, *)
     func testFunctionParameterMatrix() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         try await withTemporaryDatabase(client: self.client, prefix: "fmx") { db in
             try await withDbClient(for: db, using: self.group) { dbClient in
                 let routineClient = SQLServerRoutineClient(client: dbClient)

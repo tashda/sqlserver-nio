@@ -4,23 +4,32 @@ import XCTest
 import NIO
 import Logging
 
-final class SQLServerTransactionClientTests: XCTestCase {
+final class SQLServerTransactionClientTests: XCTestCase, @unchecked Sendable {
+    private static let sharedGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+    @MainActor
+    private static var sharedClient: SQLServerClient?
     var group: EventLoopGroup!
     var client: SQLServerClient!
     var dbClient: SQLServerClient!
     private var testDatabase: String!
-    private var skipDueToEnv = false
-
     override func setUp() async throws {
         continueAfterFailure = false
         TestEnvironmentManager.loadEnvironmentVariables()
         _ = isLoggingConfigured
-        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        self.client = try await SQLServerClient.connect(
-            configuration: makeSQLServerClientConfiguration(),
-            eventLoopGroupProvider: .shared(group)
-        ).get()
-        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1").get() } } catch { skipDueToEnv = true; return }
+        self.group = Self.sharedGroup
+        if let sharedClient = await MainActor.run(body: { Self.sharedClient }) {
+            self.client = sharedClient
+        } else {
+            let sharedClient = try await SQLServerClient.connect(
+                configuration: makeSQLServerClientConfiguration(),
+                eventLoopGroupProvider: .shared(group)
+            ).get()
+            await MainActor.run {
+                Self.sharedClient = sharedClient
+            }
+            self.client = sharedClient
+        }
+        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1").get() } } catch { throw error }
         testDatabase = try await createTemporaryDatabase(client: client, prefix: "txc")
         dbClient = try await makeClient(forDatabase: testDatabase, using: group, maxConnections: 1)
     }
@@ -28,14 +37,11 @@ final class SQLServerTransactionClientTests: XCTestCase {
     override func tearDown() async throws {
         try? await dbClient?.shutdownGracefully().get()
         if let db = testDatabase { try? await dropTemporaryDatabase(client: client, name: db) }
-        try await client?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
         dbClient = nil; testDatabase = nil; group = nil
     }
 
     @available(macOS 12.0, *)
     func testBasicTransactionOperations() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let txClient = SQLServerTransactionClient(client: dbClient)
         let adminClient = SQLServerAdministrationClient(client: dbClient)
 
@@ -47,14 +53,18 @@ final class SQLServerTransactionClientTests: XCTestCase {
         try await adminClient.createTable(name: tableName, columns: columns)
 
         try await txClient.beginTransaction()
-        _ = try await dbClient.execute("INSERT INTO [\(tableName)] (id, value) VALUES (1, N'Test')").get()
+        try await dbClient.withConnection { connection in
+            try await connection.insertRow(into: tableName, values: ["id": .int(1), "value": .nString("Test")])
+        }
         try await txClient.commitTransaction()
 
         let result = try await dbClient.query("SELECT COUNT(*) as count FROM [\(tableName)]").get()
         XCTAssertEqual(result.first?.column("count")?.int, 1)
 
         try await txClient.beginTransaction()
-        _ = try await dbClient.execute("INSERT INTO [\(tableName)] (id, value) VALUES (2, N'Rollback')").get()
+        try await dbClient.withConnection { connection in
+            try await connection.insertRow(into: tableName, values: ["id": .int(2), "value": .nString("Rollback")])
+        }
         try await txClient.rollbackTransaction()
 
         let result2 = try await dbClient.query("SELECT COUNT(*) as count FROM [\(tableName)]").get()
@@ -63,7 +73,6 @@ final class SQLServerTransactionClientTests: XCTestCase {
 
     @available(macOS 12.0, *)
     func testSavepointOperations() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let txClient = SQLServerTransactionClient(client: dbClient)
         let adminClient = SQLServerAdministrationClient(client: dbClient)
 
@@ -75,11 +84,15 @@ final class SQLServerTransactionClientTests: XCTestCase {
         try await adminClient.createTable(name: tableName, columns: columns)
 
         try await txClient.beginTransaction()
-        _ = try await dbClient.execute("INSERT INTO [\(tableName)] (id, value) VALUES (1, N'Initial')").get()
+        try await dbClient.withConnection { connection in
+            try await connection.insertRow(into: tableName, values: ["id": .int(1), "value": .nString("Initial")])
+        }
 
         try await txClient.createSavepoint(name: "sp1")
         XCTAssertTrue(txClient.isSavepointActive(name: "sp1"))
-        _ = try await dbClient.execute("INSERT INTO [\(tableName)] (id, value) VALUES (2, N'After SP1')").get()
+        try await dbClient.withConnection { connection in
+            try await connection.insertRow(into: tableName, values: ["id": .int(2), "value": .nString("After SP1")])
+        }
 
         let result1 = try await dbClient.query("SELECT COUNT(*) as count FROM [\(tableName)]").get()
         XCTAssertEqual(result1.first?.column("count")?.int, 2)
@@ -90,7 +103,9 @@ final class SQLServerTransactionClientTests: XCTestCase {
         let result2 = try await dbClient.query("SELECT COUNT(*) as count FROM [\(tableName)]").get()
         XCTAssertEqual(result2.first?.column("count")?.int, 1)
 
-        _ = try await dbClient.execute("INSERT INTO [\(tableName)] (id, value) VALUES (3, N'After Rollback')").get()
+        try await dbClient.withConnection { connection in
+            try await connection.insertRow(into: tableName, values: ["id": .int(3), "value": .nString("After Rollback")])
+        }
         try await txClient.commitTransaction()
 
         let result3 = try await dbClient.query("SELECT COUNT(*) as count FROM [\(tableName)]").get()
@@ -99,7 +114,6 @@ final class SQLServerTransactionClientTests: XCTestCase {
 
     @available(macOS 12.0, *)
     func testMultipleSavepoints() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let txClient = SQLServerTransactionClient(client: dbClient)
         let adminClient = SQLServerAdministrationClient(client: dbClient)
 
@@ -111,13 +125,19 @@ final class SQLServerTransactionClientTests: XCTestCase {
         try await adminClient.createTable(name: tableName, columns: columns)
 
         try await txClient.beginTransaction()
-        _ = try await dbClient.execute("INSERT INTO [\(tableName)] (id, step) VALUES (1, N'Step 1')").get()
+        try await dbClient.withConnection { connection in
+            try await connection.insertRow(into: tableName, values: ["id": .int(1), "step": .nString("Step 1")])
+        }
 
         try await txClient.createSavepoint(name: "sp1")
-        _ = try await dbClient.execute("INSERT INTO [\(tableName)] (id, step) VALUES (2, N'Step 2')").get()
+        try await dbClient.withConnection { connection in
+            try await connection.insertRow(into: tableName, values: ["id": .int(2), "step": .nString("Step 2")])
+        }
 
         try await txClient.createSavepoint(name: "sp2")
-        _ = try await dbClient.execute("INSERT INTO [\(tableName)] (id, step) VALUES (3, N'Step 3')").get()
+        try await dbClient.withConnection { connection in
+            try await connection.insertRow(into: tableName, values: ["id": .int(3), "step": .nString("Step 3")])
+        }
 
         let result1 = try await dbClient.query("SELECT COUNT(*) as count FROM [\(tableName)]").get()
         XCTAssertEqual(result1.first?.column("count")?.int, 3)
@@ -132,7 +152,6 @@ final class SQLServerTransactionClientTests: XCTestCase {
 
     @available(macOS 12.0, *)
     func testExecuteInTransaction() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let txClient = SQLServerTransactionClient(client: dbClient)
         let adminClient = SQLServerAdministrationClient(client: dbClient)
 
@@ -144,8 +163,10 @@ final class SQLServerTransactionClientTests: XCTestCase {
         try await adminClient.createTable(name: tableName, columns: columns)
 
         let result = try await txClient.executeInTransaction {
-            _ = try await self.dbClient.execute("INSERT INTO [\(tableName)] (id, value) VALUES (1, N'Success')").get()
-            _ = try await self.dbClient.execute("INSERT INTO [\(tableName)] (id, value) VALUES (2, N'Also Success')").get()
+            try await self.dbClient.withConnection { connection in
+                try await connection.insertRow(into: tableName, values: ["id": .int(1), "value": .nString("Success")])
+                try await connection.insertRow(into: tableName, values: ["id": .int(2), "value": .nString("Also Success")])
+            }
             return "Transaction completed successfully"
         }
         XCTAssertEqual(result, "Transaction completed successfully")
@@ -156,8 +177,10 @@ final class SQLServerTransactionClientTests: XCTestCase {
         var errorThrown = false
         do {
             _ = try await txClient.executeInTransaction {
-                _ = try await self.dbClient.execute("INSERT INTO [\(tableName)] (id, value) VALUES (3, N'Before Error')").get()
-                _ = try await self.dbClient.execute("INSERT INTO [\(tableName)] (id, value) VALUES (999, N'Should Not Exist')").get()
+                try await self.dbClient.withConnection { connection in
+                    try await connection.insertRow(into: tableName, values: ["id": .int(3), "value": .nString("Before Error")])
+                    try await connection.insertRow(into: tableName, values: ["id": .int(999), "value": .nString("Should Not Exist")])
+                }
                 _ = try await self.dbClient.execute("INVALID SQL STATEMENT").get()
                 return "Should not reach here"
             }
@@ -172,7 +195,6 @@ final class SQLServerTransactionClientTests: XCTestCase {
 
     @available(macOS 12.0, *)
     func testExecuteInSavepoint() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let txClient = SQLServerTransactionClient(client: dbClient)
         let adminClient = SQLServerAdministrationClient(client: dbClient)
 
@@ -184,10 +206,14 @@ final class SQLServerTransactionClientTests: XCTestCase {
         try await adminClient.createTable(name: tableName, columns: columns)
 
         try await txClient.beginTransaction()
-        _ = try await dbClient.execute("INSERT INTO [\(tableName)] (id, operation) VALUES (1, N'Initial')").get()
+        try await dbClient.withConnection { connection in
+            try await connection.insertRow(into: tableName, values: ["id": .int(1), "operation": .nString("Initial")])
+        }
 
         let result1 = try await txClient.executeInSavepoint(named: "sp1") {
-            _ = try await self.dbClient.execute("INSERT INTO [\(tableName)] (id, operation) VALUES (2, N'Savepoint 1')").get()
+            try await self.dbClient.withConnection { connection in
+                try await connection.insertRow(into: tableName, values: ["id": .int(2), "operation": .nString("Savepoint 1")])
+            }
             return "Savepoint 1 completed"
         }
         XCTAssertEqual(result1, "Savepoint 1 completed")
@@ -195,7 +221,9 @@ final class SQLServerTransactionClientTests: XCTestCase {
         var errorThrown = false
         do {
             _ = try await txClient.executeInSavepoint(named: "sp2") {
-                _ = try await self.dbClient.execute("INSERT INTO [\(tableName)] (id, operation) VALUES (3, N'Before Error')").get()
+                try await self.dbClient.withConnection { connection in
+                    try await connection.insertRow(into: tableName, values: ["id": .int(3), "operation": .nString("Before Error")])
+                }
                 _ = try await self.dbClient.execute("INVALID SQL").get()
                 return "Should not reach here"
             }
@@ -212,7 +240,6 @@ final class SQLServerTransactionClientTests: XCTestCase {
 
     @available(macOS 12.0, *)
     func testIsolationLevel() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let txClient = SQLServerTransactionClient(client: dbClient)
 
         try await txClient.beginTransaction()
@@ -234,7 +261,6 @@ final class SQLServerTransactionClientTests: XCTestCase {
 
     @available(macOS 12.0, *)
     func testGetTransactionInfo() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let txClient = SQLServerTransactionClient(client: dbClient)
 
         let infoBefore = try await txClient.getTransactionInfo().get()

@@ -1,13 +1,16 @@
-
 import NIOCore
 
 public class TDSStreamParser {
     public var buffer: ByteBuffer
     public var position: Int
 
-    public init() {
-        self.buffer = ByteBufferAllocator().buffer(capacity: 0)
-        self.position = 0
+    public init(buffer: ByteBuffer = .init()) {
+        self.buffer = buffer
+        self.position = buffer.readerIndex
+    }
+
+    public var isAtEnd: Bool {
+        position >= buffer.writerIndex
     }
 
     public func waitForChunk() {
@@ -15,7 +18,7 @@ public class TDSStreamParser {
     }
 
     public func readUInt8() -> UInt8? {
-        guard buffer.readableBytes >= 1 else {
+        guard position + 1 <= buffer.writerIndex else {
             return nil
         }
         let value = buffer.getInteger(at: position, as: UInt8.self)
@@ -24,14 +27,14 @@ public class TDSStreamParser {
     }
 
     public func peekUInt8() -> UInt8? {
-        guard buffer.readableBytes >= 1 else {
+        guard position + 1 <= buffer.writerIndex else {
             return nil
         }
         return buffer.getInteger(at: position, as: UInt8.self)
     }
 
     public func readUInt16LE() -> UInt16? {
-        guard buffer.readableBytes >= 2 else {
+        guard position + 2 <= buffer.writerIndex else {
             return nil
         }
         let value = buffer.getInteger(at: position, endianness: .little, as: UInt16.self)
@@ -44,7 +47,7 @@ public class TDSStreamParser {
             return nil
         }
 
-        guard buffer.readableBytes >= Int(length) * 2 else {
+        guard position + Int(length) * 2 <= buffer.writerIndex else {
             return nil
         }
 
@@ -64,7 +67,7 @@ public class TDSStreamParser {
             return nil
         }
 
-        guard buffer.readableBytes >= Int(length) * 2 else {
+        guard position + Int(length) * 2 <= buffer.writerIndex else {
             return nil
         }
 
@@ -80,7 +83,7 @@ public class TDSStreamParser {
     }
 
     public func readUInt32LE() -> UInt32? {
-        guard buffer.readableBytes >= 4 else {
+        guard position + 4 <= buffer.writerIndex else {
             return nil
         }
         let value = buffer.getInteger(at: position, endianness: .little, as: UInt32.self)
@@ -89,7 +92,7 @@ public class TDSStreamParser {
     }
 
     public func readUInt64LE() -> UInt64? {
-        guard buffer.readableBytes >= 8 else {
+        guard position + 8 <= buffer.writerIndex else {
             return nil
         }
         let value = buffer.getInteger(at: position, endianness: .little, as: UInt64.self)
@@ -98,7 +101,7 @@ public class TDSStreamParser {
     }
 
     public func readInt32LE() -> Int32? {
-        guard buffer.readableBytes >= 4 else {
+        guard position + 4 <= buffer.writerIndex else {
             return nil
         }
         let value = buffer.getInteger(at: position, endianness: .little, as: Int32.self)
@@ -107,7 +110,7 @@ public class TDSStreamParser {
     }
 
     public func readFloatLE() -> Float? {
-        guard buffer.readableBytes >= 4 else {
+        guard position + 4 <= buffer.writerIndex else {
             return nil
         }
         let value = buffer.getFloat(at: position, endianness: .little)
@@ -116,7 +119,7 @@ public class TDSStreamParser {
     }
 
     public func readDoubleLE() -> Double? {
-        guard buffer.readableBytes >= 8 else {
+        guard position + 8 <= buffer.writerIndex else {
             return nil
         }
         let value = buffer.getDouble(at: position, endianness: .little)
@@ -125,7 +128,7 @@ public class TDSStreamParser {
     }
 
     public func readBytes(count: Int) -> [UInt8]? {
-        guard buffer.readableBytes >= count else {
+        guard position + count <= buffer.writerIndex else {
             return nil
         }
         let value = buffer.getBytes(at: position, length: count)

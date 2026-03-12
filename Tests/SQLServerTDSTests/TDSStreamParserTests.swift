@@ -2,7 +2,7 @@
 import NIOCore
 import XCTest
 
-final class TDSStreamParserTests: XCTestCase {
+final class TDSStreamParserTests: XCTestCase, @unchecked Sendable {
     func testReadUInt8DoesNotAdvanceWhenDataMissing() {
         let parser = TDSStreamParser()
         XCTAssertEqual(parser.position, 0)

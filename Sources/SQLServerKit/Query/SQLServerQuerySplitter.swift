@@ -3,7 +3,7 @@ import Foundation
 /// SQL Server query splitter for handling GO delimiters and batch separation
 public struct SQLServerQuerySplitter {
     
-    public struct SplitterOptions {
+    public struct SplitterOptions: Sendable {
         public let allowGoDelimiter: Bool
         public let adaptiveGoSplit: Bool
         public let allowSemicolon: Bool
@@ -41,7 +41,7 @@ public struct SQLServerQuerySplitter {
         )
     }
     
-    public struct SplitResult {
+    public struct SplitResult: Sendable {
         public let text: String
         public let startPosition: Int
         public let endPosition: Int

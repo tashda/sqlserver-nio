@@ -1,4 +1,3 @@
-import Foundation
 import XCTest
 import Logging
 import NIO
@@ -6,14 +5,12 @@ import NIO
 import SQLServerKitTesting
 import Foundation
 
-final class SQLServerDataTypeRoundTripTests: XCTestCase {
+final class SQLServerDataTypeRoundTripTests: XCTestCase, @unchecked Sendable {
     var group: EventLoopGroup!
     var client: SQLServerClient!
 
     private var adminClient: SQLServerAdministrationClient!
     private var tablesToDrop: [String] = []
-    private var skipDueToEnv = false
-
     override func setUp() async throws {
         continueAfterFailure = false
 
@@ -29,12 +26,12 @@ final class SQLServerDataTypeRoundTripTests: XCTestCase {
 
         adminClient = SQLServerAdministrationClient(client: client)
         // Quick probe; if the server is unstable right now, skip long integration paths to avoid timeouts.
-        do { _ = try await client.query("SELECT 1").get() } catch { skipDueToEnv = true }
+        do { _ = try await client.query("SELECT 1").get() } catch { throw error }
     }
   
     override func tearDown() async throws {
         for table in tablesToDrop {
-            try? await adminClient.dropTable(name: table).get()
+            try? await adminClient.dropTable(name: table)
         }
         tablesToDrop.removeAll()
         adminClient = nil
@@ -66,8 +63,20 @@ final class SQLServerDataTypeRoundTripTests: XCTestCase {
                 ]
                 try await dbAdminClient.createTable(name: tableName, columns: columns)
 
-                // Insert data using SQLServerKit APIs
-                _ = try await dbClient.query("INSERT INTO [dbo].[\(tableName)] (bit_value, tiny_value, small_value, int_value, big_value, decimal_value, numeric_value, money_value, float_value, real_value) VALUES (1, 255, -120, 214748364, 922337203685, 98765.4321, 123.456, 88.88, 3.1415926535, 1.25)").get()
+                try await dbClient.withConnection { connection in
+                    try await connection.insertRow(into: tableName, values: [
+                        "bit_value": .bool(true),
+                        "tiny_value": .int(255),
+                        "small_value": .int(-120),
+                        "int_value": .int(214748364),
+                        "big_value": .int64(922_337_203_685),
+                        "decimal_value": .decimal("98765.4321"),
+                        "numeric_value": .decimal("123.456"),
+                        "money_value": .decimal("88.88"),
+                        "float_value": .double(3.1415926535),
+                        "real_value": .double(1.25)
+                    ])
+                }
 
                 // Query data back using SQLServerKit APIs
                 let rows = try await dbClient.query("SELECT * FROM [dbo].[\(tableName)]").get()
@@ -171,22 +180,6 @@ final class SQLServerDataTypeRoundTripTests: XCTestCase {
     }
     
     func testCharacterBinaryAndVariantRoundTrips() async throws {
-        if ProcessInfo.processInfo.environment["TDS_SKIP_VARIANT_ROUNDTRIP"] == "1" {
-            throw XCTSkip("Skipping sql_variant character roundtrip on this environment")
-        }
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup probe") }
-        // Quick per-test probe to avoid spending a minute on timeouts if the server is unstable.
-        do {
-            let originalTimeout = env("TDS_TEST_OPERATION_TIMEOUT_SECONDS")
-            setenv("TDS_TEST_OPERATION_TIMEOUT_SECONDS", "5", 1)
-            let probe = try await SQLServerConnection.connect(configuration: makeSQLServerConnectionConfiguration(), on: client.eventLoopGroup.next()).get()
-            _ = try await probe.query("SELECT 1").get()
-            try? await probe.close().get()
-            if let orig = originalTimeout { setenv("TDS_TEST_OPERATION_TIMEOUT_SECONDS", orig, 1) } else { unsetenv("TDS_TEST_OPERATION_TIMEOUT_SECONDS") }
-        } catch {
-            setenv("TDS_TEST_OPERATION_TIMEOUT_SECONDS", "60", 1)
-            throw XCTSkip("Skipping due to transient connectivity issues: \(error)")
-        }
         // Use a pooled client connection and select typed literals to exercise decode paths without DDL
         // Temporarily disable the test-timeout wrapper to avoid interfering with variant decoding
         let origTimeout = env("TDS_TEST_OPERATION_TIMEOUT_SECONDS")

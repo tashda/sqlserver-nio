@@ -5,67 +5,15 @@ import SQLServerKitTesting
 import XCTest
 
 /// Minimal tests to verify enhanced Agent APIs work correctly
-final class MinimalAgentTests: XCTestCase {
-    var group: EventLoopGroup!
-    var client: SQLServerClient!
-
-    let TIMEOUT: TimeInterval = Double(env("TDS_TEST_OPERATION_TIMEOUT_SECONDS") ?? "30") ?? 30
-
-    override func setUp() async throws {
-        guard envFlagEnabled("TDS_ENABLE_AGENT_TESTS") else {
-            throw XCTSkip("Skipping agent tests. Set TDS_ENABLE_AGENT_TESTS=1 to enable.")
-        }
-        XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables()
-
-        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        let config = makeSQLServerClientConfiguration()
-        self.client = try await SQLServerClient.connect(configuration: config, eventLoopGroupProvider: .shared(group)).get()
-
-        // Ensure Agent XPs are enabled for these tests
-        let metadata = try await withTimeout(TIMEOUT) {
-            try await self.client.withConnection { connection in
-                return SQLServerMetadataClient(connection: connection)
-            }
-        }
-
-        let agentStatus = try await withTimeout(TIMEOUT) {
-            try await metadata.fetchAgentStatus().get()
-        }
-
-        if agentStatus.isSqlAgentRunning && !agentStatus.isSqlAgentEnabled {
-            _ = try await client.query("EXEC sp_configure 'show advanced options', 1; RECONFIGURE;").get()
-            _ = try await client.query("EXEC sp_configure 'Agent XPs', 1; RECONFIGURE;").get()
-        }
-    }
-
-    override func tearDown() async throws {
-        do {
-            try await client?.shutdownGracefully().get()
-        } catch {
-            // Silently ignore "Already closed" errors during shutdown - they're expected under stress
-            if error.localizedDescription.contains("Already closed") ||
-               error.localizedDescription.contains("ChannelError error 6") {
-                // Both errors are expected during EventLoop shutdown
-            } else {
-                throw error
-            }
-        }
-
-        try await group?.shutdownGracefully()
-    }
+final class MinimalAgentTests: AgentTestBase, @unchecked Sendable {
 
     func testEnhancedAPIBasicFunctionality() async throws {
-        let agent = try await withTimeout(TIMEOUT) {
-            try await self.client.withConnection { connection in
-                SQLServerAgentClient(connection: connection)
-            }
-        }
+        let agent = SQLServerAgentOperations(client: self.client)
 
         print("🔍 [MinimalAgent] Testing enhanced listJobsDetailed() API...")
 
         // Test the enhanced API
-        let jobs = try await withTimeout(TIMEOUT) {
+        let jobs = try await withTimeout(operationTimeout) {
             try await agent.listJobsDetailed()
         }
 
@@ -100,16 +48,12 @@ final class MinimalAgentTests: XCTestCase {
     }
 
     func testBasicAPIFallback() async throws {
-        let agent = try await withTimeout(TIMEOUT) {
-            try await self.client.withConnection { connection in
-                SQLServerAgentClient(connection: connection)
-            }
-        }
+        let agent = SQLServerAgentOperations(client: self.client)
 
         print("🔍 [MinimalAgent] Testing basic listJobs() API fallback...")
 
         // Test the basic API
-        let jobs = try await withTimeout(TIMEOUT) {
+        let jobs = try await withTimeout(operationTimeout) {
             try await agent.listJobs()
         }
 

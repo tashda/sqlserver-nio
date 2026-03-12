@@ -10,7 +10,7 @@ extension EventLoopFuture {
 extension EventLoopFuture {
     /// Adds a hard timeout to this future, failing with SQLServerError.timeout when elapsed.
     /// This is independent of test-only env wrappers.
-    func withTimeout(on loop: EventLoop, seconds: TimeInterval, reason: String? = nil) -> EventLoopFuture<Value> {
+    func withTimeout(on loop: EventLoop, seconds: TimeInterval, reason: String? = nil) -> EventLoopFuture<Value> where Value: Sendable {
         guard seconds.isFinite, seconds > 0 else { return self }
 
         let promise = loop.makePromise(of: Value.self)

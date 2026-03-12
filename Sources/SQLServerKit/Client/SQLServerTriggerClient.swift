@@ -45,7 +45,7 @@ public struct TriggerInfo: Sendable {
 
 // MARK: - SQLServerTriggerClient
 
-public final class SQLServerTriggerClient {
+public final class SQLServerTriggerClient: @unchecked Sendable {
     private let client: SQLServerClient
     
     public init(client: SQLServerClient) {

@@ -27,7 +27,7 @@ public struct ViewOptions: Sendable {
 
 // MARK: - SQLServerViewClient
 
-public final class SQLServerViewClient {
+public final class SQLServerViewClient: @unchecked Sendable {
     private let client: SQLServerClient
     
     public init(client: SQLServerClient) {
