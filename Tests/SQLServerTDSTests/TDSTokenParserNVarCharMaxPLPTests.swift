@@ -3,13 +3,13 @@ import NIOCore
 @testable import SQLServerTDS
 
 /// Tests for NVARCHAR(MAX) values encoded as PLP (PARTLENTYPE) streams.
-final class TDSTokenParserNVarCharMaxPLPTests: XCTestCase {
+final class TDSTokenOperationsNVarCharMaxPLPTests: XCTestCase, @unchecked Sendable {
     private func makeNVarCharMaxMeta() -> TDSTokens.ColMetadataToken {
         let col = TDSTokens.ColMetadataToken.ColumnData(
             userType: 0,
             flags: 0,
             dataType: .nvarchar,
-            length: Int(UInt16.max), // 0xFFFF => NVARCHAR(MAX) / PARTLENTYPE
+            length: Int32(UInt16.max), // 0xFFFF => NVARCHAR(MAX) / PARTLENTYPE
             collation: [],
             tableName: nil,
             colName: "definition",
@@ -37,7 +37,7 @@ final class TDSTokenParserNVarCharMaxPLPTests: XCTestCase {
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
         parser.colMetadata = makeNVarCharMaxMeta()
 
         let row = try XCTUnwrap(parser.parseRowToken())
@@ -77,7 +77,7 @@ final class TDSTokenParserNVarCharMaxPLPTests: XCTestCase {
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
         parser.colMetadata = makeNVarCharMaxMeta()
 
         let row = try XCTUnwrap(parser.parseRowToken())

@@ -1,36 +1,31 @@
 import XCTest
 import Logging
-import NIO
 @testable import SQLServerKit
 import SQLServerKitTesting
 
-final class SQLServerTableValuedParameterTests: XCTestCase {
-    private var group: EventLoopGroup!
+final class SQLServerTableValuedParameterTests: XCTestCase, @unchecked Sendable {
     private var client: SQLServerClient!
     private var adminClient: SQLServerAdministrationClient!
     private var tablesToDrop: [String] = []
-    
-    override func setUpWithError() throws {
-        try super.setUpWithError()
+
+    override func setUp() async throws {
+        try await super.setUp()
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
-        group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        TestEnvironmentManager.loadEnvironmentVariables()
         let config = makeSQLServerClientConfiguration()
-        client = try SQLServerClient.connect(configuration: config, eventLoopGroupProvider: .shared(group)).wait()
+        client = try await SQLServerClient.connect(configuration: config, numberOfThreads: 1)
         adminClient = SQLServerAdministrationClient(client: client)
     }
-    
-    override func tearDownWithError() throws {
+
+    override func tearDown() async throws {
         for table in tablesToDrop {
-            try? adminClient.dropTable(name: table).wait()
+            try? await adminClient.dropTable(name: table)
         }
         tablesToDrop.removeAll()
-        try client.shutdownGracefully().wait()
-        try group.syncShutdownGracefully()
+        try? await client?.shutdownGracefully()
         client = nil
         adminClient = nil
-        group = nil
-        try super.tearDownWithError()
+        try await super.tearDown()
     }
     
     func testExecuteWithTableValuedParameter() async throws {

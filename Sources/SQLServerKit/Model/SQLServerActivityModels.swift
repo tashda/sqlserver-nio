@@ -6,7 +6,7 @@ public struct SQLServerActivityOptions: Sendable, Equatable {
     public var includeSqlText: Bool
     public var includeQueryPlan: Bool
 
-    public init(includeSqlText: Bool = false, includeQueryPlan: Bool = false) {
+    public init(includeSqlText: Bool = true, includeQueryPlan: Bool = false) {
         self.includeSqlText = includeSqlText
         self.includeQueryPlan = includeQueryPlan
     }
@@ -14,6 +14,7 @@ public struct SQLServerActivityOptions: Sendable, Equatable {
 
 public struct SQLServerActivitySnapshot: Sendable {
     public let capturedAt: Date
+    public let overview: SQLServerActivityOverview?
     public let processes: [SQLServerProcessInfo]
     public let waits: [SQLServerWaitStat]
     public let waitsDelta: [SQLServerWaitStatDelta]?
@@ -23,6 +24,7 @@ public struct SQLServerActivitySnapshot: Sendable {
 
     public init(
         capturedAt: Date = Date(),
+        overview: SQLServerActivityOverview? = nil,
         processes: [SQLServerProcessInfo],
         waits: [SQLServerWaitStat],
         waitsDelta: [SQLServerWaitStatDelta]? = nil,
@@ -31,6 +33,7 @@ public struct SQLServerActivitySnapshot: Sendable {
         expensiveQueries: [SQLServerExpensiveQuery]
     ) {
         self.capturedAt = capturedAt
+        self.overview = overview
         self.processes = processes
         self.waits = waits
         self.waitsDelta = waitsDelta
@@ -40,7 +43,28 @@ public struct SQLServerActivitySnapshot: Sendable {
     }
 }
 
-public struct SQLServerProcessInfo: Sendable {
+public struct SQLServerActivityOverview: Sendable {
+    public let processorTimePercent: Double
+    public let waitingTasksCount: Int
+    public let databaseIOMBPerSec: Double
+    public let batchRequestsPerSec: Double
+
+    public init(
+        processorTimePercent: Double,
+        waitingTasksCount: Int,
+        databaseIOMBPerSec: Double,
+        batchRequestsPerSec: Double
+    ) {
+        self.processorTimePercent = processorTimePercent
+        self.waitingTasksCount = waitingTasksCount
+        self.databaseIOMBPerSec = databaseIOMBPerSec
+        self.batchRequestsPerSec = batchRequestsPerSec
+    }
+}
+
+public struct SQLServerProcessInfo: Sendable, Identifiable {
+    public var id: Int { sessionId }
+    
     public struct Request: Sendable {
         public let status: String?
         public let command: String?
@@ -77,7 +101,10 @@ public struct SQLServerWaitStat: Sendable {
     public let signalWaitTimeMs: Int
 }
 
-public struct SQLServerWaitStatDelta: Sendable {
+public struct SQLServerWaitStatDelta: Sendable, Identifiable {
+    public var id: String { waitType }
+    public var waitEventType: String { waitType } // Added for consistency with Postgres usage in UI
+    
     public let waitType: String
     public let waitingTasksCountDelta: Int
     public let waitTimeMsDelta: Int
@@ -97,7 +124,9 @@ public struct SQLServerFileIOStat: Sendable {
     public let ioStallWriteMs: Int64
 }
 
-public struct SQLServerFileIOStatDelta: Sendable {
+public struct SQLServerFileIOStatDelta: Sendable, Identifiable {
+    public var id: String { "\(databaseId):\(fileId)" }
+    
     public let databaseId: Int
     public let fileId: Int
     public let numReadsDelta: Int
@@ -108,7 +137,9 @@ public struct SQLServerFileIOStatDelta: Sendable {
     public let ioStallWriteMsDelta: Int64
 }
 
-public struct SQLServerExpensiveQuery: Sendable {
+public struct SQLServerExpensiveQuery: Sendable, Identifiable {
+    public var id: String { queryHashHex ?? UUID().uuidString }
+    
     public let queryHashHex: String?
     public let executionCount: Int
     public let totalWorkerTime: Int64
@@ -121,4 +152,3 @@ public struct SQLServerExpensiveQuery: Sendable {
     public let sqlText: String?
     public let planXml: String?
 }
-

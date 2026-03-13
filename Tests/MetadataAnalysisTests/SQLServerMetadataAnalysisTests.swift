@@ -1,5 +1,4 @@
 import XCTest
-import NIO
 import Logging
 @testable import SQLServerKit
 import SQLServerKitTesting
@@ -7,41 +6,32 @@ import SQLServerKitTesting
 /// Comprehensive metadata analysis test to systematically identify failure patterns
 /// This test enumerates all schemas, tables, and views in a database and tests
 /// all metadata operations on each to identify exactly what's working and what's failing
-final class SQLServerMetadataAnalysisTests: XCTestCase {
-    var group: EventLoopGroup!
+final class SQLServerMetadataAnalysisTests: XCTestCase, @unchecked Sendable {
     var client: SQLServerClient!
-    var testDatabase: String = "AdventureWorks2022"
+    var testDatabase: String = "AdventureWorks"
     private let maxSchemasToInspect = Int.max
     private let maxConcurrentObjectChecks = 6
     private let metadataTimeBudget: TimeInterval = 60
 
     override func setUp() async throws {
         TestEnvironmentManager.loadEnvironmentVariables()
-        // TDS_TEST_DB > TDS_DATABASE > AdventureWorks2022 fallback
-        testDatabase = env("TDS_TEST_DB") ?? env("TDS_DATABASE") ?? "AdventureWorks2022"
+        // Prefer the explicitly restored AdventureWorks database when running in Docker.
+        testDatabase = env("TDS_TEST_DB") ?? env("TDS_AW_DATABASE") ?? env("TDS_DATABASE") ?? "AdventureWorks"
 
         let threadCount = max(2, min(ProcessInfo.processInfo.processorCount, 8))
-        group = MultiThreadedEventLoopGroup(numberOfThreads: threadCount)
 
         var configuration = makeSQLServerClientConfiguration()
         configuration.poolConfiguration.maximumConcurrentConnections = max(64, configuration.poolConfiguration.maximumConcurrentConnections)
         configuration.poolConfiguration.minimumIdleConnections = min(16, configuration.poolConfiguration.maximumConcurrentConnections)
 
-        client = try await SQLServerClient.connect(configuration: configuration, eventLoopGroupProvider: .shared(group)).get()
+        client = try await SQLServerClient.connect(configuration: configuration, numberOfThreads: threadCount)
 
         print("🔍 Starting metadata analysis for database: \(testDatabase)")
     }
 
     override func tearDown() async throws {
-        if let client = client {
-            try await client.shutdownGracefully().get()
-            self.client = nil
-        }
-        if let group = group {
-            try? await Task.sleep(nanoseconds: 50_000_000)
-            try await shutdownEventLoopGroup(group)
-            self.group = nil
-        }
+        try? await client?.shutdownGracefully()
+        self.client = nil
     }
 
     /// Main analysis test - systematically tests all metadata operations
@@ -56,7 +46,7 @@ final class SQLServerMetadataAnalysisTests: XCTestCase {
 
         // Step 1: Connect and get all schemas using the public metadata API
         print("\n📋 STEP 1: Enumerating all schemas...")
-        let schemaMetadata = try await client.listSchemas(in: testDatabase).get()
+        let schemaMetadata = try await client.metadata.listSchemas(in: testDatabase)
         let schemaNames = schemaMetadata.map { $0.name }
         print("✅ Found \(schemaNames.count) schemas: \(schemaNames.joined(separator: ", "))")
         analysisResults.totalSchemas = schemaNames.count
@@ -74,7 +64,7 @@ final class SQLServerMetadataAnalysisTests: XCTestCase {
             do {
                 print("   🔁 listTables(schema: \(schemaName)) - start")
                 rawSchemaObjects = try await withTimeout(6) {
-                    try await self.client.listTables(database: self.testDatabase, schema: schemaName).get()
+                    try await self.client.metadata.listTables(database: self.testDatabase, schema: schemaName)
                 }
                 print("   🔁 listTables(schema: \(schemaName)) - returned \(rawSchemaObjects.count) objects")
             } catch {
@@ -128,6 +118,18 @@ final class SQLServerMetadataAnalysisTests: XCTestCase {
 
         // At minimum, we should be able to enumerate schemas without issues
         XCTAssertGreaterThan(analysisResults.totalSchemas, 0, "Should find at least one schema")
+        XCTAssertFalse(analysisResults.tableResults.isEmpty, "Metadata analysis should inspect at least one table")
+
+        let tableFailures = analysisResults.tableResults.filter { !$0.failedOperations.isEmpty }
+        let viewFailures = analysisResults.viewResults.filter { !$0.failedOperations.isEmpty }
+        XCTAssertTrue(
+            tableFailures.isEmpty,
+            "Table metadata analysis found failures: \(summarizeFailures(tableFailures, limit: 10))"
+        )
+        XCTAssertTrue(
+            viewFailures.isEmpty,
+            "View metadata analysis found failures: \(summarizeFailures(viewFailures, limit: 10))"
+        )
     }
 
     /// Test all metadata operations for a specific table
@@ -138,27 +140,27 @@ final class SQLServerMetadataAnalysisTests: XCTestCase {
         let operations: [(String, () async throws -> Void)] = [
             ("listColumns", {
                 try await withTimeout(10) {
-                    _ = try await self.client.listColumns(database: self.testDatabase, schema: schema, table: table).get()
+                    _ = try await self.client.metadata.listColumns(database: self.testDatabase, schema: schema, table: table)
                 }
             }),
             ("listPrimaryKeys", {
                 try await withTimeout(10) {
-                    _ = try await self.client.listPrimaryKeys(database: self.testDatabase, schema: schema, table: table).get()
+                    _ = try await self.client.metadata.listPrimaryKeys(database: self.testDatabase, schema: schema, table: table)
                 }
             }),
             ("listForeignKeys", {
                 try await withTimeout(10) {
-                    _ = try await self.client.listForeignKeys(database: self.testDatabase, schema: schema, table: table).get()
+                    _ = try await self.client.metadata.listForeignKeys(database: self.testDatabase, schema: schema, table: table)
                 }
             }),
             ("listIndexes", {
                 try await withTimeout(10) {
-                    _ = try await self.client.listIndexes(database: self.testDatabase, schema: schema, table: table).get()
+                    _ = try await self.client.metadata.listIndexes(database: self.testDatabase, schema: schema, table: table)
                 }
             }),
             ("listTriggers", {
                 try await withTimeout(10) {
-                    _ = try await self.client.listTriggers(database: self.testDatabase, schema: schema, table: table).get()
+                    _ = try await self.client.metadata.listTriggers(database: self.testDatabase, schema: schema, table: table)
                 }
             })
         ]
@@ -191,17 +193,17 @@ final class SQLServerMetadataAnalysisTests: XCTestCase {
         let operations: [(String, () async throws -> Void)] = [
             ("listColumns", {
                 try await withTimeout(10) {
-                    _ = try await self.client.listColumns(database: self.testDatabase, schema: schema, table: view).get()
+                    _ = try await self.client.metadata.listColumns(database: self.testDatabase, schema: schema, table: view)
                 }
             }),
             ("listIndexes", {
                 try await withTimeout(10) {
-                    _ = try await self.client.listIndexes(database: self.testDatabase, schema: schema, table: view).get()
+                    _ = try await self.client.metadata.listIndexes(database: self.testDatabase, schema: schema, table: view)
                 }
             }),
             ("listTriggers", {
                 try await withTimeout(10) {
-                    _ = try await self.client.listTriggers(database: self.testDatabase, schema: schema, table: view).get()
+                    _ = try await self.client.metadata.listTriggers(database: self.testDatabase, schema: schema, table: view)
                 }
             })
         ]
@@ -338,12 +340,19 @@ final class SQLServerMetadataAnalysisTests: XCTestCase {
         }
 
         // Show failures
-        print("\n❌ FAILURES DETECTED:")
-        var hasFailures = false
+        let hasFailures =
+            results.tableResults.contains { !$0.failedOperations.isEmpty } ||
+            results.viewResults.contains { !$0.failedOperations.isEmpty }
+
+        if hasFailures {
+            print("\n❌ FAILURE SUMMARY:")
+        } else {
+            print("\n✅ FAILURE SUMMARY:")
+            print("   No failures detected. All metadata operations are working correctly.")
+        }
 
         for result in results.tableResults {
             if !result.failedOperations.isEmpty {
-                hasFailures = true
                 print("   Table: \(result.objectName)")
                 for (operation, error) in result.failedOperations {
                     print("     \(operation): \(error)")
@@ -353,7 +362,6 @@ final class SQLServerMetadataAnalysisTests: XCTestCase {
 
         for result in results.viewResults {
             if !result.failedOperations.isEmpty {
-                hasFailures = true
                 print("   View: \(result.objectName)")
                 for (operation, error) in result.failedOperations {
                     print("     \(operation): \(error)")
@@ -361,17 +369,20 @@ final class SQLServerMetadataAnalysisTests: XCTestCase {
             }
         }
 
-        if !hasFailures {
-            print("   🎉 No failures detected! All metadata operations are working correctly.")
-        }
-
         print("\n" + "=" * 80)
         print("🏁 ANALYSIS COMPLETE")
         print("=" * 80)
     }
+
+    private func summarizeFailures(_ results: [ObjectMetadataResults], limit: Int) -> String {
+        results.prefix(limit).map { result in
+            let ops = result.failedOperations.map { "\($0.0)=\($0.1)" }.joined(separator: ", ")
+            return "\(result.objectName)[\(ops)]"
+        }.joined(separator: "; ")
+    }
 }
 
-private func runObjectChecks<T>(
+private func runObjectChecks<T: Sendable>(
     _ items: [T],
     concurrentLimit: Int,
     budgetDeadline: Date,
@@ -389,8 +400,9 @@ private func runObjectChecks<T>(
         let slice = items[index..<upperBound]
         try await withThrowingTaskGroup(of: ObjectMetadataResults.self) { group in
             for item in slice {
+                let currentItem = item
                 group.addTask {
-                    try await operation(item)
+                    try await operation(currentItem)
                 }
             }
             while let result = try await group.next() {
@@ -400,18 +412,6 @@ private func runObjectChecks<T>(
         index = upperBound
     }
     return aggregated
-}
-
-private func shutdownEventLoopGroup(_ group: EventLoopGroup) async throws {
-    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-        group.shutdownGracefully { error in
-            if let error {
-                continuation.resume(throwing: error)
-            } else {
-                continuation.resume(returning: ())
-            }
-        }
-    }
 }
 
 // MARK: - Analysis Data Structures

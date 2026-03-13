@@ -5,12 +5,12 @@ import Foundation
 extension TDSMessages {
     /// `LOGIN7`
     /// https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/773a62b6-ee89-4c02-9e5e-344882630aac
-    public struct Login7Message: TDSMessagePayload {
+    public struct Login7Message: TDSMessagePayload, Sendable {
         public static var packetType: TDSPacket.HeaderType {
             return .tds7Login
         }
 
-        static var clientPID = UInt32(ProcessInfo.processInfo.processIdentifier)
+        static let clientPID = UInt32(ProcessInfo.processInfo.processIdentifier)
         
         var username: String
         var password: String

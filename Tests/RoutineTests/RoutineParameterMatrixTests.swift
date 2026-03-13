@@ -1,27 +1,20 @@
 @testable import SQLServerKit
 import SQLServerKitTesting
 import XCTest
-import NIO
 import Logging
 
-final class SQLServerRoutineParameterMatrixTests: XCTestCase {
-    var group: EventLoopGroup!
+final class SQLServerRoutineParameterMatrixTests: XCTestCase, @unchecked Sendable {
     var client: SQLServerClient!
-    private var skipDueToEnv = false
-
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
         TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
-        group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), eventLoopGroupProvider: .shared(group)).get()
-        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1").get() } } catch { skipDueToEnv = true }
+        client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
+        do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1") } } catch { throw error }
     }
 
     override func tearDown() async throws {
-        try await client?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
+        try? await client?.shutdownGracefully()
         client = nil
-        group = nil
     }
 
     // A representative set of SQL types to exercise parameter metadata
@@ -48,9 +41,8 @@ final class SQLServerRoutineParameterMatrixTests: XCTestCase {
 
     @available(macOS 12.0, *)
     func testProcedureParameterMatrix() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         try await withTemporaryDatabase(client: self.client, prefix: "pmx") { db in
-            try await withDbClient(for: db, using: self.group) { dbClient in
+            try await withDbClient(for: db) { dbClient in
                 let routineClient = SQLServerRoutineClient(client: dbClient)
                 let typeClient = SQLServerTypeClient(client: dbClient)
 
@@ -99,7 +91,7 @@ final class SQLServerRoutineParameterMatrixTests: XCTestCase {
                     )
 
                     let ps = try await withDbConnection(client: dbClient, database: db) { conn in
-                        try await conn.listParameters(schema: "dbo", object: procName).get()
+                        try await conn.listParameters(schema: "dbo", object: procName)
                     }
                     // We expect exactly 3 parameters, no return value for procedures
                     XCTAssertEqual(ps.filter { !$0.isReturnValue }.count, 3, "Expected 3 parameters for \(procName)")
@@ -119,12 +111,24 @@ final class SQLServerRoutineParameterMatrixTests: XCTestCase {
 
                 // TVP case: READONLY parameter must be surfaced as readOnly
                 let tvpProc = "proc_with_tvp_\(uniqueId)"
-                // TODO: This needs a future SQLServerRoutineClient API that supports table-valued parameters
-                _ = try await executeInDb(client: self.client, database: db, """
-                    CREATE PROCEDURE [dbo].[\(tvpProc)] @T dbo.ParamTableType_\(uniqueId) READONLY AS BEGIN SELECT COUNT(*) FROM @T; END
-                """)
+                try await routineClient.createStoredProcedure(
+                    name: tvpProc,
+                    parameters: [
+                        ProcedureParameter(
+                            name: "T",
+                            dataType: .userDefinedTable(name: "ParamTableType_\(uniqueId)", schema: "dbo"),
+                            direction: .input
+                        )
+                    ],
+                    body: """
+                    BEGIN
+                        SET NOCOUNT ON;
+                        SELECT COUNT(*) FROM @T;
+                    END
+                    """
+                )
                 let tvpParams = try await withDbConnection(client: dbClient, database: db) { conn in
-                    try await conn.listParameters(schema: "dbo", object: tvpProc).get()
+                    try await conn.listParameters(schema: "dbo", object: tvpProc)
                 }
                 guard let tvp = tvpParams.first(where: { $0.name.caseInsensitiveCompare("@T") == .orderedSame }) else {
                     XCTFail("Missing TVP param metadata")
@@ -216,9 +220,8 @@ final class SQLServerRoutineParameterMatrixTests: XCTestCase {
 
     @available(macOS 12.0, *)
     func testFunctionParameterMatrix() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         try await withTemporaryDatabase(client: self.client, prefix: "fmx") { db in
-            try await withDbClient(for: db, using: self.group) { dbClient in
+            try await withDbClient(for: db) { dbClient in
                 let routineClient = SQLServerRoutineClient(client: dbClient)
 
                 // Scalar function with default
@@ -239,7 +242,7 @@ final class SQLServerRoutineParameterMatrixTests: XCTestCase {
                 )
 
                 let sParams = try await withDbConnection(client: dbClient, database: db) { conn in
-                    try await conn.listParameters(schema: "dbo", object: scalar).get()
+                    try await conn.listParameters(schema: "dbo", object: scalar)
                 }
                 // Expect a return value plus two inputs
                 XCTAssertTrue(sParams.contains(where: { $0.isReturnValue }))
@@ -268,7 +271,7 @@ final class SQLServerRoutineParameterMatrixTests: XCTestCase {
                 )
 
                 let tParams = try await withDbConnection(client: dbClient, database: db) { conn in
-                    try await conn.listParameters(schema: "dbo", object: tvf).get()
+                    try await conn.listParameters(schema: "dbo", object: tvf)
                 }
                 XCTAssertEqual(tParams.filter { !$0.isReturnValue }.count, 2)
                 XCTAssertTrue(

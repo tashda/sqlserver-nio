@@ -1,99 +1,24 @@
-import NIO
-import Foundation
+import NIOCore
 
-public struct TDSData: CustomStringConvertible, CustomDebugStringConvertible {
-    /// The object ID of the field's data type.
-    public var metadata: Metadata
+public protocol TDSDataConvertible {
+    static var tdsMetadata: any Metadata { get }
+    init?(tdsData: TDSData)
+    var tdsData: TDSData? { get }
+}
 
-    public var value: ByteBuffer?
+public struct TDSData: Sendable {
+    public let metadata: any Metadata
+    public let value: ByteBuffer?
 
-    public init(metadata: Metadata, value: ByteBuffer? = nil) {
+    public init(metadata: any Metadata, value: ByteBuffer?) {
         self.metadata = metadata
         self.value = value
     }
-
-    public var description: String {
-        guard let value = self.value else {
-            return "<null>"
-        }
-
-        let description: String?
-
-        switch self.metadata.dataType {
-        case .bit, .bitn:
-            description = self.bool?.description
-        case .tinyInt:
-            description = self.int8?.description
-        case .smallInt:
-            description = self.int16?.description
-        case .int:
-            description = self.int32?.description
-        case .bigInt:
-            description = self.int64?.description
-        case .real:
-            description = self.float?.description
-        case .float, .floatn, .numeric, .numericLegacy, .decimal, .decimalLegacy, .smallMoney, .money, .moneyn:
-            description = self.double?.description
-        case .smallDateTime, .datetime, .datetimen, .date, .time, .datetime2, .datetimeOffset:
-            description = self.date.map { String(describing: $0) }
-        case .charLegacy, .varcharLegacy, .char, .varchar, .nvarchar, .nchar, .text, .nText:
-            description = self.string?.description
-        case .binaryLegacy, .varbinaryLegacy, .varbinary, .binary, .image:
-            if let bytes = self.bytes {
-                description = "0x" + bytes.map { String(format: "%02X", $0) }.joined()
-            } else {
-                description = nil
-            }
-        case .guid:
-            description = self.uuid?.uuidString
-        case .xml, .json:
-            description = self.string?.description
-        case .vector:
-            if let bytes = self.bytes {
-                description = "0x" + bytes.map { String(format: "%02X", $0) }.joined()
-            } else {
-                description = nil
-            }
-        case .clrUdt:
-            fatalError("Unimplemented")
-        case .sqlVariant:
-            description = self.sqlVariantResolved()?.description
-        case .null:
-            return "<null>"
-        case .intn:
-            switch value.readableBytes {
-            case 1:
-                description = self.int8?.description
-            case 2:
-                description = self.int16?.description
-            case 4:
-                description = self.int32?.description
-            case 8:
-                description = self.int64?.description
-            default:
-                fatalError("Unexpected number of readable bytes for INTNTYPE data type.")
-            }
-        }
-
-        if let description = description {
-            return description
-        } else {
-            return "0x" + value.readableBytesView.hexdigest()
-        }
-    }
-
-    public var debugDescription: String {
-        return self.description
-    }
 }
 
-// TDSData carries ByteBuffer which is not statically Sendable across threads.
-// Our connection model confines usage to an event loop; mark as unchecked.
-extension TDSData: @unchecked Sendable {}
-
 extension TDSData: TDSDataConvertible {
-    public static var tdsMetadata: Metadata {
-        fatalError("TDSData cannot be statically represented as a single data type")
+    public static var tdsMetadata: any Metadata {
+        TypeMetadata(dataType: .null)
     }
 
     public init?(tdsData: TDSData) {
@@ -101,6 +26,6 @@ extension TDSData: TDSDataConvertible {
     }
 
     public var tdsData: TDSData? {
-        return self
+        self
     }
 }

@@ -28,7 +28,7 @@ public struct SavepointInfo: Sendable {
 
 // MARK: - SQLServerTransactionClient
 
-public final class SQLServerTransactionClient {
+public final class SQLServerTransactionClient: @unchecked Sendable {
     private let client: SQLServerClient
     private var activeSavepoints: [String] = []
 
@@ -39,18 +39,18 @@ public final class SQLServerTransactionClient {
     // MARK: - Transaction Management
 
     /// Begins a new transaction
-    public func beginTransaction() -> EventLoopFuture<Void> {
+    internal func beginTransaction() -> EventLoopFuture<Void> {
         return client.execute("BEGIN TRANSACTION").map { _ in () }
     }
 
     /// Begins a new transaction (async version)
     @available(macOS 12.0, *)
     public func beginTransaction() async throws {
-        try await beginTransaction().get()
+        _ = try await client.execute("BEGIN TRANSACTION")
     }
 
     /// Commits the current transaction
-    public func commitTransaction() -> EventLoopFuture<Void> {
+    internal func commitTransaction() -> EventLoopFuture<Void> {
         activeSavepoints.removeAll()
         return client.execute("COMMIT").map { _ in () }
     }
@@ -58,11 +58,12 @@ public final class SQLServerTransactionClient {
     /// Commits the current transaction (async version)
     @available(macOS 12.0, *)
     public func commitTransaction() async throws {
-        try await commitTransaction().get()
+        activeSavepoints.removeAll()
+        _ = try await client.execute("COMMIT")
     }
 
     /// Rolls back the current transaction
-    public func rollbackTransaction() -> EventLoopFuture<Void> {
+    internal func rollbackTransaction() -> EventLoopFuture<Void> {
         activeSavepoints.removeAll()
         return client.execute("ROLLBACK").map { _ in () }
     }
@@ -70,13 +71,14 @@ public final class SQLServerTransactionClient {
     /// Rolls back the current transaction (async version)
     @available(macOS 12.0, *)
     public func rollbackTransaction() async throws {
-        try await rollbackTransaction().get()
+        activeSavepoints.removeAll()
+        _ = try await client.execute("ROLLBACK")
     }
 
     // MARK: - Savepoint Management
 
     /// Creates a savepoint with the specified name
-    public func createSavepoint(name: String) -> EventLoopFuture<Void> {
+    internal func createSavepoint(name: String) -> EventLoopFuture<Void> {
         let escapedName = escapeIdentifier(name)
         return client.execute("SAVE TRANSACTION \(escapedName)").map { _ in
             self.activeSavepoints.append(name)
@@ -86,11 +88,13 @@ public final class SQLServerTransactionClient {
     /// Creates a savepoint with the specified name (async version)
     @available(macOS 12.0, *)
     public func createSavepoint(name: String) async throws {
-        try await createSavepoint(name: name).get()
+        let escapedName = escapeIdentifier(name)
+        _ = try await client.execute("SAVE TRANSACTION \(escapedName)")
+        activeSavepoints.append(name)
     }
 
     /// Creates a savepoint with options
-    public func createSavepoint(_ options: SavepointOptions) -> EventLoopFuture<Void> {
+    internal func createSavepoint(_ options: SavepointOptions) -> EventLoopFuture<Void> {
         return createSavepoint(name: options.name)
     }
 
@@ -101,7 +105,7 @@ public final class SQLServerTransactionClient {
     }
 
     /// Rolls back to the specified savepoint
-    public func rollbackToSavepoint(name: String) -> EventLoopFuture<Void> {
+    internal func rollbackToSavepoint(name: String) -> EventLoopFuture<Void> {
         let escapedName = escapeIdentifier(name)
         return client.execute("ROLLBACK TRANSACTION \(escapedName)").map { _ in
             // Remove this savepoint and any savepoints created after it
@@ -114,11 +118,15 @@ public final class SQLServerTransactionClient {
     /// Rolls back to the specified savepoint (async version)
     @available(macOS 12.0, *)
     public func rollbackToSavepoint(name: String) async throws {
-        try await rollbackToSavepoint(name: name).get()
+        let escapedName = escapeIdentifier(name)
+        _ = try await client.execute("ROLLBACK TRANSACTION \(escapedName)")
+        if let index = self.activeSavepoints.firstIndex(of: name) {
+            self.activeSavepoints.removeSubrange(index...)
+        }
     }
 
     /// Rolls back to the specified savepoint options
-    public func rollbackToSavepoint(_ options: SavepointOptions) -> EventLoopFuture<Void> {
+    internal func rollbackToSavepoint(_ options: SavepointOptions) -> EventLoopFuture<Void> {
         return rollbackToSavepoint(name: options.name)
     }
 
@@ -129,7 +137,7 @@ public final class SQLServerTransactionClient {
     }
 
     /// Releases the specified savepoint (SQL Server 2008+)
-    public func releaseSavepoint(name: String) -> EventLoopFuture<Void> {
+    internal func releaseSavepoint(name: String) -> EventLoopFuture<Void> {
         // SQL Server doesn't have an explicit RELEASE SAVEPOINT command like some other databases
         // We remove it from our tracking, but the savepoint still exists in the transaction
         if let index = activeSavepoints.firstIndex(of: name) {
@@ -143,11 +151,13 @@ public final class SQLServerTransactionClient {
     /// Releases the specified savepoint (async version)
     @available(macOS 12.0, *)
     public func releaseSavepoint(name: String) async throws {
-        try await releaseSavepoint(name: name).get()
+        if let index = activeSavepoints.firstIndex(of: name) {
+            activeSavepoints.remove(at: index)
+        }
     }
 
     /// Releases the specified savepoint options
-    public func releaseSavepoint(_ options: SavepointOptions) -> EventLoopFuture<Void> {
+    internal func releaseSavepoint(_ options: SavepointOptions) -> EventLoopFuture<Void> {
         return releaseSavepoint(name: options.name)
     }
 
@@ -160,7 +170,7 @@ public final class SQLServerTransactionClient {
     // MARK: - Transaction Information
 
     /// Gets information about the current transaction
-    public func getTransactionInfo() -> EventLoopFuture<TransactionInfo?> {
+    internal func getTransactionInfo() -> EventLoopFuture<TransactionInfo?> {
         let sql = """
         SELECT
             transaction_id,
@@ -172,8 +182,10 @@ public final class SQLServerTransactionClient {
         WHERE transaction_id = CURRENT_TRANSACTION_ID()
         """
 
-        return client.query(sql).map { rows in
-            guard let row = rows.first else { return nil }
+        return client.query(sql).flatMap { rows in
+            guard let row = rows.first else {
+                return self.currentIsolationLevelFuture().map { _ in nil }
+            }
 
             let transactionId = row.column("transaction_id")?.string
             let name = row.column("name")?.string
@@ -202,22 +214,70 @@ public final class SQLServerTransactionClient {
             }
 
             let beginTime = row.column("transaction_begin_time")?.date
-
-            return TransactionInfo(
-                id: transactionId,
-                name: name,
-                type: transactionType,
-                state: transactionState,
-                beginTime: beginTime,
-                isolationLevel: self.getCurrentIsolationLevel()
-            )
+            return self.currentIsolationLevelFuture().map { isolationLevel in
+                TransactionInfo(
+                    id: transactionId,
+                    name: name,
+                    type: transactionType,
+                    state: transactionState,
+                    beginTime: beginTime,
+                    isolationLevel: isolationLevel
+                )
+            }
         }
     }
 
     /// Gets information about the current transaction (async version)
     @available(macOS 12.0, *)
     public func getTransactionInfo() async throws -> TransactionInfo? {
-        try await getTransactionInfo().get()
+        let sql = """
+        SELECT
+            transaction_id,
+            name,
+            transaction_type,
+            transaction_state,
+            transaction_begin_time
+        FROM sys.dm_tran_active_transactions
+        WHERE transaction_id = CURRENT_TRANSACTION_ID()
+        """
+
+        let rows = try await client.query(sql)
+        guard let row = rows.first else { return nil }
+
+        let transactionId = row.column("transaction_id")?.string
+        let name = row.column("name")?.string
+        let transactionTypeCode = row.column("transaction_type")?.int
+        let transactionStateCode = row.column("transaction_state")?.int
+
+        let transactionType: String?
+        switch transactionTypeCode {
+        case 2: transactionType = "READ"
+        case 1, 3, 4: transactionType = "WRITE"
+        default: transactionType = nil
+        }
+
+        let transactionState: String?
+        switch transactionStateCode {
+        case 0: transactionState = "Not Initialized"
+        case 1: transactionState = "Initialized"
+        case 2: transactionState = "Active"
+        case 3: transactionState = "Ended"
+        case 4: transactionState = "Committing"
+        case 5: transactionState = "Prepared"
+        case 6: transactionState = "Committed"
+        case 7: transactionState = "Rolling Back"
+        case 8: transactionState = "Rolled Back"
+        default: transactionState = nil
+        }
+
+        return TransactionInfo(
+            id: transactionId,
+            name: name,
+            type: transactionType,
+            state: transactionState,
+            beginTime: row.column("transaction_begin_time")?.date,
+            isolationLevel: try await getCurrentIsolationLevel()
+        )
     }
 
     /// Gets a list of active savepoints
@@ -233,7 +293,11 @@ public final class SQLServerTransactionClient {
     }
 
     /// Gets the current transaction isolation level
-    public func getCurrentIsolationLevel() -> EventLoopFuture<String?> {
+    internal func getCurrentIsolationLevel() -> EventLoopFuture<String?> {
+        currentIsolationLevelFuture()
+    }
+
+    private func currentIsolationLevelFuture() -> EventLoopFuture<String?> {
         let sql = """
         SELECT CASE transaction_isolation_level
             WHEN 0 THEN 'READ UNCOMMITTED'
@@ -255,11 +319,11 @@ public final class SQLServerTransactionClient {
     /// Gets the current transaction isolation level (async version)
     @available(macOS 12.0, *)
     public func getCurrentIsolationLevel() async throws -> String? {
-        try await getCurrentIsolationLevel().get()
+        try await currentIsolationLevelFuture().get()
     }
 
     /// Sets the transaction isolation level
-    public func setIsolationLevel(_ level: IsolationLevel) -> EventLoopFuture<Void> {
+    internal func setIsolationLevel(_ level: IsolationLevel) -> EventLoopFuture<Void> {
         let sql = "SET TRANSACTION ISOLATION LEVEL \(level.sqlLiteral)"
         return client.execute(sql).map { _ in () }
     }
@@ -267,13 +331,14 @@ public final class SQLServerTransactionClient {
     /// Sets the transaction isolation level (async version)
     @available(macOS 12.0, *)
     public func setIsolationLevel(_ level: IsolationLevel) async throws {
-        try await setIsolationLevel(level).get()
+        let sql = "SET TRANSACTION ISOLATION LEVEL \(level.sqlLiteral)"
+        _ = try await client.execute(sql)
     }
 
     // MARK: - Advanced Transaction Operations
 
     /// Executes a closure within a transaction context, automatically handling commit/rollback
-    public func executeInTransaction<T>(_ operation: @escaping () -> EventLoopFuture<T>) -> EventLoopFuture<T> {
+    internal func executeInTransaction<T: Sendable>(_ operation: @Sendable @escaping () -> EventLoopFuture<T>) -> EventLoopFuture<T> {
         return beginTransaction()
             .flatMap { _ in
                 operation()
@@ -291,7 +356,7 @@ public final class SQLServerTransactionClient {
 
     /// Executes a closure within a transaction context, automatically handling commit/rollback (async version)
     @available(macOS 12.0, *)
-    public func executeInTransaction<T>(_ operation: @escaping () async throws -> T) async throws -> T {
+    public func executeInTransaction<T: Sendable>(_ operation: @Sendable @escaping () async throws -> T) async throws -> T {
         try await beginTransaction()
         do {
             let result = try await operation()
@@ -304,9 +369,9 @@ public final class SQLServerTransactionClient {
     }
 
     /// Executes a closure within a savepoint context, automatically handling rollback on error
-    public func executeInSavepoint<T>(
+    public func executeInSavepoint<T: Sendable>(
         named name: String,
-        operation: @escaping () -> EventLoopFuture<T>
+        operation: @Sendable @escaping () -> EventLoopFuture<T>
     ) -> EventLoopFuture<T> {
         return createSavepoint(name: name)
             .flatMap { _ in
@@ -359,7 +424,7 @@ public struct TransactionInfo: Sendable {
     public let type: String?
     public let state: String?
     public let beginTime: Date?
-    public let isolationLevel: EventLoopFuture<String?>
+    public let isolationLevel: String?
 
     public init(
         id: String?,
@@ -367,7 +432,7 @@ public struct TransactionInfo: Sendable {
         type: String?,
         state: String?,
         beginTime: Date?,
-        isolationLevel: EventLoopFuture<String?>
+        isolationLevel: String?
     ) {
         self.id = id
         self.name = name

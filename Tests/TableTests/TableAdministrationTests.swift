@@ -2,46 +2,41 @@ import XCTest
 @testable import SQLServerKit
 import SQLServerKitTesting
 
-final class SQLServerTableAdministrationTests: XCTestCase {
-    var group: EventLoopGroup!
+final class SQLServerTableAdministrationTests: XCTestCase, @unchecked Sendable {
     var baseClient: SQLServerClient!
     var client: SQLServerClient!
     private var adminClient: SQLServerAdministrationClient!
     private var testDatabase: String!
-    private var skipDueToEnv = false
-
     override func setUp() async throws {
         continueAfterFailure = false
         TestEnvironmentManager.loadEnvironmentVariables()
         _ = isLoggingConfigured
-        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         self.baseClient = try await SQLServerClient.connect(
             configuration: makeSQLServerClientConfiguration(),
-            eventLoopGroupProvider: .shared(group)
-        ).get()
+            numberOfThreads: 1
+        )
         do {
-            _ = try await withTimeout(5) { try await self.baseClient.query("SELECT 1").get() }
+            _ = try await withTimeout(5) { try await self.baseClient.query("SELECT 1") }
         } catch {
-            skipDueToEnv = true
-            return
+            throw error
         }
         testDatabase = try await createTemporaryDatabase(client: baseClient, prefix: "adm")
-        self.client = try await makeClient(forDatabase: testDatabase, using: group)
+        self.client = try await makeClient(forDatabase: testDatabase)
         self.adminClient = SQLServerAdministrationClient(client: self.client)
     }
 
     override func tearDown() async throws {
-        try? await client?.shutdownGracefully().get()
+        try? await client?.shutdownGracefully()
         if let db = testDatabase { try? await dropTemporaryDatabase(client: baseClient, name: db) }
-        try await baseClient?.shutdownGracefully().get()
-        try await group?.shutdownGracefully()
-        testDatabase = nil; group = nil
+        try? await baseClient?.shutdownGracefully()
+        testDatabase = nil
+        client = nil
+        baseClient = nil
     }
 
     // MARK: - Tests
 
     func testDropTable() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let tableName = "test_drop_table_\(UUID().uuidString.prefix(8))"
 
         let columns = [SQLServerColumnDefinition(name: "id", definition: .standard(.init(dataType: .int)))]
@@ -56,8 +51,46 @@ final class SQLServerTableAdministrationTests: XCTestCase {
         XCTAssertEqual(tableCount, 0, "Table should not exist after being dropped")
     }
 
+    func testDatabaseScopedAdministrationClientSupportsRenameTruncateAndDrop() async throws {
+        let originalName = "test_scoped_ops_\(UUID().uuidString.prefix(8))"
+        let renamedName = "test_scoped_ops_renamed_\(UUID().uuidString.prefix(8))"
+        let masterScopedAdmin = SQLServerAdministrationClient(client: self.baseClient, database: self.testDatabase)
+
+        try await masterScopedAdmin.createTable(
+            name: originalName,
+            columns: [
+                SQLServerColumnDefinition(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
+                SQLServerColumnDefinition(name: "name", definition: .standard(.init(dataType: .nvarchar(length: .length(50)))))
+            ]
+        )
+
+        try await self.client.withConnection { connection in
+            try await connection.insertRow(into: originalName, values: [
+                "id": .int(1),
+                "name": .nString("one")
+            ])
+            try await connection.insertRow(into: originalName, values: [
+                "id": .int(2),
+                "name": .nString("two")
+            ])
+        }
+
+        try await masterScopedAdmin.renameTable(name: originalName, newName: renamedName)
+        let originalTableCount = try await self.getTableCount(client: self.client, name: originalName)
+        let renamedTableCount = try await self.getTableCount(client: self.client, name: renamedName)
+        XCTAssertEqual(originalTableCount, 0, "Original table name should be gone after rename")
+        XCTAssertEqual(renamedTableCount, 1, "Renamed table should exist")
+
+        try await masterScopedAdmin.truncateTable(name: renamedName)
+        let truncatedRowCount = try await self.getRowCount(client: self.client, table: renamedName)
+        XCTAssertEqual(truncatedRowCount, 0, "Truncate should remove all rows")
+
+        try await masterScopedAdmin.dropTable(name: renamedName)
+        let droppedTableCount = try await self.getTableCount(client: self.client, name: renamedName)
+        XCTAssertEqual(droppedTableCount, 0, "Drop should remove the renamed table")
+    }
+
     func testCreateTableWithIdentityAndDefaults() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let tableName = "test_identity_defaults_\(UUID().uuidString.prefix(8))"
 
         let columns = [
@@ -72,7 +105,6 @@ final class SQLServerTableAdministrationTests: XCTestCase {
     }
 
     func testCreateTableWithConstraints() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let tableName = "test_constraints_\(UUID().uuidString.prefix(8))"
 
         let columns = [
@@ -84,14 +116,10 @@ final class SQLServerTableAdministrationTests: XCTestCase {
 
         try await self.adminClient.createTable(name: tableName, columns: columns)
 
-        let metadataClient = try await self.client.withConnection { connection in
-            SQLServerMetadataClient(connection: connection)
-        }
-
-        let uniqueConstraints = try await metadataClient.listUniqueConstraints(schema: "dbo", table: tableName).get()
+        let uniqueConstraints = try await self.client.metadata.listUniqueConstraints(schema: "dbo", table: tableName)
         XCTAssertEqual(uniqueConstraints.count, 1, "Should find one unique constraint.")
 
-        let tableColumns = try await metadataClient.listColumns(schema: "dbo", table: tableName, includeComments: true).get()
+        let tableColumns = try await self.client.metadata.listColumns(schema: "dbo", table: tableName, includeComments: true)
         let sparseColumn = tableColumns.first { $0.name == "sparse_col" }
         XCTAssertNotNil(sparseColumn, "Should find sparse_col.")
         if let sparseColumn = sparseColumn {
@@ -100,7 +128,6 @@ final class SQLServerTableAdministrationTests: XCTestCase {
     }
 
     func testCreateTableWithCompositePrimaryKey() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let tableName = "test_composite_pk_\(UUID().uuidString.prefix(8))"
 
         let columns = [
@@ -111,11 +138,7 @@ final class SQLServerTableAdministrationTests: XCTestCase {
 
         try await self.adminClient.createTable(name: tableName, columns: columns)
 
-        let metadataClient = try await self.client.withConnection { connection in
-            SQLServerMetadataClient(connection: connection)
-        }
-
-        let primaryKeys = try await metadataClient.listPrimaryKeys(schema: "dbo", table: tableName).get()
+        let primaryKeys = try await self.client.metadata.listPrimaryKeys(schema: "dbo", table: tableName)
         XCTAssertEqual(primaryKeys.count, 1, "Should have one primary key constraint.")
 
         if let pk = primaryKeys.first {
@@ -126,7 +149,6 @@ final class SQLServerTableAdministrationTests: XCTestCase {
     }
 
     func testCreateTableWithAllDataTypes() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let tableName = "test_all_types_\(UUID().uuidString.prefix(8))"
 
         let columns = [
@@ -162,12 +184,7 @@ final class SQLServerTableAdministrationTests: XCTestCase {
 
         try await self.adminClient.createTable(name: tableName, columns: columns)
 
-        let metadataClient = try await self.client.withConnection { connection in
-            var config = SQLServerMetadataClient.Configuration()
-            config.preferStoredProcedureColumns = false
-            return SQLServerMetadataClient(connection: connection, configuration: config)
-        }
-        let metadataColumns = try await metadataClient.listColumns(schema: "dbo", table: tableName, includeComments: true).get()
+        let metadataColumns = try await self.client.metadata.listColumns(schema: "dbo", table: tableName, includeComments: true)
 
         let expected = [
             "t_tinyint": "tinyint",
@@ -214,7 +231,6 @@ final class SQLServerTableAdministrationTests: XCTestCase {
     }
 
     func testTableAndColumnComments() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let tableName = "test_comments_\(UUID().uuidString.prefix(8))"
 
         let columns = [
@@ -226,11 +242,7 @@ final class SQLServerTableAdministrationTests: XCTestCase {
         try await self.adminClient.createTable(name: tableName, columns: columns)
         try await self.adminClient.addTableComment(tableName: tableName, comment: "Test table with comments")
 
-        let metadataClient = try await self.client.withConnection { connection in
-            SQLServerMetadataClient(connection: connection)
-        }
-
-        let metadataColumns = try await metadataClient.listColumns(schema: "dbo", table: tableName, includeComments: true).get()
+        let metadataColumns = try await self.client.metadata.listColumns(schema: "dbo", table: tableName, includeComments: true)
         let columnsWithComments = metadataColumns.filter { $0.comment != nil }
         XCTAssertEqual(columnsWithComments.count, 3, "Should find three column comments.")
 
@@ -249,20 +261,19 @@ final class SQLServerTableAdministrationTests: XCTestCase {
             }
         }
 
-        let tables = try await metadataClient.listTables(schema: "dbo", includeComments: true).get()
+        let tables = try await self.client.metadata.listTables(schema: "dbo", includeComments: true)
         let testTable = tables.first { $0.name == tableName }
         XCTAssertNotNil(testTable, "Should find the created table.")
         if let testTable = testTable {
             XCTAssertEqual(testTable.comment, "Test table with comments", "Table comment should match")
         }
 
-        let metadataColumns2 = try await metadataClient.listColumns(schema: "dbo", table: tableName, includeComments: true).get()
+        let metadataColumns2 = try await self.client.metadata.listColumns(schema: "dbo", table: tableName, includeComments: true)
         let columnsWithComments2 = metadataColumns2.filter { $0.comment != nil }
         XCTAssertEqual(columnsWithComments2.count, 3, "Should find three column comments on subsequent fetch.")
     }
 
     func testCommentWithLongText() async throws {
-        if skipDueToEnv { throw XCTSkip("Skipping due to unstable server during setup") }
         let tableName = "test_long_comment_\(UUID().uuidString.prefix(8))"
 
         let longComment = String(repeating: "This is a very long comment that tests the limits of extended properties. ", count: 50)
@@ -274,10 +285,7 @@ final class SQLServerTableAdministrationTests: XCTestCase {
 
         try await self.adminClient.createTable(name: tableName, columns: columns)
 
-        let metadataClient = try await self.client.withConnection { connection in
-            SQLServerMetadataClient(connection: connection)
-        }
-        let metadataColumns = try await metadataClient.listColumns(schema: "dbo", table: tableName, includeComments: true).get()
+        let metadataColumns = try await self.client.metadata.listColumns(schema: "dbo", table: tableName, includeComments: true)
         let descriptionColumn = metadataColumns.first { $0.name == "description" }
         XCTAssertNotNil(descriptionColumn, "Should find description column.")
         if let descriptionColumn = descriptionColumn {
@@ -288,10 +296,12 @@ final class SQLServerTableAdministrationTests: XCTestCase {
     // MARK: - Helpers
 
     private func getTableCount(client: SQLServerClient, name: String) async throws -> Int {
-        let metadataClient = try await client.withConnection { connection in
-            SQLServerMetadataClient(connection: connection)
-        }
-        let tables = try await metadataClient.listTables(schema: "dbo").get()
+        let tables = try await client.metadata.listTables(schema: "dbo")
         return tables.filter { $0.name == name }.count
+    }
+
+    private func getRowCount(client: SQLServerClient, table: String) async throws -> Int {
+        let rows = try await client.query("SELECT COUNT(*) AS count FROM [dbo].[\(table)]")
+        return rows.first?.column("count")?.int ?? 0
     }
 }

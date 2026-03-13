@@ -2,7 +2,7 @@
 import XCTest
 import NIO
 
-final class TDSTokenParserVariantNullTests: XCTestCase {
+final class TDSTokenOperationsVariantNullTests: XCTestCase, @unchecked Sendable {
     func testSQLVariantZeroLengthIsConsumedAndAlignmentPreserved() throws {
         // Build COLMETADATA for three columns: sql_variant, bit, nvarchar(max)
         let cols: [TDSTokens.ColMetadataToken.ColumnData] = [
@@ -26,7 +26,7 @@ final class TDSTokenParserVariantNullTests: XCTestCase {
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
         parser.colMetadata = meta
         let row = try XCTUnwrap(parser.parseRowToken())
 

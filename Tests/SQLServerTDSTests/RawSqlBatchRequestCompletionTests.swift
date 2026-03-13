@@ -2,15 +2,16 @@
 import XCTest
 import NIO
 import Logging
+import NIOConcurrencyHelpers
 
-final class RawSqlBatchRequestCompletionTests: XCTestCase {
+final class RawSqlBatchRequestCompletionTests: XCTestCase, @unchecked Sendable {
     func testRawSqlCompletesOnFinalDone() throws {
-        var closureCalled = false
+        let closureCalled = NIOLockedValueBox(false)
         let request = RawSqlRequest(
             sql: "SELECT 1;",
             onDone: { token in
                 XCTAssertEqual(token.status, 0x00)
-                closureCalled = true
+                closureCalled.withLockedValue { $0 = true }
             }
         )
 
@@ -23,22 +24,22 @@ final class RawSqlBatchRequestCompletionTests: XCTestCase {
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&payload)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
 
         let token = try parser.parseDoneToken()
         if let token = token {
             request.onDone?(token)
         }
 
-        XCTAssertTrue(closureCalled, "onDone closure must be called")
+        XCTAssertTrue(closureCalled.withLockedValue { $0 }, "onDone closure must be called")
     }
 
     func testRawSqlCompletesAcrossPartialDoneFrames() throws {
-        var doneToken: TDSTokens.DoneToken? = nil
+        let doneToken = NIOLockedValueBox<TDSTokens.DoneToken?>(nil)
         let request = RawSqlRequest(
             sql: "SELECT 1;",
             onDone: { token in
-                doneToken = token
+                doneToken.withLockedValue { $0 = token }
             }
         )
 
@@ -50,7 +51,7 @@ final class RawSqlBatchRequestCompletionTests: XCTestCase {
         // Simulate the TDSConnection feeding partial data to the parser
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&p1)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
 
         // Attempt to parse the token - it should signal that more data is required
         XCTAssertThrowsError(try parser.parseDoneToken()) { error in
@@ -71,7 +72,7 @@ final class RawSqlBatchRequestCompletionTests: XCTestCase {
         let parsedToken = try XCTUnwrap(parser.parseDoneToken())
         request.onDone?(parsedToken)
 
-        XCTAssertNotNil(doneToken, "onDone closure should have been called")
-        XCTAssertEqual(doneToken?.status, 0x00)
+        XCTAssertNotNil(doneToken.withLockedValue { $0 }, "onDone closure should have been called")
+        XCTAssertEqual(doneToken.withLockedValue { $0 }?.status, 0x00)
     }
 }

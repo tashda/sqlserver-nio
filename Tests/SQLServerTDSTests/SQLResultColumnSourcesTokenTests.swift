@@ -2,14 +2,14 @@
 import NIOCore
 import XCTest
 
-final class SQLResultColumnSourcesTokenTests: XCTestCase {
+final class SQLResultColumnSourcesTokenTests: XCTestCase, @unchecked Sendable {
     func testParserConsumesToken() throws {
         var buffer = ByteBufferAllocator().buffer(capacity: 10)
         buffer.writeInteger(TDSTokens.TokenType.sqlResultColumnSources.rawValue)
         buffer.writeInteger(UInt32(4), endianness: .little)
         buffer.writeBytes([0x01, 0x02, 0x03, 0x04])
 
-        let parser = TDSTokenParser(streamParser: TDSStreamParser(), logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: TDSStreamParser(), logger: .init(label: "test"))
         parser.streamParser.buffer.writeBuffer(&buffer)
 
         let tokens = try parser.parse()

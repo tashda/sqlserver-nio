@@ -4,12 +4,16 @@ import SQLServerTDS
 public struct SQLServerReturnValue: Sendable {
     public let name: String
     public let status: UInt8
-    public let value: TDSData?
+    public let value: SQLServerValue?
 
-    public init(name: String, status: UInt8, value: TDSData?) {
+    public init(name: String, status: UInt8, value: SQLServerValue?) {
         self.name = name
         self.status = status
         self.value = value
+    }
+
+    internal init(name: String, status: UInt8, value: TDSData?) {
+        self.init(name: name, status: status, value: value.map(SQLServerValue.init(base:)))
     }
 
     // Typed convenience accessors

@@ -3,7 +3,7 @@ import NIO
 /// Packet Header
 /// https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/7af53667-1b72-4703-8258-7984e838f746
 extension TDSPacket {
-    public struct Header {
+    public struct Header: Sendable {
         static let length = 8
         
         /// Type

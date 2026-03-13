@@ -2,7 +2,7 @@ import NIO
 
 import NIO
 
-extension TDSMessage {
+extension SQLServerTDS.TDSMessage {
     init(from buffer: inout ByteBuffer, ofType type: TDSPacket.HeaderType, allocator: ByteBufferAllocator) throws {
         var packets = [TDSPacket]()
         
