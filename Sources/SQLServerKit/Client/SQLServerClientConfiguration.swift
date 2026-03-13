@@ -14,6 +14,15 @@ extension SQLServerTLSConfiguration {
         config.certificateVerification = .none
         return config
     }
+
+    /// A TLS configuration that uses a custom CA certificate for server verification.
+    /// - Parameter path: Path to a PEM-encoded CA certificate file.
+    public static func withCACertificate(atPath path: String) -> SQLServerTLSConfiguration {
+        var config = makeClientConfiguration()
+        config.certificateVerification = .noHostnameVerification
+        config.trustRoots = .file(path)
+        return config
+    }
 }
 
 extension SQLServerClient {
@@ -67,14 +76,24 @@ extension SQLServerClient {
             authentication: SQLServerAuthentication,
             tlsEnabled: Bool,
             trustServerCertificate: Bool = false,
+            caCertificatePath: String? = nil,
             poolConfiguration: SQLServerConnectionPool.Configuration = .init(),
             metadataConfiguration: SQLServerMetadataOperations.Configuration = .init(),
             retryConfiguration: SQLServerRetryConfiguration = .init(),
             transparentNetworkIPResolution: Bool = true
         ) {
-            let tlsConfig: SQLServerTLSConfiguration? = tlsEnabled
-                ? (trustServerCertificate ? .trustingServerCertificate : .clientDefault)
-                : nil
+            let tlsConfig: SQLServerTLSConfiguration?
+            if tlsEnabled {
+                if trustServerCertificate {
+                    tlsConfig = .trustingServerCertificate
+                } else if let caPath = caCertificatePath {
+                    tlsConfig = .withCACertificate(atPath: caPath)
+                } else {
+                    tlsConfig = .clientDefault
+                }
+            } else {
+                tlsConfig = nil
+            }
             self.init(
                 hostname: hostname,
                 port: port,
