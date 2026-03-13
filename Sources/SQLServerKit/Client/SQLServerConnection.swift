@@ -20,6 +20,7 @@ public final class SQLServerConnection: @unchecked Sendable {
         public var port: Int
         public var login: Login
         public var tlsConfiguration: SQLServerTLSConfiguration?
+        public var encryptionMode: SQLServerEncryptionMode
         public var transparentNetworkIPResolution: Bool
         public var metadataConfiguration: SQLServerMetadataOperations.Configuration
         public var retryConfiguration: SQLServerRetryConfiguration
@@ -32,6 +33,7 @@ public final class SQLServerConnection: @unchecked Sendable {
             port: Int = 1433,
             login: Login,
             tlsConfiguration: SQLServerTLSConfiguration? = .makeClientConfiguration(),
+            encryptionMode: SQLServerEncryptionMode = .optional,
             metadataConfiguration: SQLServerMetadataOperations.Configuration = .init(),
             retryConfiguration: SQLServerRetryConfiguration = .init(),
             sessionOptions: SessionOptions = .ssmsDefaults,
@@ -42,6 +44,7 @@ public final class SQLServerConnection: @unchecked Sendable {
             self.port = port
             self.login = login
             self.tlsConfiguration = tlsConfiguration
+            self.encryptionMode = encryptionMode
             self.metadataConfiguration = metadataConfiguration
             self.retryConfiguration = retryConfiguration
             self.sessionOptions = sessionOptions
@@ -155,6 +158,7 @@ public final class SQLServerConnection: @unchecked Sendable {
                     addresses: addresses,
                     tlsConfiguration: cfg.tlsConfiguration,
                     serverHostname: cfg.hostname,
+                    encryptionMode: cfg.encryptionMode.asTDSMode,
                     connectTimeout: .seconds(Int64(cfg.connectTimeoutSeconds)),
                     on: eventLoop,
                     logger: logger
