@@ -192,7 +192,7 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
     }
 
     private func fetchProcesses(options: SQLServerActivityOptions, on loop: EventLoop) -> EventLoopFuture<[SQLServerProcessInfo]> {
-        var sql = """
+        let sql = """
         SELECT
             s.session_id,
             s.login_name,
@@ -214,18 +214,14 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
             r.blocking_session_id,
             r.database_id,
             r.start_time,
-            r.percent_complete
-        """
-        if options.includeSqlText { sql += ", st.text AS sql_text" }
-        if options.includeQueryPlan { sql += ", CAST(qp.query_plan AS NVARCHAR(MAX)) AS plan_xml" }
-        sql += """
+            r.percent_complete,
+            st.text AS sql_text,
+            CAST(qp.query_plan AS NVARCHAR(MAX)) AS plan_xml
         FROM sys.dm_exec_sessions AS s
         LEFT JOIN sys.dm_exec_connections AS c ON c.session_id = s.session_id
         LEFT JOIN sys.dm_exec_requests   AS r ON r.session_id = s.session_id
-        """
-        if options.includeSqlText { sql += " OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) AS st" }
-        if options.includeQueryPlan { sql += " OUTER APPLY sys.dm_exec_query_plan(r.plan_handle) AS qp" }
-        sql += """
+        OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) AS st
+        OUTER APPLY sys.dm_exec_query_plan(r.plan_handle) AS qp
         WHERE s.session_id <> @@SPID
         ORDER BY s.session_id;
         """
@@ -326,7 +322,7 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
     }
 
     private func fetchExpensiveQueries(options: SQLServerActivityOptions, on loop: EventLoop) -> EventLoopFuture<[SQLServerExpensiveQuery]> {
-        var sql = """
+        let sql = """
         SELECT TOP (20)
             qs.query_hash,
             qs.execution_count,
@@ -336,16 +332,14 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
             qs.total_logical_writes,
             qs.max_worker_time,
             qs.max_elapsed_time,
-            qs.last_execution_time
-        """
-        if options.includeSqlText { sql += ", st.text AS sql_text" }
-        if options.includeQueryPlan { sql += ", CAST(qp.query_plan AS NVARCHAR(MAX)) AS plan_xml" }
-        sql += """
+            qs.last_execution_time,
+            st.text AS sql_text,
+            CAST(qp.query_plan AS NVARCHAR(MAX)) AS plan_xml
         FROM sys.dm_exec_query_stats AS qs
+        OUTER APPLY sys.dm_exec_sql_text(qs.sql_handle) AS st
+        OUTER APPLY sys.dm_exec_query_plan(qs.plan_handle) AS qp
+        ORDER BY qs.total_worker_time DESC;
         """
-        if options.includeSqlText { sql += " OUTER APPLY sys.dm_exec_sql_text(qs.sql_handle) AS st" }
-        if options.includeQueryPlan { sql += " OUTER APPLY sys.dm_exec_query_plan(qs.plan_handle) AS qp" }
-        sql += " ORDER BY qs.total_worker_time DESC;"
 
         return client.query(sql, on: loop).map { rows in
             rows.map { row in
