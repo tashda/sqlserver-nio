@@ -1,19 +1,24 @@
 import Foundation
 import NIO
+import NIOConcurrencyHelpers
 import SQLServerTDS
+import Logging
 
 /// High-level Activity Monitor mirroring SSMS panes via DMV queries.
-public final class SQLServerActivityMonitor {
+public final class SQLServerActivityMonitor: @unchecked Sendable {
     private let client: SQLServerClient
     private let waitIgnoreList: Set<String>
+    private let baselineLock = NIOLock()
+    private let logger = Logger(label: "dk.tippr.sqlserver-nio.activity-monitor")
 
     // Baselines for delta computation across snapshots
     private var lastWaits: [String: SQLServerWaitStat] = [:]
     private var lastFileIO: [String: SQLServerFileIOStat] = [:]
+    private var lastBatchRequests: Int64?
+    private var lastSnapshotTime: Date?
 
     public init(client: SQLServerClient) {
         self.client = client
-        // SSMS ignores many benign/background waits; representative subset common across versions
         self.waitIgnoreList = [
             "SLEEP_TASK", "BROKER_TASK_STOP", "BROKER_TO_FLUSH", "LAZYWRITER_SLEEP",
             "SLEEP_SYSTEMTASK", "SLEEP_BPOOL_FLUSH", "BROKER_EVENTHANDLER", "XE_TIMER_EVENT",
@@ -30,23 +35,66 @@ public final class SQLServerActivityMonitor {
     /// Takes a single snapshot of activity.
     public func snapshot(options: SQLServerActivityOptions = .init(), on eventLoop: EventLoop? = nil) -> EventLoopFuture<SQLServerActivitySnapshot> {
         let loop = eventLoop ?? client.eventLoopGroup.next()
-        let processesFut = fetchProcesses(options: options, on: loop)
-        let waitsFut = fetchWaits(on: loop)
-        let fileIoFut = fetchFileIO(on: loop)
-        let expensiveFut = fetchExpensiveQueries(options: options, on: loop)
+        
+        logger.debug("Activity Monitor: Starting snapshot")
 
-        return processesFut.and(waitsFut).flatMap { procs, waits in
-            return fileIoFut.and(expensiveFut).map { fileIO, expensive in
-                let waitsDelta = self.computeWaitDeltas(current: waits)
-                let fileDelta = self.computeFileIODeltas(current: fileIO)
-                return SQLServerActivitySnapshot(
-                    processes: procs,
-                    waits: waits,
-                    waitsDelta: waitsDelta,
-                    fileIO: fileIO,
-                    fileIODelta: fileDelta,
-                    expensiveQueries: expensive
-                )
+        let overviewFut = fetchOverview(on: loop).recover { [weak self] error in
+            self?.logger.error("Activity Monitor: Failed to fetch overview: \(error)")
+            return nil
+        }
+        
+        let processesFut = fetchProcesses(options: options, on: loop).recover { [weak self] error in
+            self?.logger.error("Activity Monitor: Failed to fetch processes: \(error)")
+            return []
+        }
+        
+        let waitsFut = fetchWaits(on: loop).recover { [weak self] error in
+            self?.logger.error("Activity Monitor: Failed to fetch waits: \(error)")
+            return []
+        }
+        
+        let fileIoFut = fetchFileIO(on: loop).recover { [weak self] error in
+            self?.logger.error("Activity Monitor: Failed to fetch file IO: \(error)")
+            return []
+        }
+        
+        let expensiveFut = fetchExpensiveQueries(options: options, on: loop).recover { [weak self] error in
+            self?.logger.error("Activity Monitor: Failed to fetch expensive queries: \(error)")
+            return []
+        }
+
+        return overviewFut.and(processesFut).flatMap { overview, procs in
+            return waitsFut.and(fileIoFut).flatMap { waits, fileIO in
+                return expensiveFut.map { expensive in
+                    let waitsDelta = self.computeWaitDeltas(current: waits)
+                    let fileDelta = self.computeFileIODeltas(current: fileIO)
+                    
+                    let totalIoBytes = (fileDelta ?? []).reduce(Int64(0)) { $0 + $1.bytesReadDelta + $1.bytesWrittenDelta }
+                    let ioMB = Double(totalIoBytes) / (1024 * 1024)
+                    
+                    let finalOverview: SQLServerActivityOverview?
+                    if let ov = overview {
+                        finalOverview = SQLServerActivityOverview(
+                            processorTimePercent: ov.processorTimePercent,
+                            waitingTasksCount: ov.waitingTasksCount,
+                            databaseIOMBPerSec: ioMB,
+                            batchRequestsPerSec: ov.batchRequestsPerSec
+                        )
+                    } else {
+                        finalOverview = nil
+                    }
+
+                    return SQLServerActivitySnapshot(
+                        capturedAt: Date(),
+                        overview: finalOverview,
+                        processes: procs,
+                        waits: waits,
+                        waitsDelta: waitsDelta,
+                        fileIO: fileIO,
+                        fileIODelta: fileDelta,
+                        expensiveQueries: expensive
+                    )
+                }
             }
         }
     }
@@ -81,8 +129,7 @@ public final class SQLServerActivityMonitor {
                         let snap = try await self.snapshot(options: options)
                         continuation.yield(snap)
                     } catch {
-                        continuation.finish(throwing: error)
-                        return
+                        logger.error("Activity Monitor: Stream snapshot error: \(error)")
                     }
                     try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
                 }
@@ -94,8 +141,58 @@ public final class SQLServerActivityMonitor {
 
     // MARK: - Queries
 
+    private func fetchOverview(on loop: EventLoop) -> EventLoopFuture<SQLServerActivityOverview?> {
+        let cpuSql = """
+        SELECT TOP(1) [SQLProcessUtilization] AS cpu_usage
+        FROM (
+            SELECT record.value('(./Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]', 'int') AS [SQLProcessUtilization],
+            [timestamp]
+            FROM (
+                SELECT [timestamp], convert(xml, record) AS [record]
+                FROM sys.dm_os_ring_buffers
+                WHERE ring_buffer_type = N'RING_BUFFER_SCHEDULER_MONITOR'
+                AND record LIKE '%<SchedulerMonitorEvent>%'
+            ) AS x
+        ) AS y ORDER BY [timestamp] DESC;
+        """
+        
+        let waitIgnoreCSV = waitIgnoreList.map { "'\($0)'" }.joined(separator: ", ")
+        let waitsSql = "SELECT COUNT(*) AS waiting_tasks FROM sys.dm_os_waiting_tasks WHERE wait_type NOT IN (\(waitIgnoreCSV));"
+        
+        let batchSql = "SELECT cntr_value FROM sys.dm_os_performance_counters WHERE counter_name = 'Batch Requests/sec' AND object_name LIKE '%SQL Statistics%';"
+
+        let cpuFut = client.query(cpuSql, on: loop).map { $0.first?.column("cpu_usage")?.int ?? 0 }.recover { _ in 0 }
+        let waitsFut = client.query(waitsSql, on: loop).map { $0.first?.column("waiting_tasks")?.int ?? 0 }.recover { _ in 0 }
+        let batchFut = client.query(batchSql, on: loop).map { $0.first?.column("cntr_value")?.int64 ?? 0 }.recover { _ in 0 }
+
+        return cpuFut.and(waitsFut).flatMap { cpu, waits in
+            return batchFut.map { batchTotal in
+                let now = Date()
+                var batchRate: Double = 0
+
+                self.baselineLock.withLock {
+                    if let lastTime = self.lastSnapshotTime, let lastBatch = self.lastBatchRequests {
+                        let elapsed = now.timeIntervalSince(lastTime)
+                        if elapsed > 0 {
+                            batchRate = Double(max(0, batchTotal - lastBatch)) / elapsed
+                        }
+                    }
+                    self.lastBatchRequests = batchTotal
+                    self.lastSnapshotTime = now
+                }
+
+                return SQLServerActivityOverview(
+                    processorTimePercent: Double(cpu),
+                    waitingTasksCount: waits,
+                    databaseIOMBPerSec: 0, 
+                    batchRequestsPerSec: batchRate
+                )
+            }
+        }
+    }
+
     private func fetchProcesses(options: SQLServerActivityOptions, on loop: EventLoop) -> EventLoopFuture<[SQLServerProcessInfo]> {
-        var sql = """
+        let sql = """
         SELECT
             s.session_id,
             s.login_name,
@@ -117,19 +214,15 @@ public final class SQLServerActivityMonitor {
             r.blocking_session_id,
             r.database_id,
             r.start_time,
-            r.percent_complete
-        """
-        if options.includeSqlText { sql += ", st.text AS sql_text" }
-        if options.includeQueryPlan { sql += ", qp.query_plan AS plan_xml" }
-        sql += """
+            r.percent_complete,
+            st.text AS sql_text,
+            CAST(qp.query_plan AS NVARCHAR(MAX)) AS plan_xml
         FROM sys.dm_exec_sessions AS s
         LEFT JOIN sys.dm_exec_connections AS c ON c.session_id = s.session_id
         LEFT JOIN sys.dm_exec_requests   AS r ON r.session_id = s.session_id
-        """
-        if options.includeSqlText { sql += " OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) AS st" }
-        if options.includeQueryPlan { sql += " OUTER APPLY sys.dm_exec_query_plan(r.plan_handle) AS qp" }
-        sql += """
-        WHERE s.session_id <> @@SPID -- exclude current
+        OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) AS st
+        OUTER APPLY sys.dm_exec_query_plan(r.plan_handle) AS qp
+        WHERE s.session_id <> @@SPID
         ORDER BY s.session_id;
         """
 
@@ -137,7 +230,7 @@ public final class SQLServerActivityMonitor {
             rows.compactMap { row in
                 guard let sid = row.column("session_id")?.int else { return nil }
                 let pages = row.column("session_memory_pages")?.int ?? 0
-                let memKB = pages * 8 // memory_usage is in 8KB pages
+                let memKB = pages * 8 
                 let req = SQLServerProcessInfo.Request(
                     status: row.column("request_status")?.string,
                     command: row.column("command")?.string,
@@ -171,10 +264,12 @@ public final class SQLServerActivityMonitor {
     }
 
     private func fetchWaits(on loop: EventLoop) -> EventLoopFuture<[SQLServerWaitStat]> {
+        let waitIgnoreCSV = waitIgnoreList.map { "'\($0)'" }.joined(separator: ", ")
         let sql = """
         SELECT wait_type, waiting_tasks_count, wait_time_ms, signal_wait_time_ms
         FROM sys.dm_os_wait_stats
-        WHERE wait_type NOT IN (\(waitIgnoreList.map { "'\($0)'" }.joined(separator: ", ")))
+        WHERE wait_type NOT IN (\(waitIgnoreCSV))
+        AND wait_time_ms > 0
         ORDER BY wait_time_ms DESC;
         """
         return client.query(sql, on: loop).map { rows in
@@ -198,8 +293,8 @@ public final class SQLServerActivityMonitor {
             mf.name AS file_name,
             vfs.num_of_reads,
             vfs.num_of_writes,
-            vfs.bytes_read,
-            vfs.bytes_written,
+            vfs.num_of_bytes_read,
+            vfs.num_of_bytes_written,
             vfs.io_stall_read_ms,
             vfs.io_stall_write_ms
         FROM sys.dm_io_virtual_file_stats(NULL, NULL) AS vfs
@@ -217,8 +312,8 @@ public final class SQLServerActivityMonitor {
                     fileName: row.column("file_name")?.string,
                     numReads: row.column("num_of_reads")?.int ?? 0,
                     numWrites: row.column("num_of_writes")?.int ?? 0,
-                    bytesRead: Int64(row.column("bytes_read")?.int64 ?? 0),
-                    bytesWritten: Int64(row.column("bytes_written")?.int64 ?? 0),
+                    bytesRead: Int64(row.column("num_of_bytes_read")?.int64 ?? 0),
+                    bytesWritten: Int64(row.column("num_of_bytes_written")?.int64 ?? 0),
                     ioStallReadMs: Int64(row.column("io_stall_read_ms")?.int64 ?? 0),
                     ioStallWriteMs: Int64(row.column("io_stall_write_ms")?.int64 ?? 0)
                 )
@@ -227,7 +322,7 @@ public final class SQLServerActivityMonitor {
     }
 
     private func fetchExpensiveQueries(options: SQLServerActivityOptions, on loop: EventLoop) -> EventLoopFuture<[SQLServerExpensiveQuery]> {
-        var sql = """
+        let sql = """
         SELECT TOP (20)
             qs.query_hash,
             qs.execution_count,
@@ -237,16 +332,14 @@ public final class SQLServerActivityMonitor {
             qs.total_logical_writes,
             qs.max_worker_time,
             qs.max_elapsed_time,
-            qs.last_execution_time
-        """
-        if options.includeSqlText { sql += ", st.text AS sql_text" }
-        if options.includeQueryPlan { sql += ", qp.query_plan AS plan_xml" }
-        sql += """
+            qs.last_execution_time,
+            st.text AS sql_text,
+            CAST(qp.query_plan AS NVARCHAR(MAX)) AS plan_xml
         FROM sys.dm_exec_query_stats AS qs
+        OUTER APPLY sys.dm_exec_sql_text(qs.sql_handle) AS st
+        OUTER APPLY sys.dm_exec_query_plan(qs.plan_handle) AS qp
+        ORDER BY qs.total_worker_time DESC;
         """
-        if options.includeSqlText { sql += " CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) AS st" }
-        if options.includeQueryPlan { sql += " CROSS APPLY sys.dm_exec_query_plan(qs.plan_handle) AS qp" }
-        sql += " ORDER BY qs.total_worker_time DESC;"
 
         return client.query(sql, on: loop).map { rows in
             rows.map { row in
@@ -273,28 +366,34 @@ public final class SQLServerActivityMonitor {
 
     private func computeWaitDeltas(current: [SQLServerWaitStat]) -> [SQLServerWaitStatDelta] {
         var deltas: [SQLServerWaitStatDelta] = []
+        let previous = baselineLock.withLock { lastWaits }
         for w in current {
-            if let prev = lastWaits[w.waitType] {
+            if let prev = previous[w.waitType] {
                 let d = SQLServerWaitStatDelta(
                     waitType: w.waitType,
                     waitingTasksCountDelta: max(0, w.waitingTasksCount - prev.waitingTasksCount),
                     waitTimeMsDelta: max(0, w.waitTimeMs - prev.waitTimeMs),
                     signalWaitTimeMsDelta: max(0, w.signalWaitTimeMs - prev.signalWaitTimeMs)
                 )
-                deltas.append(d)
+                if d.waitTimeMsDelta > 0 || d.waitingTasksCountDelta > 0 {
+                    deltas.append(d)
+                }
             }
         }
         // update baseline
-        lastWaits = Dictionary(uniqueKeysWithValues: current.map { ($0.waitType, $0) })
+        baselineLock.withLock {
+            lastWaits = Dictionary(uniqueKeysWithValues: current.map { ($0.waitType, $0) })
+        }
         return deltas.sorted { $0.waitTimeMsDelta > $1.waitTimeMsDelta }
     }
 
     private func computeFileIODeltas(current: [SQLServerFileIOStat]) -> [SQLServerFileIOStatDelta] {
         func key(_ s: SQLServerFileIOStat) -> String { "\(s.databaseId):\(s.fileId)" }
         var deltas: [SQLServerFileIOStatDelta] = []
+        let previous = baselineLock.withLock { lastFileIO }
         for f in current {
             let k = key(f)
-            if let prev = lastFileIO[k] {
+            if let prev = previous[k] {
                 let d = SQLServerFileIOStatDelta(
                     databaseId: f.databaseId,
                     fileId: f.fileId,
@@ -309,7 +408,9 @@ public final class SQLServerActivityMonitor {
             }
         }
         // update baseline
-        lastFileIO = Dictionary(uniqueKeysWithValues: current.map { (key($0), $0) })
+        baselineLock.withLock {
+            lastFileIO = Dictionary(uniqueKeysWithValues: current.map { (key($0), $0) } )
+        }
         return deltas
     }
 }

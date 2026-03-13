@@ -9,19 +9,19 @@ import SQLServerTDS
 // Provides node-mssql compatible connection acquisition/release patterns
 
 /// node-mssql compatible Request wrapper that handles per-request connection ownership
-public final class NodeMSSQLRequest {
+public final class NodeMSSQLRequest: @unchecked Sendable {
     public let sql: String
     public let stream: Bool
     public let parameters: [String: Any]
 
     // node-mssql style callbacks
-    public var onRow: ((TDSRow) -> Void)?
-    public var onDone: ((TDSTokens.DoneToken) -> Void)?
-    public var onError: ((Error) -> Void)?
-    public var onInfo: ((TDSTokens.ErrorInfoToken) -> Void)?
+    public var onRow: (@Sendable (SQLServerRow) -> Void)?
+    public var onDone: (@Sendable (SQLServerStreamDone) -> Void)?
+    public var onError: (@Sendable (Error) -> Void)?
+    public var onInfo: (@Sendable (SQLServerStreamMessage) -> Void)?
 
     // Internal state
-    private let onComplete: (Error?, Any?) -> Void
+    private let onComplete: @Sendable (Error?, Any?) -> Void
     private(set) var isExecuting = false
     private(set) var isCompleted = false
 
@@ -29,7 +29,7 @@ public final class NodeMSSQLRequest {
         sql: String,
         stream: Bool = false,
         parameters: [String: Any] = [:],
-        onComplete: @escaping (Error?, Any?) -> Void
+        onComplete: @escaping @Sendable (Error?, Any?) -> Void
     ) {
         self.sql = sql
         self.stream = stream
@@ -80,12 +80,12 @@ public final class NodeMSSQLRequest {
             onRow: { [weak self] row in
                 guard let self = self else { return }
                 print("📡 node-mssql: Row received")
-                self.onRow?(row)
+                self.onRow?(SQLServerRow(base: row))
             },
             onDone: { [weak self] doneToken in
                 guard let self = self else { return }
                 print("🏁 node-mssql: Done token received")
-                self.onDone?(doneToken)
+                self.onDone?(SQLServerStreamDone(status: doneToken.status, rowCount: doneToken.doneRowCount))
             }
         )
         tdsConnection.send(rawRequest, logger: tdsConnection.logger).whenComplete { [weak self] result in
@@ -114,7 +114,7 @@ public final class NodeMSSQLRequest {
 }
 
 /// node-mssql compatible connection pool with simplified acquire/release semantics
-public final class NodeMSSQLConnectionPool {
+public final class NodeMSSQLConnectionPool: @unchecked Sendable {
     private let baseClient: SQLServerClient
     private var activeConnections: Int = 0
     private let connectionLock = NIOLock()
@@ -124,7 +124,7 @@ public final class NodeMSSQLConnectionPool {
     }
 
     // node-mssql: this.parent.acquire(this, callback)
-    public func acquire(_ request: NodeMSSQLRequest, onComplete: @escaping (Error?, SQLServerConnection?) -> Void) {
+    public func acquire(_ request: NodeMSSQLRequest, onComplete: @escaping @Sendable (Error?, SQLServerConnection?) -> Void) {
         print("🎯 node-mssql: Starting connection acquisition for request")
 
         // Use existing withConnection but extend connection lifetime manually
@@ -176,7 +176,7 @@ extension SQLServerClient {
         sql: String,
         stream: Bool = false,
         parameters: [String: Any] = [:],
-        onComplete: @escaping (Error?, Any?) -> Void
+        onComplete: @escaping @Sendable (Error?, Any?) -> Void
     ) -> NodeMSSQLRequest {
         let request = NodeMSSQLRequest(
             sql: sql,

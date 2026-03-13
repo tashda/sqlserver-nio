@@ -1,9 +1,27 @@
-import NIO
-
-/// Integers
-/// https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/76425d61-416d-4c64-a60b-06072f83e180
+import NIOCore
+import Foundation
 
 extension TDSData {
+    private init<I: FixedWidthInteger>(fwi: I) {
+        let capacity: Int
+        switch I.bitWidth {
+        case 8:
+            capacity = 1
+        case 16:
+            capacity = 2
+        case 32:
+            capacity = 4
+        case 64:
+            capacity = 8
+        default:
+            fatalError("Cannot encode \(I.self) to TDSData")
+        }
+
+        var buffer = ByteBufferAllocator().buffer(capacity: capacity)
+        buffer.writeInteger(fwi, endianness: .little)
+        self.init(metadata: I.tdsMetadata, value: buffer)
+    }
+
     public init(int value: Int) {
         self.init(fwi: value)
     }
@@ -48,6 +66,10 @@ extension TDSData {
         return fwi()
     }
 
+    public var int64: Int64? {
+        return fwi()
+    }
+
     public var int8: Int8? {
         return fwi()
     }
@@ -57,10 +79,6 @@ extension TDSData {
     }
 
     public var int32: Int32? {
-        return fwi()
-    }
-
-    public var int64: Int64? {
         return fwi()
     }
 
@@ -83,29 +101,8 @@ extension TDSData {
     public var uint64: UInt64? {
         return fwi()
     }
-}
 
-private extension TDSData {
-    init<I>(fwi: I) where I: FixedWidthInteger {
-        let capacity: Int
-        switch I.bitWidth {
-        case 8:
-            capacity = 1
-        case 16:
-            capacity = 2
-        case 32:
-            capacity = 4
-        case 64:
-            capacity = 8
-        default:
-            fatalError("Cannot encode \(I.self) to TDSData")
-        }
-        var buffer = ByteBufferAllocator().buffer(capacity: capacity)
-        buffer.writeInteger(fwi, endianness: .little)
-        self.init(metadata: I.tdsMetadata, value: buffer)
-    }
-
-    func fwi<I>(_ type: I.Type = I.self) -> I?
+    private func fwi<I>(_ type: I.Type = I.self) -> I?
         where I: FixedWidthInteger
     {
         if self.metadata.dataType == .sqlVariant {
@@ -117,46 +114,51 @@ private extension TDSData {
 
         switch self.metadata.dataType {
         case .bit:
-            guard value.readableBytes == 1, let byte = value.getInteger(at: value.readerIndex, as: UInt8.self) else { return nil }
+            guard value.readableBytes == 1,
+                  let byte = value.getInteger(at: value.readerIndex, as: UInt8.self) else {
+                return nil
+            }
             return I(byte)
         case .bitn:
             switch value.readableBytes {
             case 0:
                 return nil
             case 1:
-                guard let byte = value.getInteger(at: value.readerIndex, as: UInt8.self) else { return nil }
+                guard let byte = value.getInteger(at: value.readerIndex, as: UInt8.self) else {
+                    return nil
+                }
                 return I(byte)
             default:
                 return nil
             }
         case .tinyInt:
-            guard value.readableBytes == 1 else {
-                return nil
-            }
-            guard let uint8 = value.getInteger(at: value.readerIndex, as: UInt8.self) else {
+            guard value.readableBytes == 1,
+                  let uint8 = value.getInteger(at: value.readerIndex, as: UInt8.self) else {
                 return nil
             }
             return I(exactly: uint8)
         case .smallInt:
-            assert(value.readableBytes == 2)
-            guard let int16 = value.readInteger(endianness: .little, as: Int16.self) else {
+            guard value.readableBytes == 2,
+                  let int16 = value.readInteger(endianness: .little, as: Int16.self) else {
                 return nil
             }
             return I(exactly: int16)
         case .int:
-            assert(value.readableBytes == 4)
-            guard let int32 = value.getInteger(at: value.readerIndex, endianness: .little, as: Int32.self) else {
+            guard value.readableBytes == 4,
+                  let int32 = value.getInteger(at: value.readerIndex, endianness: .little, as: Int32.self) else {
                 return nil
             }
             return I(exactly: int32)
         case .bigInt:
-            assert(value.readableBytes == 8)
-            guard let int64 = value.getInteger(at: value.readerIndex, endianness: .little, as: Int64.self) else {
+            guard value.readableBytes == 8,
+                  let int64 = value.getInteger(at: value.readerIndex, endianness: .little, as: Int64.self) else {
                 return nil
             }
             return I(exactly: int64)
         case .intn:
             switch value.readableBytes {
+            case 0:
+                return nil
             case 1:
                 guard let uint8 = value.getInteger(at: value.readerIndex, as: UInt8.self) else {
                     return nil
@@ -177,19 +179,120 @@ private extension TDSData {
                     return nil
                 }
                 return I(exactly: int64)
-            case 0:
-                return nil
             default:
-                fatalError("Unexpected number of readable bytes for INTNTYPE data type.")
+                return nil
             }
+        case .decimal, .numeric, .decimalLegacy, .numericLegacy:
+            guard let decimal = self.decimal else {
+                return nil
+            }
+            var integral = Decimal()
+            var working = decimal
+            NSDecimalRound(&integral, &working, 0, .plain)
+            guard integral == decimal else {
+                return nil
+            }
+            return I(exactly: NSDecimalNumber(decimal: integral).int64Value)
         default:
             return nil
         }
     }
 }
 
+extension Int: TDSDataConvertible {
+    public static var tdsMetadata: any Metadata {
+        return TypeMetadata(dataType: .int)
+    }
+
+    public init?(tdsData: TDSData) {
+        guard let int = tdsData.int else {
+            return nil
+        }
+        self = int
+    }
+
+    public var tdsData: TDSData? {
+        return .init(int: self)
+    }
+}
+
+extension Int8: TDSDataConvertible {
+    public static var tdsMetadata: any Metadata {
+        return TypeMetadata(dataType: .tinyInt)
+    }
+
+    public init?(tdsData: TDSData) {
+        guard let int = tdsData.int else { return nil }
+        self = Int8(int)
+    }
+
+    public var tdsData: TDSData? {
+        return .init(int8: self)
+    }
+}
+
+extension Int16: TDSDataConvertible {
+    public static var tdsMetadata: any Metadata {
+        return TypeMetadata(dataType: .smallInt)
+    }
+
+    public init?(tdsData: TDSData) {
+        guard let int = tdsData.int else { return nil }
+        self = Int16(int)
+    }
+
+    public var tdsData: TDSData? {
+        return .init(int16: self)
+    }
+}
+
+extension Int32: TDSDataConvertible {
+    public static var tdsMetadata: any Metadata {
+        return TypeMetadata(dataType: .int)
+    }
+
+    public init?(tdsData: TDSData) {
+        guard let int = tdsData.int else { return nil }
+        self = Int32(int)
+    }
+
+    public var tdsData: TDSData? {
+        return .init(int32: self)
+    }
+}
+
+extension Int64: TDSDataConvertible {
+    public static var tdsMetadata: any Metadata {
+        return TypeMetadata(dataType: .bigInt)
+    }
+
+    public init?(tdsData: TDSData) {
+        guard let int = tdsData.int else { return nil }
+        self = Int64(int)
+    }
+
+    public var tdsData: TDSData? {
+        return .init(int64: self)
+    }
+}
+
+extension UInt8: TDSDataConvertible {
+    public static var tdsMetadata: any Metadata {
+        return TypeMetadata(dataType: .tinyInt)
+    }
+
+    public init?(tdsData: TDSData) {
+        guard let int = tdsData.int else { return nil }
+        self = UInt8(int)
+    }
+
+    public var tdsData: TDSData? {
+        return .init(uint8: self)
+    }
+}
+
 extension FixedWidthInteger {
-    public static var tdsMetadata: Metadata {
+    public static var tdsMetadata: any Metadata {
         let dataType: TDSDataType
         switch self.bitWidth {
         case 8:
@@ -205,29 +308,7 @@ extension FixedWidthInteger {
         }
         return TypeMetadata(dataType: dataType)
     }
-
-    public var tdsData: TDSData? {
-        return .init(fwi: self)
-    }
-
-    public init?(tdsData: TDSData) {
-        guard let fwi = tdsData.fwi(Self.self) else {
-            return nil
-        }
-        self = fwi
-    }
 }
-
-extension Int: TDSDataConvertible { }
-extension Int8: TDSDataConvertible { }
-extension Int16: TDSDataConvertible { }
-extension Int32: TDSDataConvertible { }
-extension Int64: TDSDataConvertible { }
-extension UInt: TDSDataConvertible { }
-extension UInt8: TDSDataConvertible { }
-extension UInt16: TDSDataConvertible { }
-extension UInt32: TDSDataConvertible { }
-extension UInt64: TDSDataConvertible { }
 
 extension TDSData: ExpressibleByIntegerLiteral {
     public init(integerLiteral value: Int) {

@@ -5,7 +5,7 @@ public enum TDSAuthentication: Sendable {
     case windowsIntegrated(username: String, password: String, domain: String?)
 }
 
-public struct TDSLoginConfiguration {
+public struct TDSLoginConfiguration: Sendable {
     public var serverName: String
     public var port: Int
     public var database: String

@@ -2,7 +2,7 @@ import XCTest
 @testable import SQLServerTDS
 import NIO
 
-final class TDSTokenParserColMetadataNoColumnsTests: XCTestCase {
+final class TDSTokenOperationsColMetadataNoColumnsTests: XCTestCase, @unchecked Sendable {
     func testColMetadataNoColumnsSentinel() throws {
         var buffer = ByteBufferAllocator().buffer(capacity: 3)
         buffer.writeInteger(TDSTokens.TokenType.colMetadata.rawValue)
@@ -11,7 +11,7 @@ final class TDSTokenParserColMetadataNoColumnsTests: XCTestCase {
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
         var bufferCopy = stream.buffer
-        let token = try TDSTokenParser.parseColMetadataToken(from: &bufferCopy)
+        let token = try TDSTokenOperations.parseColMetadataToken(from: &bufferCopy)
         XCTAssertEqual(token.count, 0)
         XCTAssertTrue(token.colData.isEmpty)
     }

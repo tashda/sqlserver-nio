@@ -2,9 +2,9 @@ import XCTest
 import NIO
 @testable import SQLServerTDS
 
-final class TDSTokenParserClrUdtFallbackTests: XCTestCase {
+final class TDSTokenOperationsClrUdtFallbackTests: XCTestCase, @unchecked Sendable {
     private struct TimeoutError: Error {}
-    private func withTimeout<T>(_ seconds: TimeInterval, _ op: @escaping () throws -> T) async throws -> T {
+    private func withTimeout<T: Sendable>(_ seconds: TimeInterval, _ op: @escaping @Sendable () throws -> T) async throws -> T {
         try await withThrowingTaskGroup(of: T.self) { group in
             group.addTask { try op() }
             group.addTask {
@@ -36,10 +36,12 @@ final class TDSTokenParserClrUdtFallbackTests: XCTestCase {
         buffer.writeInteger(TDSTokens.TokenType.row.rawValue)
         buffer.writeInteger(UInt16(3), endianness: .little)
         buffer.writeBytes([0x01, 0x02, 0x03])
+        let encoded = buffer
         let row = try await withTimeout(5) {
+            var localBuffer = encoded
             let stream = TDSStreamParser()
-            stream.buffer.writeBuffer(&buffer)
-            let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+            stream.buffer.writeBuffer(&localBuffer)
+            let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
             parser.colMetadata = meta
             return try XCTUnwrap(parser.parseRowToken())
         }
@@ -71,10 +73,12 @@ final class TDSTokenParserClrUdtFallbackTests: XCTestCase {
         buffer.writeInteger(TDSTokens.TokenType.row.rawValue)
         buffer.writeInteger(UInt16(0xFFFF), endianness: .little)
 
+        let encoded = buffer
         let row = try await withTimeout(5) {
+            var localBuffer = encoded
             let stream = TDSStreamParser()
-            stream.buffer.writeBuffer(&buffer)
-            let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+            stream.buffer.writeBuffer(&localBuffer)
+            let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
             parser.colMetadata = meta
             return try XCTUnwrap(parser.parseRowToken())
         }
