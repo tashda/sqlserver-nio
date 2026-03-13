@@ -3,7 +3,7 @@ import NIO
 /// Message Type. A 1-byte unsigned char
 /// https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/9b4a463c-2634-4a4b-ac35-bebfff2fb0f7
 extension TDSPacket {
-    public struct HeaderType: ExpressibleByIntegerLiteral, Equatable, CustomStringConvertible {
+    public struct HeaderType: ExpressibleByIntegerLiteral, Equatable, CustomStringConvertible, Sendable {
         /// SQL Batch
         public static let sqlBatch: HeaderType = 0x01
         

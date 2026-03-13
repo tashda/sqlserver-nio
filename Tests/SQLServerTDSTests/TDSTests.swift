@@ -2,7 +2,7 @@ import XCTest
 import NIO
 @testable import SQLServerTDS
 
-final class TDSTests: XCTestCase {
+final class TDSTests: XCTestCase, @unchecked Sendable {
     func testTDSPacketCreation() throws {
         var buffer = ByteBufferAllocator().buffer(capacity: 1024)
         // Correct length is 16 (0x10) bytes: 8 for the header + 8 for the data.

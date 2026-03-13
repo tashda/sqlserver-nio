@@ -3,10 +3,11 @@ import NIOCore
 import Logging
 @testable import SQLServerTDS
 @testable import SQLServerKit
+import SQLServerKitTesting
 
 /// Consolidated query tests for SQLServerNIO
 /// Covers basic SQL queries, parameters, and result handling
-final class QueryTests: StandardTestBase {
+final class QueryTests: StandardTestBase, @unchecked Sendable {
 
     // MARK: - Basic Query Tests
 
@@ -51,6 +52,102 @@ final class QueryTests: StandardTestBase {
         XCTAssertEqual(names, ["First", "Second", "Third"])
 
         logTestSuccess("Multiple row query successful!")
+    }
+
+
+    func testQueryPagedReturnsRequestedWindow() async throws {
+        let rows = try await client.queryPaged("""
+            SELECT v.n AS id, CONCAT('row-', v.n) AS name
+            FROM (VALUES (1),(2),(3),(4),(5)) AS v(n)
+        """, limit: 2, offset: 1)
+
+        XCTAssertEqual(rows.count, 2)
+        XCTAssertEqual(rows[0].column("id")?.int, 2)
+        XCTAssertEqual(rows[0].column("name")?.string, "row-2")
+        XCTAssertEqual(rows[1].column("id")?.int, 3)
+        XCTAssertEqual(rows[1].column("name")?.string, "row-3")
+    }
+
+    func testWithDatabaseScopesOperationsAndResetsConnection() async throws {
+        try await withTemporaryDatabase(client: client, prefix: "echo") { dbName in
+            let admin = SQLServerAdministrationClient(client: self.client, database: dbName)
+            try await admin.createTable(
+                name: "paged_scope",
+                columns: [
+                    SQLServerColumnDefinition(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
+                    SQLServerColumnDefinition(name: "name", definition: .standard(.init(dataType: .nvarchar(length: .length(50)))))
+                ]
+            )
+
+            let names = try await self.client.withDatabase(dbName) { connection in
+                try await connection.insertRow(into: "paged_scope", values: [
+                    "id": .int(1),
+                    "name": .nString("one")
+                ])
+                try await connection.insertRow(into: "paged_scope", values: [
+                    "id": .int(2),
+                    "name": .nString("two")
+                ])
+                let rows = try await connection.query("SELECT name FROM [dbo].[paged_scope] ORDER BY id")
+                return rows.compactMap { $0.column("name")?.string }
+            }
+
+            XCTAssertEqual(names, ["one", "two"])
+
+            let currentDb = try await self.client.queryScalar("SELECT DB_NAME() AS db", as: String.self)
+            XCTAssertEqual(currentDb?.lowercased(), "master")
+        }
+    }
+
+    func testDedicatedConnectionCanChangeDatabaseAndRelease() async throws {
+        try await withTemporaryDatabase(client: client, prefix: "echo") { dbName in
+            let connection = try await self.client.connection()
+            do {
+                try await connection.use(database: dbName)
+
+                let currentDb = try await connection.queryScalar("SELECT DB_NAME() AS db", as: String.self)
+                XCTAssertEqual(currentDb?.lowercased(), dbName.lowercased())
+
+                _ = try await connection.execute("""
+                    CREATE TABLE [dbo].[connection_scope] (
+                        [id] INT NOT NULL PRIMARY KEY,
+                        [name] NVARCHAR(50) NOT NULL
+                    )
+                """)
+
+                try await connection.insertRow(into: "connection_scope", values: [
+                    "id": .int(1),
+                    "name": .nString("scoped")
+                ])
+
+                let rows = try await connection.query("SELECT name FROM [dbo].[connection_scope]")
+                XCTAssertEqual(rows.first?.column("name")?.string, "scoped")
+            } catch {
+                try? await connection.close()
+                throw error
+            }
+
+            try await connection.close()
+        }
+    }
+
+    func testObjectDefinitionReturnsViewDefinition() async throws {
+        try await withTemporaryDatabase(client: client, prefix: "echo") { dbName in
+            try await self.client.withDatabase(dbName) { connection in
+                _ = try await connection.execute("CREATE VIEW [dbo].[echo_view] AS SELECT 42 AS value")
+            }
+
+            let definition = try await self.client.metadata.objectDefinition(
+                database: dbName,
+                schema: "dbo",
+                name: "echo_view",
+                kind: .view
+            )
+
+            XCTAssertEqual(definition?.type, .view)
+            XCTAssertTrue(definition?.definition?.localizedCaseInsensitiveContains("CREATE VIEW [dbo].[echo_view]") == true)
+            XCTAssertTrue(definition?.definition?.localizedCaseInsensitiveContains("SELECT 42 AS value") == true)
+        }
     }
 
     // MARK: - Data Type Tests

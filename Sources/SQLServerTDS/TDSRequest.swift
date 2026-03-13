@@ -1,7 +1,13 @@
-import NIO
-import NIOSSL
-import NIOTLS
+@preconcurrency import NIO
+import NIOConcurrencyHelpers
+@preconcurrency import NIOSSL
+@preconcurrency import NIOTLS
 import Logging
+
+public enum TDSUserEvent: Sendable {
+    case attention
+    case failCurrentRequestTimeout
+}
 
 extension TDSConnection: TDSClient {
     public func send(_ request: TDSRequest, logger: Logger) -> EventLoopFuture<Void> {
@@ -27,12 +33,14 @@ extension TDSConnection: TDSClient {
             resultPromise: resultPromise,
             tokenHandler: tokenHandler
         )
-        var didComplete = false
-        completionPromise.futureResult.whenComplete { _ in didComplete = true }
+        let didComplete = NIOLockedValueBox(false)
+        completionPromise.futureResult.whenComplete { _ in
+            didComplete.withLockedValue { $0 = true }
+        }
         self.logger.debug("[TDSRequest.send] creating promises on loop=\(self.channel.eventLoop) channelActive=\(self.channel.isActive)")
         let writeFuture = self.channel.writeAndFlush(context)
         self.channel.closeFuture.whenComplete { _ in
-            if !didComplete {
+            if !didComplete.withLockedValue({ $0 }) {
                 completionPromise.fail(TDSError.connectionClosed)
                 resultPromise.fail(TDSError.connectionClosed)
             }
@@ -44,14 +52,27 @@ extension TDSConnection: TDSClient {
 }
 
 public protocol TDSRequest {
-    func start(allocator: ByteBufferAllocator) throws -> [TDSPacket]
+    var packetType: TDSPacket.HeaderType { get }
+    func serialize(into buffer: inout ByteBuffer) throws
     func log(to logger: Logger)
-    var onRow: ((TDSRow) -> Void)? { get }
-    var onMetadata: (([TDSTokens.ColMetadataToken.ColumnData]) -> Void)? { get }
-    var onDone: ((TDSTokens.DoneToken) -> Void)? { get }
-    var onMessage: ((TDSTokens.ErrorInfoToken, Bool) -> Void)? { get }
-    var onReturnValue: ((TDSTokens.ReturnValueToken) -> Void)? { get }
+    var onRow: (@Sendable (TDSRow) -> Void)? { get }
+    var onMetadata: (@Sendable ([TDSTokens.ColMetadataToken.ColumnData]) -> Void)? { get }
+    var onDone: (@Sendable (TDSTokens.DoneToken) -> Void)? { get }
+    var onMessage: (@Sendable (TDSTokens.ErrorInfoToken, Bool) -> Void)? { get }
+    var onReturnValue: (@Sendable (TDSTokens.ReturnValueToken) -> Void)? { get }
     var stream: Bool { get }
+    var storesRowsInContext: Bool { get }
+}
+
+extension TDSRequest {
+    func start(allocator: ByteBufferAllocator) throws -> [TDSPacket] {
+        var buffer = allocator.buffer(capacity: TDSPacket.maximumPacketDataLength)
+        try self.serialize(into: &buffer)
+        return try TDSMessage(from: &buffer, ofType: self.packetType, allocator: allocator).packets
+    }
+
+    public var stream: Bool { false }
+    public var storesRowsInContext: Bool { false }
 }
 
 public enum TDSPacketResponse {
@@ -61,7 +82,7 @@ public enum TDSPacketResponse {
     case kickoffSSL
 }
 
-final class TDSRequestContext {
+final class TDSRequestContext: @unchecked Sendable {
     let delegate: TDSRequest
     let completionPromise: EventLoopPromise<Void>
     let resultPromise: EventLoopPromise<[TDSData]>
@@ -83,7 +104,64 @@ final class TDSRequestContext {
     }
 }
 
-final class TDSRequestHandler: ChannelDuplexHandler {
+protocol TokenHandler: AnyObject {
+    var columns: [TDSTokens.ColMetadataToken.ColumnData] { get }
+    func onColMetadata(_ token: TDSTokens.ColMetadataToken)
+    func onRow(_ token: TDSTokens.RowToken)
+    func onDone(_ token: TDSTokens.DoneToken)
+    func onMessage(_ token: TDSTokens.ErrorInfoToken)
+    func onReturnValue(_ token: TDSTokens.ReturnValueToken)
+}
+
+final class RequestTokenHandler: TokenHandler {
+    private let promise: EventLoopPromise<Void>
+    private let onRowCallback: (@Sendable (TDSRow) -> Void)?
+    private let onMetadataCallback: (@Sendable ([TDSTokens.ColMetadataToken.ColumnData]) -> Void)?
+    private let onDoneCallback: (@Sendable (TDSTokens.DoneToken) -> Void)?
+    private let onMessageCallback: (@Sendable (TDSTokens.ErrorInfoToken, Bool) -> Void)?
+    private let onReturnValueCallback: (@Sendable (TDSTokens.ReturnValueToken) -> Void)?
+
+    private(set) var columns: [TDSTokens.ColMetadataToken.ColumnData] = []
+
+    init(
+        promise: EventLoopPromise<Void>,
+        onRow: (@Sendable (TDSRow) -> Void)?,
+        onMetadata: (@Sendable ([TDSTokens.ColMetadataToken.ColumnData]) -> Void)?,
+        onDone: (@Sendable (TDSTokens.DoneToken) -> Void)?,
+        onMessage: (@Sendable (TDSTokens.ErrorInfoToken, Bool) -> Void)?,
+        onReturnValue: (@Sendable (TDSTokens.ReturnValueToken) -> Void)?
+    ) {
+        self.promise = promise
+        self.onRowCallback = onRow
+        self.onMetadataCallback = onMetadata
+        self.onDoneCallback = onDone
+        self.onMessageCallback = onMessage
+        self.onReturnValueCallback = onReturnValue
+    }
+
+    func onColMetadata(_ token: TDSTokens.ColMetadataToken) {
+        self.columns = token.colData
+        self.onMetadataCallback?(token.colData)
+    }
+
+    func onRow(_ token: TDSTokens.RowToken) {
+        self.onRowCallback?(TDSRow(token: token, columns: self.columns))
+    }
+
+    func onDone(_ token: TDSTokens.DoneToken) {
+        self.onDoneCallback?(token)
+    }
+
+    func onMessage(_ token: TDSTokens.ErrorInfoToken) {
+        self.onMessageCallback?(token, token.type == .error)
+    }
+
+    func onReturnValue(_ token: TDSTokens.ReturnValueToken) {
+        self.onReturnValueCallback?(token)
+    }
+}
+
+final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
     typealias InboundIn = ByteBuffer  // Complete messages from Message Assembly Layer
     typealias OutboundIn = TDSRequestContext
     typealias OutboundOut = TDSPacket
@@ -104,6 +182,8 @@ final class TDSRequestHandler: ChannelDuplexHandler {
     private let streamParser: TDSStreamParser
 
     var pipelineCoordinator: PipelineOrganizationHandler!
+    private weak var currentContext: ChannelHandlerContext?
+    private var currentEventLoop: EventLoop?
 
     // Reference to the TDSConnection for updating transaction state
     private weak var connection: TDSConnection?
@@ -170,12 +250,12 @@ final class TDSRequestHandler: ChannelDuplexHandler {
         }
 
         switch envToken.envchangeType {
-        case .beingTransaction: // Type 8
+        case .beginTransaction: // Type 8
             logger.debug("ENVCHANGE beginTransaction received, newValue length=\(envToken.newValue.count)")
             let descriptor = Array(envToken.newValue.prefix(8))
             if descriptor.count == 8 {
                 let hex = descriptor.map { String(format: "%02x", $0) }.joined()
-                logger.info("🔧 Transaction begin detected, descriptor=\(hex)")
+                logger.debug("Transaction begin detected, descriptor=\(hex)")
                 connection.updateTransactionState(descriptor: descriptor, requestCount: 1)
             }
 
@@ -183,7 +263,7 @@ final class TDSRequestHandler: ChannelDuplexHandler {
              .rollbackTransaction, // Type 10
              .defectTransaction, // Type 12
              .transactionEnded: // Type 17
-            logger.debug("ENVCHANGE transaction completion received type=\(envToken.envchangeType)")
+            logger.debug("ENVCHANGE transaction completion received type=\(String(describing: envToken.envchangeType))")
             // Reset to AutoCommit mode for all transaction completions
             let currentDescriptor = connection.transactionDescriptor
             let isInAutoCommit = currentDescriptor.allSatisfy { $0 == 0 }
@@ -194,7 +274,7 @@ final class TDSRequestHandler: ChannelDuplexHandler {
                 let action = envToken.envchangeType == .commitTransaction ? "committed" :
                            envToken.envchangeType == .rollbackTransaction ? "rolled back" :
                            envToken.envchangeType == .defectTransaction ? "defected" : "ended"
-                logger.info("🔧 Transaction \(action), returning to AutoCommit mode")
+                logger.debug("Transaction \(action), returning to AutoCommit mode")
             }
 
         default:
@@ -234,7 +314,7 @@ final class TDSRequestHandler: ChannelDuplexHandler {
             }
 
             streamParser.buffer.writeBuffer(&data)
-            let tokenParser = TDSTokenParser(streamParser: streamParser, logger: logger)
+            let tokenParser = TDSTokenOperations(streamParser: streamParser, logger: logger)
             let tokens = try tokenParser.parse()
             var loginAckReceived = false
 
@@ -242,24 +322,27 @@ final class TDSRequestHandler: ChannelDuplexHandler {
                 switch token.type {
                 case .colMetadata:
                     let colMetadataToken = token as! TDSTokens.ColMetadataToken
-                    request.delegate.onMetadata?(colMetadataToken.colData)
                     request.tokenHandler.onColMetadata(colMetadataToken)
                 case .row:
                     let rowToken = token as! TDSTokens.RowToken
                     let row = TDSRow(token: rowToken, columns: request.tokenHandler.columns)
-                    request.rows.append(row)
-                    request.delegate.onRow?(row)
+                    if request.delegate.storesRowsInContext {
+                        request.rows.append(row)
+                    }
                     request.tokenHandler.onRow(rowToken)
                 case .nbcRow:
                     let nbcRowToken = token as! TDSTokens.NbcRowToken
-                    let syntheticRow = TDSTokens.RowToken(colData: nbcRowToken.colData)
+                    let syntheticRow = TDSTokens.RowToken(
+                        colMetadata: nbcRowToken.colMetadata,
+                        colData: nbcRowToken.colData
+                    )
                     let row = TDSRow(token: syntheticRow, columns: request.tokenHandler.columns)
-                    request.rows.append(row)
-                    request.delegate.onRow?(row)
+                    if request.delegate.storesRowsInContext {
+                        request.rows.append(row)
+                    }
                     request.tokenHandler.onRow(syntheticRow)
                 case .done, .doneInProc, .doneProc:
                     let doneToken = token as! TDSTokens.DoneToken
-                    request.delegate.onDone?(doneToken)
                     request.tokenHandler.onDone(doneToken)
                     let doneMoreFlag: UShort = 0x0001
                     if (doneToken.status & doneMoreFlag) == 0 {
@@ -280,11 +363,9 @@ final class TDSRequestHandler: ChannelDuplexHandler {
                     if token.type == .error, let loginReq = request.delegate as? LoginRequest {
                         loginReq.serverErrorMessage = messageToken.messageText
                     }
-                    request.delegate.onMessage?(messageToken, token.type == .error)
                     request.tokenHandler.onMessage(messageToken)
                 case .returnValue:
                     let returnValueToken = token as! TDSTokens.ReturnValueToken
-                    request.delegate.onReturnValue?(returnValueToken)
                     request.tokenHandler.onReturnValue(returnValueToken)
                 case .loginAck:
                     loginAckReceived = true
@@ -496,7 +577,10 @@ final class TDSRequestHandler: ChannelDuplexHandler {
     
     
     private func _userInboundEventTriggered(context: ChannelHandlerContext, event: Any) throws {
-        if let sslHandler = sslClientHandler, let sslHandshakeComplete = event as? TLSUserEvent, case .handshakeCompleted = sslHandshakeComplete {
+        self.currentContext = context
+        self.currentEventLoop = context.eventLoop
+        if sslClientHandler != nil, let sslHandshakeComplete = event as? TLSUserEvent, case .handshakeCompleted = sslHandshakeComplete {
+            let fallbackEventLoop = context.eventLoop
             // SSL Handshake complete
             // Remove pipeline coordinator and rearrange message encoder/decoder
             
@@ -514,29 +598,39 @@ final class TDSRequestHandler: ChannelDuplexHandler {
                     let newDecoder = ByteToMessageHandler(self.packetDecoder)
                     let newEncoder = MessageToByteHandler(TDSPacketEncoder(logger: self.logger))
                     let ops = pipeline.syncOperations
-                    try ops.addHandler(newDecoder, name: self.firstDecoderName, position: .after(sslHandler))
-                    try ops.addHandler(newEncoder, name: self.firstEncoderName, position: .after(sslHandler))
+                    try ops.addHandler(newDecoder, name: self.firstDecoderName, position: .last)
+                    try ops.addHandler(newEncoder, name: self.firstEncoderName, position: .last)
                     self.firstDecoder = newDecoder
                     self.firstEncoder = newEncoder
                     self.pipelineCoordinator = nil
-                    return context.eventLoop.makeSucceededFuture(())
+                    guard let eventLoop = self.currentEventLoop ?? self.connection?.eventLoop else {
+                        throw TDSError.protocolError("Missing event loop during SSL pipeline reconfiguration")
+                    }
+                    return eventLoop.makeSucceededFuture(())
                 } catch {
-                    return context.eventLoop.makeFailedFuture(error)
+                    if let eventLoop = self.currentEventLoop ?? self.connection?.eventLoop {
+                        return eventLoop.makeFailedFuture(error)
+                    }
+                    return fallbackEventLoop.makeFailedFuture(error)
                 }
             }
             
-            future.whenSuccess {_ in
+            future.whenSuccess { _ in
                 self.logger.debug("Done w/ SSL Handshake and pipeline organization")
                 self.state = .sslHandshakeComplete
                 if let request = self.currentRequest {
                     self.cleanupRequest(request)
                     // Kick off the next queued request (LOGIN) immediately after PRELOGIN completes
-                    self.startNextIfQueued(context: context)
+                    if let currentContext = self.currentContext {
+                        self.startNextIfQueued(context: currentContext)
+                    }
                 }
             }
             
             future.whenFailure { error in
-                self.errorCaught(context: context, error: error)
+                if let currentContext = self.currentContext {
+                    self.errorCaught(context: currentContext, error: error)
+                }
             }
         }
     }
@@ -586,6 +680,8 @@ final class TDSRequestHandler: ChannelDuplexHandler {
     }
 
     func channelInactive(context: ChannelHandlerContext) {
+        self.currentContext = nil
+        self.currentEventLoop = nil
         logger.debug("TDSRequestHandler.channelInactive: draining \(queue.count) pending requests; pipelineState=\(pipelineCoordinator?.stateDescription ?? "<nil>")")
         // Fail any pending TLS handshake output promise to avoid leaking promises on loop shutdown.
         pipelineCoordinator?.failHandshakeIfPending()

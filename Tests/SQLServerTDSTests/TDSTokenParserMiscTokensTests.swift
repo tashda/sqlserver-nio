@@ -2,7 +2,7 @@ import XCTest
 @testable import SQLServerTDS
 import NIO
 
-final class TDSTokenParserMiscTokensTests: XCTestCase {
+final class TDSTokenOperationsMiscTokensTests: XCTestCase, @unchecked Sendable {
     func testParseFeatureExtAckAndFedAuthInfo() throws {
         var buffer = ByteBufferAllocator().buffer(capacity: 16)
         buffer.writeInteger(TDSTokens.TokenType.featureExtAck.rawValue)
@@ -15,7 +15,7 @@ final class TDSTokenParserMiscTokensTests: XCTestCase {
         buffer.writeBytes([0xAA])
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
 
         let tokens = try parser.parse()
         XCTAssertEqual(tokens.count, 2)
@@ -37,7 +37,7 @@ final class TDSTokenParserMiscTokensTests: XCTestCase {
         buffer.writeBytes([4,5,6])
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
 
         let tokens = try parser.parse()
         XCTAssertEqual(tokens.count, 2)
@@ -56,7 +56,7 @@ final class TDSTokenParserMiscTokensTests: XCTestCase {
         buffer.writeBytes([0x00, 0x01])
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
 
         let tokens = try parser.parse()
         XCTAssertEqual(tokens.count, 1)
@@ -80,7 +80,7 @@ final class TDSTokenParserMiscTokensTests: XCTestCase {
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
         parser.colMetadata = meta
 
         let tokens = try parser.parse()
@@ -90,7 +90,7 @@ final class TDSTokenParserMiscTokensTests: XCTestCase {
         let tvp = try XCTUnwrap(tokens[0] as? TDSTokens.TVPRowToken)
         XCTAssertEqual(tvp.colData.count, 1)
         var v = tvp.colData[0].data!
-        XCTAssertEqual(v.readInteger(endianness: .little, as: Int32.self), 42)
+        XCTAssertEqual(v.readInteger(endianness: Endianness.little, as: Int32.self), 42)
     }
 
     func testParseColumnStatusToken() throws {
@@ -102,7 +102,7 @@ final class TDSTokenParserMiscTokensTests: XCTestCase {
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
 
         let tokens = try parser.parse()
         XCTAssertEqual(tokens.count, 1)
@@ -128,7 +128,7 @@ final class TDSTokenParserMiscTokensTests: XCTestCase {
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenParser(streamParser: stream, logger: .init(label: "test"))
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
 
         let tokens = try parser.parse()
 

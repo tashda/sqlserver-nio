@@ -100,6 +100,8 @@ public enum SQLDataType: Sendable {
     case uniqueidentifier
     case sql_variant
     case xml
+    case userDefined(name: String, schema: String?)
+    case userDefinedTable(name: String, schema: String?)
 
     public enum VarcharLength: Sendable {
         case length(UInt16)
@@ -165,6 +167,12 @@ public enum SQLDataType: Sendable {
         case .uniqueidentifier: return "UNIQUEIDENTIFIER"
         case .sql_variant: return "SQL_VARIANT"
         case .xml: return "XML"
+        case .userDefined(let name, let schema):
+            if let schema, !schema.isEmpty { return "[\(schema)].[\(name)]" }
+            return "[\(name)]"
+        case .userDefinedTable(let name, let schema):
+            if let schema, !schema.isEmpty { return "[\(schema)].[\(name)]" }
+            return "[\(name)]"
         }
     }
 }

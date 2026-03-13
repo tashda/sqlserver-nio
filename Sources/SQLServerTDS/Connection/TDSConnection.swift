@@ -1,10 +1,18 @@
 import Foundation
 import NIO
+import NIOSSL
 import Logging
 
 public final class TDSConnection {
     let channel: Channel
     let tokenRing: TDSTokenRing
+    internal let requestHandler: TDSRequestHandler
+    internal let tlsConfiguration: TLSConfiguration?
+    internal let serverHostname: String?
+    internal let firstDecoderName: String
+    internal let firstEncoderName: String
+    internal let pipelineCoordinatorName: String
+    
     // Coalesce concurrent login() calls on the same connection
     // to a single in-flight future.
     var _loginFuture: EventLoopFuture<Void>?
@@ -35,12 +43,30 @@ public final class TDSConnection {
     // Stall detection support
     var lastStallSnapshot: String = ""
     
-    init(channel: Channel, logger: Logger) {
+    init(
+        channel: Channel,
+        requestHandler: TDSRequestHandler,
+        tlsConfiguration: TLSConfiguration?,
+        serverHostname: String?,
+        firstDecoderName: String,
+        firstEncoderName: String,
+        pipelineCoordinatorName: String,
+        logger: Logger
+    ) {
         self.channel = channel
+        self.requestHandler = requestHandler
+        self.tlsConfiguration = tlsConfiguration
+        self.serverHostname = serverHostname
+        self.firstDecoderName = firstDecoderName
+        self.firstEncoderName = firstEncoderName
+        self.pipelineCoordinatorName = pipelineCoordinatorName
         self.logger = logger
         self.didClose = false
         let ringSize = ProcessInfo.processInfo.environment["TDS_TOKEN_RING_SIZE"].flatMap { Int($0) } ?? 128
         self.tokenRing = TDSTokenRing(capacity: ringSize)
+        self.channel.closeFuture.whenComplete { [weak self] (_: Result<Void, any Error>) in
+            self?.didClose = true
+        }
     }
     
     // Transaction state accessors
@@ -57,6 +83,14 @@ public final class TDSConnection {
         self.outstandingRequestCount = requestCount
         self.isInTransaction = !descriptor.allSatisfy { $0 == 0 }
     }
+
+    public func updateSessionStatePayload(_ payload: [UInt8]) {
+        self.lastSessionStatePayload = payload
+    }
+
+    public func updateDataClassificationPayload(_ payload: [UInt8]) {
+        self.lastDataClassificationPayload = payload
+    }
     
     public func close() -> EventLoopFuture<Void> {
         guard !self.didClose else {
@@ -64,10 +98,6 @@ public final class TDSConnection {
         }
         self.didClose = true
        
-        // Close the channel; Channel operations are thread‑safe and will hop to the
-        // channel's event loop as needed. Avoid scheduling explicitly on the event loop
-        // to prevent "schedule tasks on an EventLoop that has already shut down" during
-        // shutdown races in tests.
         return self.channel.close(mode: .all)
     }
 
@@ -80,7 +110,9 @@ public final class TDSConnection {
     }
 
     deinit {
-        assert(self.didClose, "TDSConnection deinitialized before being closed.")
+        if !self.didClose {
+            self.closeSilently()
+        }
     }
 
     // Sends an ATTENTION signal to the server to cancel the currently running request.
@@ -104,6 +136,7 @@ public final class TDSConnection {
     public func snapshotSessionStatePayload() -> [UInt8] { lastSessionStatePayload }
 
     public func snapshotDataClassificationPayload() -> [UInt8] { lastDataClassificationPayload }
+    
     public func rawSql(_ sql: String) -> EventLoopFuture<[TDSData]> {
         let promise = self.channel.eventLoop.makePromise(of: [TDSData].self)
         let request = RawSqlRequest(sql: sql, resultPromise: promise)

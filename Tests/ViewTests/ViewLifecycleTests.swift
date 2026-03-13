@@ -1,58 +1,39 @@
 import XCTest
 import Logging
-import NIO
 @testable import SQLServerKit
 import SQLServerKitTesting
 
-final class SQLServerViewTests: XCTestCase {
-    private var group: EventLoopGroup!
+final class SQLServerViewTests: XCTestCase, @unchecked Sendable {
     private var client: SQLServerClient!
     private var viewClient: SQLServerViewClient!
     private var adminClient: SQLServerAdministrationClient!
     private var viewsToDrop: [(name: String, schema: String)] = []
     private var tablesToDrop: [String] = []
 
-    private var eventLoop: EventLoop { self.group.next() }
-
-    override func setUpWithError() throws {
-        try super.setUpWithError()
+    override func setUp() async throws {
+        try await super.setUp()
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
-        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        
+        TestEnvironmentManager.loadEnvironmentVariables()
+
         let config = makeSQLServerClientConfiguration()
-        self.client = try SQLServerClient.connect(configuration: config, eventLoopGroupProvider: .shared(group)).wait()
+        self.client = try await SQLServerClient.connect(configuration: config, numberOfThreads: 1)
         self.viewClient = SQLServerViewClient(client: client)
         self.adminClient = SQLServerAdministrationClient(client: client)
     }
 
-    override func tearDownWithError() throws {
-        // Drop any views that were created during the test using SQLServerViewClient
+    override func tearDown() async throws {
         for view in viewsToDrop {
-            do {
-                try viewClient.dropView(name: view.name, schema: view.schema).wait()
-            } catch {
-                // Ignore errors during cleanup
-                print("Warning: Failed to drop view \(view.schema).\(view.name): \(error)")
-            }
+            try? await viewClient.dropView(name: view.name, schema: view.schema)
         }
         viewsToDrop.removeAll()
 
-        // Drop any tables that were created during the test
         for table in tablesToDrop {
-            do {
-                try adminClient.dropTable(name: table).wait()
-            } catch {
-                // Ignore errors during cleanup
-                print("Warning: Failed to drop table \(table): \(error)")
-            }
+            try? await adminClient.dropTable(name: table)
         }
         tablesToDrop.removeAll()
 
-        try self.client.shutdownGracefully().wait()
-        try self.group?.syncShutdownGracefully()
-        self.group = nil
-        try super.tearDownWithError()
+        try? await self.client?.shutdownGracefully()
+        try await super.tearDown()
     }
 
     // MARK: - Helper Methods
@@ -64,18 +45,30 @@ final class SQLServerViewTests: XCTestCase {
             SQLServerColumnDefinition(name: "value", definition: .standard(.init(dataType: .int))),
             SQLServerColumnDefinition(name: "created_date", definition: .standard(.init(dataType: .datetime2(precision: 3))))
         ]
-        
+
         try await adminClient.createTable(name: name, columns: columns)
         tablesToDrop.append(name)
-        
-        // Insert some test data
-        let insertSql = """
-        INSERT INTO [\(name)] (id, name, value, created_date) VALUES
-        (1, N'First', 100, '2023-01-01 10:00:00'),
-        (2, N'Second', 200, '2023-01-02 11:00:00'),
-        (3, N'Third', 300, '2023-01-03 12:00:00')
-        """
-        _ = try await client.execute(insertSql)
+
+        try await client.withConnection { connection in
+            try await connection.insertRow(into: name, values: [
+                "id": .int(1),
+                "name": .nString("First"),
+                "value": .int(100),
+                "created_date": .raw("'2023-01-01 10:00:00'")
+            ])
+            try await connection.insertRow(into: name, values: [
+                "id": .int(2),
+                "name": .nString("Second"),
+                "value": .int(200),
+                "created_date": .raw("'2023-01-02 11:00:00'")
+            ])
+            try await connection.insertRow(into: name, values: [
+                "id": .int(3),
+                "name": .nString("Third"),
+                "value": .int(300),
+                "created_date": .raw("'2023-01-03 12:00:00'")
+            ])
+        }
     }
 
     // MARK: - Basic View Tests
@@ -211,7 +204,7 @@ final class SQLServerViewTests: XCTestCase {
         FROM dbo.[\(tableName)]
         GROUP BY id, name, value
         """
-        
+
         try await viewClient.createIndexedView(
             name: viewName,
             query: query,
@@ -247,7 +240,7 @@ final class SQLServerViewTests: XCTestCase {
         FROM dbo.[\(tableName)]
         GROUP BY id, name
         """
-        
+
         try await viewClient.createIndexedView(
             name: viewName,
             query: query,
@@ -289,11 +282,12 @@ final class SQLServerViewTests: XCTestCase {
         try await adminClient.createTable(name: table2Name, columns: columns2)
         tablesToDrop.append(table2Name)
 
-        // Insert test data
-        let insertSql1 = "INSERT INTO [\(table1Name)] (id, name) VALUES (1, N'First'), (2, N'Second')"
-        let insertSql2 = "INSERT INTO [\(table2Name)] (id, table1_id, description) VALUES (1, 1, N'Desc1'), (2, 2, N'Desc2')"
-        _ = try await client.execute(insertSql1)
-        _ = try await client.execute(insertSql2)
+        try await client.withConnection { connection in
+            try await connection.insertRow(into: table1Name, values: ["id": .int(1), "name": .nString("First")])
+            try await connection.insertRow(into: table1Name, values: ["id": .int(2), "name": .nString("Second")])
+            try await connection.insertRow(into: table2Name, values: ["id": .int(1), "table1_id": .int(1), "description": .nString("Desc1")])
+            try await connection.insertRow(into: table2Name, values: ["id": .int(2), "table1_id": .int(2), "description": .nString("Desc2")])
+        }
 
         // Create view with join
         let query = """
@@ -326,20 +320,17 @@ final class SQLServerViewTests: XCTestCase {
         try await adminClient.createTable(name: tableName, columns: columns)
         tablesToDrop.append(tableName)
 
-        // Insert test data
-        let insertSql = """
-        INSERT INTO [\(tableName)] (id, category, amount) VALUES
-        (1, N'A', 100.50),
-        (2, N'A', 200.25),
-        (3, N'B', 150.75),
-        (4, N'B', 300.00),
-        (5, N'C', 75.25)
-        """
-        _ = try await client.execute(insertSql)
+        try await client.withConnection { connection in
+            try await connection.insertRow(into: tableName, values: ["id": .int(1), "category": .nString("A"), "amount": .decimal("100.50")])
+            try await connection.insertRow(into: tableName, values: ["id": .int(2), "category": .nString("A"), "amount": .decimal("200.25")])
+            try await connection.insertRow(into: tableName, values: ["id": .int(3), "category": .nString("B"), "amount": .decimal("150.75")])
+            try await connection.insertRow(into: tableName, values: ["id": .int(4), "category": .nString("B"), "amount": .decimal("300.00")])
+            try await connection.insertRow(into: tableName, values: ["id": .int(5), "category": .nString("C"), "amount": .decimal("75.25")])
+        }
 
         // Create aggregation view
         let query = """
-        SELECT category, 
+        SELECT category,
                COUNT(*) as item_count,
                SUM(amount) as total_amount,
                AVG(amount) as avg_amount
@@ -351,7 +342,7 @@ final class SQLServerViewTests: XCTestCase {
         // Test the aggregation view
         let result = try await client.query("SELECT * FROM [\(viewName)] ORDER BY category")
         XCTAssertEqual(result.count, 3)
-        
+
         // Check category A
         XCTAssertEqual(result[0].column("category")?.string, "A")
         XCTAssertEqual(result[0].column("item_count")?.int, 2)
@@ -364,7 +355,7 @@ final class SQLServerViewTests: XCTestCase {
         }
         XCTAssertEqual(totalAmountA, 300.75, accuracy: 0.0001)
         XCTAssertEqual(averageAmountA, 150.375, accuracy: 0.0001)
-        
+
         // Check category B
         XCTAssertEqual(result[1].column("category")?.string, "B")
         XCTAssertEqual(result[1].column("item_count")?.int, 2)
@@ -377,7 +368,7 @@ final class SQLServerViewTests: XCTestCase {
         }
         XCTAssertEqual(totalAmountB, 450.75, accuracy: 0.0001)
         XCTAssertEqual(averageAmountB, 225.375, accuracy: 0.0001)
-        
+
         // Check category C single row
         XCTAssertEqual(result[2].column("category")?.string, "C")
         XCTAssertEqual(result[2].column("item_count")?.int, 1)

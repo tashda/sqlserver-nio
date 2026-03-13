@@ -14,6 +14,7 @@ public enum SQLServerError: Swift.Error, CustomStringConvertible, LocalizedError
     // Specific transient error that should generally be retried: SQL Server deadlock (error 1205)
     case deadlockDetected(message: String)
     case invalidArgument(String)
+    case databaseDoesNotExist(String)
     case transient(Swift.Error)
     case unknown(Swift.Error)
 
@@ -45,6 +46,8 @@ public enum SQLServerError: Swift.Error, CustomStringConvertible, LocalizedError
             return "Deadlock detected: \(message)"
         case .invalidArgument(let message):
             return message
+        case .databaseDoesNotExist(let name):
+            return "Database '\(name)' does not exist."
         case .transient(let error):
             return Self.describeNIOError(error)
         case .unknown(let error):

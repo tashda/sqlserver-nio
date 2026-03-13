@@ -7,7 +7,7 @@ import SQLServerKitTesting
 
 /// Consolidated connection tests for SQLServerNIO
 /// Covers basic connection functionality, pooling, and lifecycle management
-final class ConnectionTests: StandardTestBase {
+final class ConnectionTests: StandardTestBase, @unchecked Sendable {
 
     // MARK: - Basic Connection Tests
 
@@ -18,7 +18,7 @@ final class ConnectionTests: StandardTestBase {
         // We'll handle shutdown after the test body to avoid async/sync conflicts
 
         let baseConfig = makeSQLServerClientConfiguration()
-        let socketAddress = try await SocketAddress.makeAddressResolvingHost(
+        let socketAddress = try SocketAddress.makeAddressResolvingHost(
             baseConfig.connection.hostname,
             port: baseConfig.connection.port
         )

@@ -1,5 +1,5 @@
 import Foundation
-import NIO
+import NIOCore
 
 /// Date/Times
 /// https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/786f5b8a-f87d-4980-9070-b9b7274c681d
@@ -37,9 +37,7 @@ extension TDSData {
         case .datetime:
             guard
                 value.readableBytes == 8,
-                // 4-byte signed integer: number of days since January 1, 1900; negatives allowed for 1753+
                 let daysSince1900 = value.readInteger(endianness: .little, as: Int32.self),
-                // 4-byte unsigned integer: number of 1/300-second ticks since midnight
                 let ticks300 = value.readInteger(endianness: .little, as: UInt32.self)
             else {
                 return nil
@@ -51,19 +49,44 @@ extension TDSData {
         case .date:
             return value.readDateAsDate()
 
+        case .datetimen:
+            // datetimen is variable-length: 4 bytes = smalldatetime, 8 bytes = datetime
+            switch value.readableBytes {
+            case 0:
+                return nil
+            case 4:
+                guard let daysSince1900 = value.readInteger(endianness: .little, as: UInt16.self),
+                      let minutesElapsed = value.readInteger(endianness: .little, as: UInt16.self)
+                else { return nil }
+                let secondsSinceUnixEpoch =
+                    Int64(daysSince1900) * _secondsInDay +
+                    Int64(minutesElapsed) * 60 -
+                    _secondsBetween1900AndUnixEpoch
+                return Date(timeIntervalSince1970: Double(secondsSinceUnixEpoch))
+            case 8:
+                guard let daysSince1900 = value.readInteger(endianness: .little, as: Int32.self),
+                      let ticks300 = value.readInteger(endianness: .little, as: UInt32.self)
+                else { return nil }
+                let dayPart = Double(Int64(daysSince1900) * _secondsInDay) - Double(_secondsBetween1900AndUnixEpoch)
+                let timePart = Double(ticks300) / 300.0
+                return Date(timeIntervalSince1970: dayPart + timePart)
+            default:
+                return nil
+            }
+
         case .time:
             // time alone cannot be accurately represented with Swift's Date type
             return nil
 
         case .datetime2:
             // datetime2(n): time(n) concatenated with date(3)
-            return value.readDatetime2(timeBytes: value.readableBytes - 3, scale: metadata.scale)
+            return value.readDatetime2(timeBytes: value.readableBytes - 3, scale: Int(metadata.scale))
 
         case .datetimeOffset:
             // datetimeoffset(n): time(n) + date(3) + tz-offset(2) where tz-offset is minutes from UTC.
             // The stored time/date are LOCAL to the given timezone; subtract offset to get UTC.
             guard
-                let localDatetime = value.readDatetime2(timeBytes: value.readableBytes - 5, scale: metadata.scale),
+                let localDatetime = value.readDatetime2(timeBytes: value.readableBytes - 5, scale: Int(metadata.scale)),
                 let timezoneOffset = value.readInteger(endianness: .little, as: Int16.self),
                 timezoneOffset >= -840 && timezoneOffset <= 840
             else {
@@ -78,12 +101,17 @@ extension TDSData {
 }
 
 extension ByteBuffer {
+    mutating func readByteLengthInteger<T: FixedWidthInteger>(length: Int) -> T? {
+        guard length > 0, let bytes = readBytes(length: length) else { return nil }
+        return bytes.enumerated().reduce(T.zero) { partial, pair in
+            partial | (T(pair.element) << T(pair.offset * 8))
+        }
+    }
 
     /// Encodes a Swift Date as a TDS datetimeoffset(7) value (UTC, tz-offset=0).
     /// Wire layout: 5 bytes time ticks (LE, 100ns resolution) + 3 bytes date (LE, days since Jan 1 year 1) + 2 bytes tz offset (LE, minutes).
     fileprivate mutating func writeDatetimeOffset(date: Date) {
         let unixSeconds = date.timeIntervalSince1970
-        // Floor division so pre-epoch dates are correctly handled.
         let daysSinceUnixEpoch = Int64(floor(unixSeconds / 86400.0))
         let secondsSinceMidnight = unixSeconds - Double(daysSinceUnixEpoch) * 86400.0
 
@@ -92,19 +120,15 @@ extension ByteBuffer {
         let ticks = UInt64(secondsSinceMidnight * 10_000_000)
         guard ticks < (1 << 40) else { return }
 
-        // TDS date is days since Jan 1 year 1 (proleptic Gregorian).  Jan 1 1970 = day 719162.
         let daysSinceJan1 = daysSinceUnixEpoch + _daysBetweenEraStartAndUnixEpoch
-        guard daysSinceJan1 >= 0, daysSinceJan1 < (1 << 24) else { return }
+        guard daysSinceJan1 >= 0 && daysSinceJan1 < (1 << 24) else { return }
 
-        // 5-byte time ticks (LE)
         for shift in stride(from: 0, to: 40, by: 8) {
             writeInteger(UInt8(truncatingIfNeeded: ticks >> shift))
         }
-        // 3-byte date (LE)
         for shift in stride(from: 0, to: 24, by: 8) {
             writeInteger(UInt8(truncatingIfNeeded: UInt64(daysSinceJan1) >> shift))
         }
-        // 2-byte tz offset: 0 = UTC
         writeInteger(Int16(0), endianness: .little)
     }
 
@@ -121,7 +145,6 @@ extension ByteBuffer {
         guard var rawTicks: Int = readByteLengthInteger(length: length),
               let scale = scale else { return nil }
 
-        // Normalise to 100-nanosecond ticks (scale 7).
         if scale < 7 {
             for _ in scale..<7 { rawTicks *= 10 }
         }
@@ -135,8 +158,8 @@ extension ByteBuffer {
 }
 
 extension Date: TDSDataConvertible {
-    public static var tdsMetadata: Metadata {
-        return TypeMetadata(dataType: .datetimeOffset, scale: 7)
+    public static var tdsMetadata: any Metadata {
+        TypeMetadata(dataType: .datetimeOffset, scale: 7)
     }
 
     public init?(tdsData: TDSData) {
@@ -147,20 +170,10 @@ extension Date: TDSDataConvertible {
     }
 
     public var tdsData: TDSData? {
-        return .init(date: self)
+        .init(date: self)
     }
 }
 
-// MARK: - Private constants
-
-/// Seconds in a day.
 private let _secondsInDay: Int64 = 24 * 60 * 60
-
-/// Unix timestamp (seconds since 1970-01-01 UTC) of January 1, 1900 midnight UTC.
-/// Days from 1900-01-01 to 1970-01-01:
-///   70 years × 365 days + 17 leap years (1904–1968, not 1900) = 25567 days.
-private let _secondsBetween1900AndUnixEpoch: Int64 = 25_567 * _secondsInDay  // 2,208,988,800
-
-/// Days from January 1, year 1 (TDS epoch) to January 1, 1970 (Unix epoch) in the proleptic Gregorian calendar.
-/// = 1969 × 365 + 477 leap years = 719162 days.
+private let _secondsBetween1900AndUnixEpoch: Int64 = 25_567 * _secondsInDay
 private let _daysBetweenEraStartAndUnixEpoch: Int64 = 719_162

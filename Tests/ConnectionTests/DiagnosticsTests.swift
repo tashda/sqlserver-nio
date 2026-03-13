@@ -2,20 +2,22 @@ import XCTest
 @testable import SQLServerKit
 import SQLServerKitTesting
 
-final class SQLServerEnvDiagnosticsTests: XCTestCase {
+final class SQLServerEnvDiagnosticsTests: XCTestCase, @unchecked Sendable {
     func testPrintTdsEnvironment() throws {
         // Do not load .env here; we want to inspect what the host injected.
         let env = ProcessInfo.processInfo.environment
         let interestingKeys = [
-            "TDS_ENABLE_EXPLORER_FLOW",
-            "TDS_ENABLE_DEADLOCK_TESTS",
-            "TDS_ENABLE_SCHEMA_TESTS",
-            "TDS_ENABLE_AGENT_TESTS",
-            "TDS_ENABLE_ADVENTUREWORKS",
+            "TDS_ENV",
+            "USE_DOCKER",
+            "TDS_VERSION",
+            "TDS_DOCKER_PORT",
+            "TDS_LOAD_ADVENTUREWORKS",
+            "TDS_AW_DATABASE",
             "TDS_HOSTNAME",
             "TDS_PORT",
             "TDS_DATABASE",
-            "TDS_USERNAME"
+            "TDS_USERNAME",
+            "LOG_LEVEL"
         ]
 
         var report: [String] = []
@@ -29,11 +31,11 @@ final class SQLServerEnvDiagnosticsTests: XCTestCase {
         report.append("--- All TDS_* ---")
         for (k, v) in allTds { report.append("\(k)=\(v)") }
 
-        // Evaluate gating flags using same logic as tests
-        func gate(_ k: String) -> String { envFlagEnabled(k) ? "ENABLED" : "disabled" }
-        report.append("--- Gates ---")
-        report.append("TDS_ENABLE_EXPLORER_FLOW: \(gate("TDS_ENABLE_EXPLORER_FLOW"))")
-        report.append("TDS_ENABLE_DEADLOCK_TESTS: \(gate("TDS_ENABLE_DEADLOCK_TESTS"))")
+        report.append("--- Interpretation ---")
+        let dockerMode = envFlagEnabled("USE_DOCKER") ? "ENABLED" : "disabled"
+        let adventureWorksRestore = envFlagEnabled("TDS_LOAD_ADVENTUREWORKS") ? "ENABLED" : "disabled"
+        report.append("docker_mode=\(dockerMode)")
+        report.append("adventureworks_restore=\(adventureWorksRestore)")
 
         let text = report.joined(separator: "\n")
         print(text)
@@ -41,8 +43,7 @@ final class SQLServerEnvDiagnosticsTests: XCTestCase {
         #if canImport(Darwin)
         let attachment = XCTAttachment(string: text)
         attachment.lifetime = .keepAlways
-        add(attachment)
+        self.add(attachment)
         #endif
     }
 }
-

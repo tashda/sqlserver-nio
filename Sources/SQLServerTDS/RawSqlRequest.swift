@@ -1,17 +1,20 @@
-
+import Foundation
 import NIOCore
 import Logging
 
-public class RawSqlRequest: TDSRequest {
+public typealias TDSColumnMetadata = TDSTokens.ColMetadataToken.ColumnData
+
+public class RawSqlRequest: TDSRequest, @unchecked Sendable {
     public let sql: String
-    public let onRow: ((TDSRow) -> Void)?
-    public let onMetadata: (([TDSTokens.ColMetadataToken.ColumnData]) -> Void)?
-    public let onDone: ((TDSTokens.DoneToken) -> Void)?
-    public let onMessage: ((TDSTokens.ErrorInfoToken, Bool) -> Void)?
-    public let onReturnValue: ((TDSTokens.ReturnValueToken) -> Void)?
+    public let onRow: (@Sendable (TDSRow) -> Void)?
+    public let onMetadata: (@Sendable ([TDSColumnMetadata]) -> Void)?
+    public let onDone: (@Sendable (TDSTokens.DoneToken) -> Void)?
+    public let onMessage: (@Sendable (TDSTokens.ErrorInfoToken, Bool) -> Void)?
+    public let onReturnValue: (@Sendable (TDSTokens.ReturnValueToken) -> Void)?
     public let resultPromise: EventLoopPromise<[TDSData]>?
     public let stream: Bool
-    public let onData: ((TDSData) -> Void)?
+    public let onData: (@Sendable (TDSData) -> Void)?
+    public var storesRowsInContext: Bool { resultPromise != nil }
 
     /// Optional overrides for the MARS Transaction Descriptor header.
     /// When nil, the request will be sent with an AutoCommit descriptor (all zeros, requestCount = 1).
@@ -19,44 +22,47 @@ public class RawSqlRequest: TDSRequest {
     public var transactionDescriptorOverride: [UInt8]?
     public var outstandingRequestCountOverride: UInt32?
 
+    public var packetType: TDSPacket.HeaderType { .sqlBatch }
+
     public init(
         sql: String,
+        onRow: (@Sendable (TDSRow) -> Void)? = nil,
+        onMetadata: (@Sendable ([TDSColumnMetadata]) -> Void)? = nil,
+        onDone: (@Sendable (TDSTokens.DoneToken) -> Void)? = nil,
+        onMessage: (@Sendable (TDSTokens.ErrorInfoToken, Bool) -> Void)? = nil,
+        onReturnValue: (@Sendable (TDSTokens.ReturnValueToken) -> Void)? = nil,
+        resultPromise: EventLoopPromise<[TDSData]>? = nil,
         stream: Bool = false,
-        onRow: ((TDSRow) -> Void)? = nil,
-        onMetadata: (([TDSTokens.ColMetadataToken.ColumnData]) -> Void)? = nil,
-        onData: ((TDSData) -> Void)? = nil,
-        onDone: ((TDSTokens.DoneToken) -> Void)? = nil,
-        onMessage: ((TDSTokens.ErrorInfoToken, Bool) -> Void)? = nil,
-        onReturnValue: ((TDSTokens.ReturnValueToken) -> Void)? = nil,
-        resultPromise: EventLoopPromise<[TDSData]>? = nil
+        onData: (@Sendable (TDSData) -> Void)? = nil
     ) {
         self.sql = sql
-        self.stream = stream
         self.onRow = onRow
         self.onMetadata = onMetadata
         self.onDone = onDone
         self.onMessage = onMessage
         self.onReturnValue = onReturnValue
-        self.onData = onData
         self.resultPromise = resultPromise
-    }
-
-    public func start(allocator: ByteBufferAllocator) throws -> [TDSPacket] {
-        // Resolve the transaction descriptor for this batch. If the pipeline has injected
-        // an explicit descriptor (for an active transaction), use it; otherwise default
-        // to AutoCommit semantics (descriptor = 0, requestCount = 1) per MS‑TDS.
-        let descriptor = transactionDescriptorOverride ?? [UInt8](repeating: 0, count: 8)
-        let requestCount = outstandingRequestCountOverride ?? 1
-        let message = TDSMessages.RawSqlBatchMessage(
-            sqlText: sql,
-            transactionDescriptor: descriptor,
-            outstandingRequestCount: requestCount
-        )
-        let tdsMessage = try TDSMessage(payload: message, allocator: allocator)
-        return tdsMessage.packets
+        self.stream = stream
+        self.onData = onData
     }
 
     public func log(to logger: Logger) {
-        logger.debug("Sending raw SQL request: \(sql)")
+        logger.debug("Sending SQL Batch request: \(Self.summarize(sql))")
+    }
+
+    public func serialize(into buffer: inout ByteBuffer) throws {
+        let payload = TDSMessages.RawSqlBatchMessage(
+            sqlText: sql,
+            transactionDescriptor: transactionDescriptorOverride ?? [0, 0, 0, 0, 0, 0, 0, 0],
+            outstandingRequestCount: outstandingRequestCountOverride ?? 1
+        )
+        try payload.serialize(into: &buffer)
+    }
+
+    private static func summarize(_ sql: String, maxLength: Int = 240) -> String {
+        let singleLine = sql.replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\r", with: " ")
+        guard singleLine.count > maxLength else { return singleLine }
+        let prefix = singleLine.prefix(maxLength)
+        return "\(prefix)... [truncated \(singleLine.count - maxLength) chars]"
     }
 }
