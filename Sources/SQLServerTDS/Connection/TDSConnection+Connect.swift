@@ -15,6 +15,7 @@ extension TDSConnection {
         to socketAddress: SocketAddress,
         tlsConfiguration: TLSConfiguration? = .makeClientConfiguration(),
         serverHostname: String? = nil,
+        encryptionMode: TDSEncryptionMode = .optional,
         connectTimeout: TimeAmount = .seconds(10),
         on eventLoop: EventLoop
     ) -> EventLoopFuture<TDSConnection> {
@@ -22,6 +23,7 @@ extension TDSConnection {
             to: socketAddress,
             tlsConfiguration: tlsConfiguration,
             serverHostname: serverHostname,
+            encryptionMode: encryptionMode,
             connectTimeout: connectTimeout,
             on: eventLoop,
             logger: Logger(label: "swift-tds")
@@ -32,6 +34,7 @@ extension TDSConnection {
         to socketAddress: SocketAddress,
         tlsConfiguration: TLSConfiguration? = .makeClientConfiguration(),
         serverHostname: String? = nil,
+        encryptionMode: TDSEncryptionMode = .optional,
         on eventLoop: EventLoop,
         logger: Logger
     ) -> EventLoopFuture<TDSConnection> {
@@ -39,6 +42,7 @@ extension TDSConnection {
             to: socketAddress,
             tlsConfiguration: tlsConfiguration,
             serverHostname: serverHostname,
+            encryptionMode: encryptionMode,
             connectTimeout: .seconds(10),
             on: eventLoop,
             logger: logger
@@ -49,6 +53,7 @@ extension TDSConnection {
         to socketAddress: SocketAddress,
         tlsConfiguration: TLSConfiguration? = .makeClientConfiguration(),
         serverHostname: String? = nil,
+        encryptionMode: TDSEncryptionMode = .optional,
         connectTimeout: TimeAmount = .seconds(10),
         on eventLoop: EventLoop,
         logger: Logger
@@ -106,7 +111,7 @@ extension TDSConnection {
             channel.read()
             return channel.eventLoop.makeSucceededFuture(connection)
         }.flatMap { (conn: TDSConnection) -> EventLoopFuture<TDSConnection> in
-            return conn.prelogin(shouldNegotiateEncryption: tlsConfiguration != nil ? true : false)
+            return conn.prelogin(encryptionMode: encryptionMode, hasTLSConfiguration: tlsConfiguration != nil)
                 .flatMapError { error in
                     conn.close().flatMap {
                         conn.channel.eventLoop.makeFailedFuture(error)

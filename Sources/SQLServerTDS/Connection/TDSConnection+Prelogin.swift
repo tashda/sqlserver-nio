@@ -3,8 +3,8 @@ import NIO
 import Foundation
 
 extension TDSConnection {
-    internal func prelogin(shouldNegotiateEncryption: Bool) -> EventLoopFuture<Void> {
-        let auth = PreloginRequest(shouldNegotiateEncryption)
+    internal func prelogin(encryptionMode: TDSEncryptionMode, hasTLSConfiguration: Bool) -> EventLoopFuture<Void> {
+        let auth = PreloginRequest(encryptionMode: encryptionMode, hasTLSConfiguration: hasTLSConfiguration)
         return self.send(auth, logger: logger)
     }
 }
@@ -13,6 +13,7 @@ extension TDSConnection {
 
 internal final class PreloginRequest: TDSRequest {
     private let clientEncryption: TDSMessages.PreloginEncryption
+    private let encryptionMode: TDSEncryptionMode
 
     private var accumulatedData = ByteBuffer()
 
@@ -21,16 +22,24 @@ internal final class PreloginRequest: TDSRequest {
     public let onDone: (@Sendable (TDSTokens.DoneToken) -> Void)? = nil
     public let onMessage: (@Sendable (TDSTokens.ErrorInfoToken, Bool) -> Void)? = nil
     public let onReturnValue: (@Sendable (TDSTokens.ReturnValueToken) -> Void)? = nil
-    public let onEnvChange: (@Sendable (TDSTokens.EnvchangeToken<[Byte]>) -> Void)? = nil // Prelogin requests don't use onEnvChange
-    public let stream: Bool = false // Prelogin requests are always non-streaming
-    public let onData: (@Sendable (TDSData) -> Void)? = nil // Prelogin requests don't use onData
+    public let onEnvChange: (@Sendable (TDSTokens.EnvchangeToken<[Byte]>) -> Void)? = nil
+    public let stream: Bool = false
+    public let onData: (@Sendable (TDSData) -> Void)? = nil
 
-    init(_ shouldNegotiateEncryption: Bool) {
-        self.clientEncryption = shouldNegotiateEncryption ? .encryptOn : .encryptNotSup
+    init(encryptionMode: TDSEncryptionMode, hasTLSConfiguration: Bool) {
+        self.encryptionMode = encryptionMode
+        switch encryptionMode {
+        case .mandatory, .strict:
+            // Signal that we require encryption
+            self.clientEncryption = .encryptOn
+        case .optional:
+            // Signal based on whether we have a TLS config
+            self.clientEncryption = hasTLSConfiguration ? .encryptOn : .encryptNotSup
+        }
     }
 
     func log(to logger: Logger) {
-        logger.debug("Sending Prelogin message.")
+        logger.debug("Sending Prelogin message (encryption mode: \(encryptionMode)).")
     }
 
     var packetType: TDSPacket.HeaderType { .prelogin }
@@ -43,28 +52,49 @@ internal final class PreloginRequest: TDSRequest {
         var mutableDataStream = dataStream
         accumulatedData.writeBuffer(&mutableDataStream)
 
-        // Check if this appears to be complete prelogin data
-        // Prelogin responses are typically small and fit in one packet
         if accumulatedData.readableBytes >= 8 {
             var dataCopy = accumulatedData
             guard let parsedMessage = try? TDSMessages.PreloginResponse.parse(from: &dataCopy) else {
-                // Need more data for complete prelogin response
                 return .continue
             }
 
-            // Encryption Negotiation - Supports all or nothing encryption
             let serverEncryption = parsedMessage.encryption
-            switch (serverEncryption, clientEncryption) {
-            case (.encryptReq, .encryptOn),
-                 (.encryptOn, .encryptOn):
-                return .kickoffSSL
-            case (.encryptNotSup, .encryptNotSup):
-                return .done
-            default:
-                throw TDSError.protocolError("PRELOGIN Error: Incompatible client/server encyption configuration. Client: \(clientEncryption), Server: \(serverEncryption)")
-            }
+            return try negotiateEncryption(server: serverEncryption)
         }
 
         return .continue
+    }
+
+    private func negotiateEncryption(server: TDSMessages.PreloginEncryption) throws -> TDSPacketResponse {
+        switch encryptionMode {
+        case .mandatory, .strict:
+            // We require encryption — server must support it
+            switch server {
+            case .encryptOn, .encryptReq, .encryptClientCertOn, .encryptClientCertReq:
+                return .kickoffSSL
+            case .encryptNotSup, .encryptOff:
+                throw TDSError.protocolError("PRELOGIN Error: Server does not support encryption but encryption mode is \(encryptionMode)")
+            default:
+                throw TDSError.protocolError("PRELOGIN Error: Unexpected server encryption response: \(server)")
+            }
+
+        case .optional:
+            switch (server, clientEncryption) {
+            case (.encryptReq, .encryptOn),
+                 (.encryptOn, .encryptOn),
+                 (.encryptClientCertOn, .encryptOn),
+                 (.encryptClientCertReq, .encryptOn):
+                return .kickoffSSL
+            case (.encryptNotSup, .encryptNotSup),
+                 (.encryptOff, .encryptNotSup):
+                return .done
+            case (.encryptNotSup, .encryptOn),
+                 (.encryptOff, .encryptOn):
+                // Server doesn't support encryption — optional mode allows fallback
+                return .done
+            default:
+                throw TDSError.protocolError("PRELOGIN Error: Incompatible client/server encryption configuration. Client: \(clientEncryption), Server: \(server)")
+            }
+        }
     }
 }
