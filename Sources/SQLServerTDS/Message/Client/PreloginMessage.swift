@@ -106,6 +106,17 @@ extension TDSMessages {
     }
 }
 
+/// High-level encryption mode for TDS connections.
+/// Maps to the ENCRYPT connection string option.
+public enum TDSEncryptionMode: Sendable {
+    /// Encryption is optional. Use TLS if available, fall back to unencrypted.
+    case optional
+    /// Encryption is mandatory. Fail if server doesn't support TLS.
+    case mandatory
+    /// TDS 8.0 strict mode. TLS before any TDS traffic.
+    case strict
+}
+
 extension TDSMessages {
     public enum PreloginEncryption: Byte, Sendable {
         case encryptOff = 0x00

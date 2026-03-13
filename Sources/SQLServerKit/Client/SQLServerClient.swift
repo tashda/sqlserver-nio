@@ -74,6 +74,7 @@ public final class SQLServerClient: @unchecked Sendable {
         tlsEnabled: Bool = true,
         trustServerCertificate: Bool = false,
         caCertificatePath: String? = nil,
+        encryptionMode: SQLServerEncryptionMode = .optional,
         numberOfThreads: Int = System.coreCount,
         poolConfiguration: SQLServerConnectionPool.Configuration = .init(),
         metadataConfiguration: SQLServerMetadataOperations.Configuration = .init(),
@@ -90,6 +91,7 @@ public final class SQLServerClient: @unchecked Sendable {
                 tlsEnabled: tlsEnabled,
                 trustServerCertificate: trustServerCertificate,
                 caCertificatePath: caCertificatePath,
+                encryptionMode: encryptionMode,
                 poolConfiguration: poolConfiguration,
                 metadataConfiguration: metadataConfiguration,
                 retryConfiguration: retryConfiguration,
@@ -149,6 +151,7 @@ public final class SQLServerClient: @unchecked Sendable {
                             addresses: addresses,
                             tlsConfiguration: configuration.connection.tlsConfiguration,
                             serverHostname: configuration.connection.hostname,
+                            encryptionMode: configuration.connection.encryptionMode.asTDSMode,
                             connectTimeout: .seconds(Int64(configuration.connection.connectTimeoutSeconds)),
                             on: eventLoop,
                             logger: logger
