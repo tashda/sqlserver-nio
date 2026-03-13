@@ -6,6 +6,14 @@ extension SQLServerTLSConfiguration {
     public static var clientDefault: SQLServerTLSConfiguration {
         .makeClientConfiguration()
     }
+
+    /// A TLS configuration that skips server certificate validation.
+    /// Equivalent to JDBC's `trustServerCertificate=true`.
+    public static var trustingServerCertificate: SQLServerTLSConfiguration {
+        var config = makeClientConfiguration()
+        config.certificateVerification = .none
+        return config
+    }
 }
 
 extension SQLServerClient {
@@ -58,17 +66,21 @@ extension SQLServerClient {
             database: String = "master",
             authentication: SQLServerAuthentication,
             tlsEnabled: Bool,
+            trustServerCertificate: Bool = false,
             poolConfiguration: SQLServerConnectionPool.Configuration = .init(),
             metadataConfiguration: SQLServerMetadataOperations.Configuration = .init(),
             retryConfiguration: SQLServerRetryConfiguration = .init(),
             transparentNetworkIPResolution: Bool = true
         ) {
+            let tlsConfig: SQLServerTLSConfiguration? = tlsEnabled
+                ? (trustServerCertificate ? .trustingServerCertificate : .clientDefault)
+                : nil
             self.init(
                 hostname: hostname,
                 port: port,
                 database: database,
                 authentication: authentication,
-                tlsConfiguration: tlsEnabled ? .clientDefault : nil,
+                tlsConfiguration: tlsConfig,
                 poolConfiguration: poolConfiguration,
                 metadataConfiguration: metadataConfiguration,
                 retryConfiguration: retryConfiguration,
