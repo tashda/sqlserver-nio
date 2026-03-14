@@ -1,3 +1,4 @@
+import Foundation
 import NIOCore
 import Logging
 
@@ -15,6 +16,7 @@ public class TDSTokenOperations: @unchecked Sendable {
         .featureExtAck,
         .fedAuthInfo,
         .sessionState,
+        .sspi,
         .tabName,
         .colInfo,
         .offset,
@@ -176,6 +178,11 @@ public class TDSTokenOperations: @unchecked Sendable {
             case .sessionState:
                 let data = try TDSTokenOperations.readLengthPrefixedPayload(from: &payload, lengthFieldBytes: 4)
                 token = TDSTokens.SessionStateToken(payload: data)
+            case .sspi:
+                let data = try TDSTokenOperations.readLengthPrefixedPayload(from: &payload, lengthFieldBytes: 2)
+                var dataCopy = data
+                let bytes = dataCopy.readBytes(length: dataCopy.readableBytes) ?? []
+                token = TDSTokens.SSPIToken(data: Data(bytes))
             case .tabName:
                 var data = try TDSTokenOperations.readLengthPrefixedPayload(from: &payload, lengthFieldBytes: 2)
                 let bytes = data.readBytes(length: data.readableBytes) ?? []

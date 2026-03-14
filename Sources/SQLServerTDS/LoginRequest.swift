@@ -8,6 +8,12 @@ public class LoginRequest: TDSRequest, @unchecked Sendable {
     /// Captured server error message from ErrorInfoToken during login.
     public internal(set) var serverErrorMessage: String?
 
+    /// Kerberos authenticator for SSPI token exchange (nil for SQL password auth).
+    internal let authenticator: KerberosAuthenticator?
+
+    /// Reference to the connection for sending SSPI response packets.
+    internal weak var connection: TDSConnection?
+
     public let onRow: (@Sendable (TDSRow) -> Void)? = nil
     public let onMetadata: (@Sendable ([TDSColumnMetadata]) -> Void)? = nil
     public let onDone: (@Sendable (TDSTokens.DoneToken) -> Void)? = nil
@@ -18,8 +24,25 @@ public class LoginRequest: TDSRequest, @unchecked Sendable {
 
     public var packetType: TDSPacket.HeaderType { .tds7Login }
 
-    public init(payload: TDSMessages.Login7Message, onMessage: (@Sendable (TDSTokens.ErrorInfoToken, Bool) -> Void)? = nil) {
+    public init(
+        payload: TDSMessages.Login7Message,
+        onMessage: (@Sendable (TDSTokens.ErrorInfoToken, Bool) -> Void)? = nil
+    ) {
         self.payload = payload
+        self.authenticator = nil
+        self.connection = nil
+        self.onMessage = onMessage
+    }
+
+    internal init(
+        payload: TDSMessages.Login7Message,
+        authenticator: KerberosAuthenticator?,
+        connection: TDSConnection?,
+        onMessage: (@Sendable (TDSTokens.ErrorInfoToken, Bool) -> Void)? = nil
+    ) {
+        self.payload = payload
+        self.authenticator = authenticator
+        self.connection = connection
         self.onMessage = onMessage
     }
 

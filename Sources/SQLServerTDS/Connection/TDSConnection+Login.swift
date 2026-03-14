@@ -14,7 +14,7 @@ extension TDSConnection {
             return existing
         }
         let payload: TDSMessages.Login7Message
-
+        var authenticator: KerberosAuthenticator?
 
         switch configuration.authentication {
         case .sqlPassword(let username, let password):
@@ -47,7 +47,7 @@ extension TDSConnection {
                     useIntegratedSecurity: true,
                     sspiData: initialToken
                 )
-
+                authenticator = authenticatorInstance
             } catch {
                 return eventLoop.makeFailedFuture(error)
             }
@@ -55,8 +55,16 @@ extension TDSConnection {
         // Create a promise and publish immediately to prevent a second LoginRequest enqueuing.
         let promise: EventLoopPromise<Void> = self.eventLoop.makePromise()
         self._loginFuture = promise.futureResult
+
+        // Create the login request with SSPI continuation support
+        let loginRequest = LoginRequest(
+            payload: payload,
+            authenticator: authenticator,
+            connection: self
+        )
+
         self.logger.debug("[login] Sending LoginRequest to server \(configuration.serverName) database \(configuration.database)")
-        self.send(LoginRequest(payload: payload), logger: self.logger).flatMap { _ in
+        self.send(loginRequest, logger: self.logger).flatMap { _ in
             return self.send(RawSqlRequest(sql: "SET FMTONLY OFF;"), logger: self.logger)
         }.whenComplete { result in
             switch result {
@@ -83,5 +91,3 @@ extension TDSConnection {
         return login(configuration: configuration)
     }
 }
-
-
