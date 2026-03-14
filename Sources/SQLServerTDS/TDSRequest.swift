@@ -367,6 +367,28 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
                 case .returnValue:
                     let returnValueToken = token as! TDSTokens.ReturnValueToken
                     request.tokenHandler.onReturnValue(returnValueToken)
+                case .sspi:
+                    if let sspiToken = token as? TDSTokens.SSPIToken,
+                       let loginReq = request.delegate as? LoginRequest,
+                       let authenticator = loginReq.authenticator {
+                        logger.debug("Received SSPI challenge (\(sspiToken.data.count) bytes), continuing authentication")
+                        do {
+                            let (responseToken, _) = try authenticator.continueAuthentication(serverToken: sspiToken.data)
+                            if let responseData = responseToken {
+                                let sspiRequest = SSPIRequest(tokenData: responseData)
+                                let packets = try sspiRequest.start(allocator: ByteBufferAllocator())
+                                for packet in packets {
+                                    context.write(self.wrapOutboundOut(packet), promise: nil)
+                                }
+                                context.flush()
+                            }
+                        } catch {
+                            logger.error("SSPI authentication continuation failed: \(error)")
+                            cleanupRequest(request, error: error)
+                            startNextIfQueued(context: context)
+                            return
+                        }
+                    }
                 case .loginAck:
                     loginAckReceived = true
                     logger.info("Received LOGINACK token; connection authenticated.")

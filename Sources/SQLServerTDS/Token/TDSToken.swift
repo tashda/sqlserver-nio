@@ -1,3 +1,4 @@
+import Foundation
 import NIOCore
 
 public protocol TDSToken: Sendable {
@@ -390,6 +391,12 @@ public enum TDSTokens {
         public var status: UInt16
         public var data: [Byte]
         public init(status: UInt16, data: [Byte]) { self.status = status; self.data = data }
+    }
+
+    public struct SSPIToken: TDSToken {
+        public var type: TokenType = .sspi
+        public var data: Data
+        public init(data: Data) { self.data = data }
     }
 
     public struct OrderToken: TDSToken {
