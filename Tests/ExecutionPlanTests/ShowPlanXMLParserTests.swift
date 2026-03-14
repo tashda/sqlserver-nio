@@ -322,4 +322,33 @@ final class ShowPlanXMLParserTests: XCTestCase {
         let plan = try ShowPlanXMLParser.parse(xml: xml)
         XCTAssertEqual(plan.xml, xml)
     }
+
+    // MARK: - Build attribute variant
+
+    func testParseBuildAttributeVariant() throws {
+        // Real SQL Server uses "Build" attribute, not "BuildVersion"
+        let xml = """
+        <?xml version="1.0" encoding="utf-16"?>
+        <ShowPlanXML xmlns="http://schemas.microsoft.com/sqlserver/2004/07/showplan" Version="1.564" Build="16.0.4175.1">
+          <BatchSequence>
+            <Batch>
+              <Statements>
+                <StmtSimple StatementText="SELECT 1" StatementType="SELECT">
+                  <QueryPlan CachedPlanSize="16">
+                    <RelOp NodeId="0" PhysicalOp="Constant Scan" LogicalOp="Constant Scan" EstimateRows="1">
+                      <OutputList />
+                      <ConstantScan />
+                    </RelOp>
+                  </QueryPlan>
+                </StmtSimple>
+              </Statements>
+            </Batch>
+          </BatchSequence>
+        </ShowPlanXML>
+        """
+
+        let plan = try ShowPlanXMLParser.parse(xml: xml)
+        XCTAssertEqual(plan.buildVersion, "16.0.4175.1")
+        XCTAssertEqual(plan.statements.count, 1)
+    }
 }
