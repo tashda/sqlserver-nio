@@ -343,6 +343,9 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
                     request.tokenHandler.onRow(syntheticRow)
                 case .done, .doneInProc, .doneProc:
                     let doneToken = token as! TDSTokens.DoneToken
+                    let hasMore = (doneToken.status & 0x0001) != 0
+                    let hasCount = (doneToken.status & 0x0010) != 0
+                    logger.debug("[TDS DONE] type=\(token.type) status=0x\(String(format: "%04X", doneToken.status)) hasMore=\(hasMore) hasCount=\(hasCount) rowCount=\(doneToken.doneRowCount) curCmd=\(doneToken.curCmd)")
                     request.tokenHandler.onDone(doneToken)
                     let doneMoreFlag: UShort = 0x0001
                     if (doneToken.status & doneMoreFlag) == 0 {
