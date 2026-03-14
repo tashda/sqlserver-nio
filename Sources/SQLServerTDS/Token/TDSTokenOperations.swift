@@ -43,11 +43,8 @@ public class TDSTokenOperations: @unchecked Sendable {
 
     public func parse() throws -> [TDSToken] {
         var tokens: [TDSToken] = []
-        var iterations = 0
-        let maxIterations = 5000
 
-        parsingLoop: while iterations < maxIterations {
-            iterations += 1
+        parsingLoop: while true {
 
             guard let nextByte = streamParser.peekUInt8() else {
                 break
@@ -138,10 +135,6 @@ public class TDSTokenOperations: @unchecked Sendable {
                     break parsingLoop
                 }
             }
-        }
-
-        if iterations >= maxIterations {
-            logger.warning("Token parser reached maximum iteration limit (\(maxIterations)), stopping to prevent infinite loop. State: \(state), Position: \(streamParser.position), Buffer readable: \(streamParser.buffer.readableBytes)")
         }
 
         return tokens
