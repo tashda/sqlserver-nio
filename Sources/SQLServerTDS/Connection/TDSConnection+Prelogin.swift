@@ -3,8 +3,8 @@ import NIO
 import Foundation
 
 extension TDSConnection {
-    internal func prelogin(encryptionMode: TDSEncryptionMode, hasTLSConfiguration: Bool) -> EventLoopFuture<Void> {
-        let auth = PreloginRequest(encryptionMode: encryptionMode, hasTLSConfiguration: hasTLSConfiguration)
+    internal func prelogin(encryptionMode: TDSEncryptionMode, hasTLSConfiguration: Bool, fedAuthRequired: Bool = false) -> EventLoopFuture<Void> {
+        let auth = PreloginRequest(encryptionMode: encryptionMode, hasTLSConfiguration: hasTLSConfiguration, fedAuthRequired: fedAuthRequired)
         return self.send(auth, logger: logger)
     }
 }
@@ -14,6 +14,7 @@ extension TDSConnection {
 internal final class PreloginRequest: TDSRequest {
     private let clientEncryption: TDSMessages.PreloginEncryption
     private let encryptionMode: TDSEncryptionMode
+    private let fedAuthRequired: Bool
 
     private var accumulatedData = ByteBuffer()
 
@@ -26,14 +27,13 @@ internal final class PreloginRequest: TDSRequest {
     public let stream: Bool = false
     public let onData: (@Sendable (TDSData) -> Void)? = nil
 
-    init(encryptionMode: TDSEncryptionMode, hasTLSConfiguration: Bool) {
+    init(encryptionMode: TDSEncryptionMode, hasTLSConfiguration: Bool, fedAuthRequired: Bool = false) {
         self.encryptionMode = encryptionMode
+        self.fedAuthRequired = fedAuthRequired
         switch encryptionMode {
         case .mandatory, .strict:
-            // Signal that we require encryption
             self.clientEncryption = .encryptOn
         case .optional:
-            // Signal based on whether we have a TLS config
             self.clientEncryption = hasTLSConfiguration ? .encryptOn : .encryptNotSup
         }
     }
@@ -45,7 +45,7 @@ internal final class PreloginRequest: TDSRequest {
     var packetType: TDSPacket.HeaderType { .prelogin }
 
     func serialize(into buffer: inout ByteBuffer) throws {
-        try TDSMessages.PreloginMessage(version: "9.0.0", encryption: clientEncryption).serialize(into: &buffer)
+        try TDSMessages.PreloginMessage(version: "9.0.0", encryption: clientEncryption, fedAuthRequired: fedAuthRequired).serialize(into: &buffer)
     }
 
     func handle(dataStream: ByteBuffer, allocator: ByteBufferAllocator) throws -> TDSPacketResponse {
