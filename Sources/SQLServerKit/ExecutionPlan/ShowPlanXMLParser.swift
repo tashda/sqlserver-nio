@@ -179,7 +179,8 @@ internal final class ShowPlanXMLParser: NSObject, XMLParserDelegate, @unchecked 
     ) {
         switch elementName {
         case "ShowPlanXML":
-            buildVersion = attributeDict["BuildVersion"]
+            // SQL Server uses "Build" in some versions, "BuildVersion" in others
+            buildVersion = attributeDict["Build"] ?? attributeDict["BuildVersion"]
             elementStack.append(.showPlanXML)
 
         case "BatchSequence":
