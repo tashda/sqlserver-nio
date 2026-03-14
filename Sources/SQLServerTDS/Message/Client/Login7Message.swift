@@ -20,6 +20,8 @@ extension TDSMessages {
         var sspiData: Data?
         /// Pre-acquired access token for Entra ID / Azure AD federated authentication.
         var fedAuthAccessToken: String?
+        /// When true, signals read-only intent to enable AG secondary routing.
+        var readOnlyIntent: Bool = false
 
         public func serialize(into buffer: inout ByteBuffer) throws {
             let passwordField = useIntegratedSecurity ? "" : password
@@ -64,7 +66,9 @@ extension TDSMessages {
             buffer.writeInteger(0 as UInt32) // Connection ID
             buffer.writeInteger(0xE0 as UInt8) // Flags1
             buffer.writeInteger(optionFlags2) // Flags2
-            buffer.writeInteger(0 as UInt8) // TypeFlags
+            // TypeFlags: fSQLType(4-bit, 1=TSQL) | fOLEDB(bit4) | fReadOnlyIntent(bit5)
+            let typeFlags: UInt8 = readOnlyIntent ? 0x20 : 0x00
+            buffer.writeInteger(typeFlags)
             buffer.writeInteger(optionFlags3) // Flags3
             buffer.writeInteger(0 as UInt32) // Timezone
             buffer.writeBytes([0x09, 0x04, 0x00, 0x00]) // ClientLCID

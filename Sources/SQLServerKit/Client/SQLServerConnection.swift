@@ -27,6 +27,8 @@ public final class SQLServerConnection: @unchecked Sendable {
         public var sessionOptions: SessionOptions
         /// TCP connect timeout in seconds. Defaults to 10.
         public var connectTimeoutSeconds: Int
+        /// When true, signals read-only application intent for AG secondary routing.
+        public var readOnlyIntent: Bool
 
         public init(
             hostname: String,
@@ -38,7 +40,8 @@ public final class SQLServerConnection: @unchecked Sendable {
             retryConfiguration: SQLServerRetryConfiguration = .init(),
             sessionOptions: SessionOptions = .ssmsDefaults,
             transparentNetworkIPResolution: Bool = true,
-            connectTimeoutSeconds: Int = 10
+            connectTimeoutSeconds: Int = 10,
+            readOnlyIntent: Bool = false
         ) {
             self.hostname = hostname
             self.port = port
@@ -50,6 +53,7 @@ public final class SQLServerConnection: @unchecked Sendable {
             self.sessionOptions = sessionOptions
             self.transparentNetworkIPResolution = transparentNetworkIPResolution
             self.connectTimeoutSeconds = connectTimeoutSeconds
+            self.readOnlyIntent = readOnlyIntent
         }
     }
 
@@ -145,7 +149,8 @@ public final class SQLServerConnection: @unchecked Sendable {
                 serverName: cfg.hostname,
                 port: cfg.port,
                 database: cfg.login.database,
-                authentication: cfg.login.authentication.tdsAuthentication
+                authentication: cfg.login.authentication.tdsAuthentication,
+                readOnlyIntent: cfg.readOnlyIntent
             )
 
             return resolveSocketAddresses(
@@ -179,7 +184,8 @@ public final class SQLServerConnection: @unchecked Sendable {
                             serverName: cfg.hostname,
                             port: cfg.port,
                             database: "master",
-                            authentication: cfg.login.authentication.tdsAuthentication
+                            authentication: cfg.login.authentication.tdsAuthentication,
+                            readOnlyIntent: cfg.readOnlyIntent
                         )
                         return connection.login(configuration: masterLogin)
                             .flatMap {
