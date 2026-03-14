@@ -281,8 +281,12 @@ final class KerberosAuthenticator: @unchecked Sendable {
 
 #else
 
-public enum KerberosError: Error, Sendable {
+public enum KerberosError: Error, Sendable, CustomStringConvertible {
     case unsupported
+
+    public var description: String {
+        "Kerberos/GSSAPI authentication is not supported on this platform"
+    }
 }
 
 final class KerberosAuthenticator: @unchecked Sendable {

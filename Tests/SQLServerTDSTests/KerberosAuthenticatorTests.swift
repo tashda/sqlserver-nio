@@ -9,7 +9,7 @@ final class KerberosAuthenticatorTests: XCTestCase, @unchecked Sendable {
 
     func testKerberosErrorUnsupportedDescription() {
         let error = KerberosError.unsupported
-        XCTAssertTrue(error.description.contains("not supported"))
+        XCTAssertTrue(error.description.contains("not supported"), "Expected description to contain 'not supported', got: \(error.description)")
     }
 
     #if canImport(GSS)
