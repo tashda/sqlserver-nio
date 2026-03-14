@@ -21,7 +21,7 @@ internal final class ShowPlanXMLParser: NSObject, XMLParserDelegate, @unchecked 
         let handler = ShowPlanXMLParser(rawXML: xml)
         let parser = XMLParser(data: data)
         parser.delegate = handler
-        parser.shouldProcessNamespaces = false
+        parser.shouldProcessNamespaces = true
         parser.shouldReportNamespacePrefixes = false
 
         guard parser.parse() else {
