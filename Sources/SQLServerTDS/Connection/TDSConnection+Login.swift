@@ -51,6 +51,17 @@ extension TDSConnection {
             } catch {
                 return eventLoop.makeFailedFuture(error)
             }
+
+        case .accessToken(let token):
+            payload = TDSMessages.Login7Message(
+                username: "",
+                password: "",
+                serverName: configuration.serverName,
+                database: configuration.database,
+                useIntegratedSecurity: false,
+                sspiData: nil,
+                fedAuthAccessToken: token
+            )
         }
         // Create a promise and publish immediately to prevent a second LoginRequest enqueuing.
         let promise: EventLoopPromise<Void> = self.eventLoop.makePromise()
