@@ -3,6 +3,8 @@ import Foundation
 public enum TDSAuthentication: Sendable {
     case sqlPassword(username: String, password: String)
     case windowsIntegrated(username: String, password: String, domain: String?)
+    /// Azure AD / Entra ID authentication with a pre-acquired OAuth2 access token (JWT).
+    case accessToken(token: String)
 }
 
 public struct TDSLoginConfiguration: Sendable {
