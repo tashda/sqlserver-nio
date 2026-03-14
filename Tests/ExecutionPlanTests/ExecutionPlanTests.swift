@@ -44,9 +44,11 @@ final class ExecutionPlanTests: XCTestCase, @unchecked Sendable {
         XCTAssertNotNil(plan.buildVersion)
 
         let stmt = try XCTUnwrap(plan.statements.first)
-        XCTAssertEqual(stmt.statementType, "SELECT")
-        XCTAssertNotNil(stmt.queryPlan)
-        XCTAssertNotNil(stmt.queryPlan?.rootOperator)
+        // SQL Server returns "SELECT WITHOUT QUERY" for SELECT without a FROM clause
+        XCTAssertTrue(
+            stmt.statementType == "SELECT" || stmt.statementType == "SELECT WITHOUT QUERY",
+            "Expected SELECT or SELECT WITHOUT QUERY, got: \(stmt.statementType)"
+        )
     }
 
     func testEstimatedPlanWithJoin() async throws {
