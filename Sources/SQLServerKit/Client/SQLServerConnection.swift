@@ -20,33 +20,40 @@ public final class SQLServerConnection: @unchecked Sendable {
         public var port: Int
         public var login: Login
         public var tlsConfiguration: SQLServerTLSConfiguration?
+        public var encryptionMode: SQLServerEncryptionMode
         public var transparentNetworkIPResolution: Bool
         public var metadataConfiguration: SQLServerMetadataOperations.Configuration
         public var retryConfiguration: SQLServerRetryConfiguration
         public var sessionOptions: SessionOptions
         /// TCP connect timeout in seconds. Defaults to 10.
         public var connectTimeoutSeconds: Int
+        /// When true, signals read-only application intent for AG secondary routing.
+        public var readOnlyIntent: Bool
 
         public init(
             hostname: String,
             port: Int = 1433,
             login: Login,
             tlsConfiguration: SQLServerTLSConfiguration? = .makeClientConfiguration(),
+            encryptionMode: SQLServerEncryptionMode = .optional,
             metadataConfiguration: SQLServerMetadataOperations.Configuration = .init(),
             retryConfiguration: SQLServerRetryConfiguration = .init(),
             sessionOptions: SessionOptions = .ssmsDefaults,
             transparentNetworkIPResolution: Bool = true,
-            connectTimeoutSeconds: Int = 10
+            connectTimeoutSeconds: Int = 10,
+            readOnlyIntent: Bool = false
         ) {
             self.hostname = hostname
             self.port = port
             self.login = login
             self.tlsConfiguration = tlsConfiguration
+            self.encryptionMode = encryptionMode
             self.metadataConfiguration = metadataConfiguration
             self.retryConfiguration = retryConfiguration
             self.sessionOptions = sessionOptions
             self.transparentNetworkIPResolution = transparentNetworkIPResolution
             self.connectTimeoutSeconds = connectTimeoutSeconds
+            self.readOnlyIntent = readOnlyIntent
         }
     }
 
@@ -142,7 +149,8 @@ public final class SQLServerConnection: @unchecked Sendable {
                 serverName: cfg.hostname,
                 port: cfg.port,
                 database: cfg.login.database,
-                authentication: cfg.login.authentication.tdsAuthentication
+                authentication: cfg.login.authentication.tdsAuthentication,
+                readOnlyIntent: cfg.readOnlyIntent
             )
 
             return resolveSocketAddresses(
@@ -155,6 +163,7 @@ public final class SQLServerConnection: @unchecked Sendable {
                     addresses: addresses,
                     tlsConfiguration: cfg.tlsConfiguration,
                     serverHostname: cfg.hostname,
+                    encryptionMode: cfg.encryptionMode.asTDSMode,
                     connectTimeout: .seconds(Int64(cfg.connectTimeoutSeconds)),
                     on: eventLoop,
                     logger: logger
@@ -175,7 +184,8 @@ public final class SQLServerConnection: @unchecked Sendable {
                             serverName: cfg.hostname,
                             port: cfg.port,
                             database: "master",
-                            authentication: cfg.login.authentication.tdsAuthentication
+                            authentication: cfg.login.authentication.tdsAuthentication,
+                            readOnlyIntent: cfg.readOnlyIntent
                         )
                         return connection.login(configuration: masterLogin)
                             .flatMap {

@@ -1,3 +1,4 @@
+import Foundation
 import NIOCore
 import Logging
 
@@ -15,6 +16,7 @@ public class TDSTokenOperations: @unchecked Sendable {
         .featureExtAck,
         .fedAuthInfo,
         .sessionState,
+        .sspi,
         .tabName,
         .colInfo,
         .offset,
@@ -41,11 +43,8 @@ public class TDSTokenOperations: @unchecked Sendable {
 
     public func parse() throws -> [TDSToken] {
         var tokens: [TDSToken] = []
-        var iterations = 0
-        let maxIterations = 5000
 
-        parsingLoop: while iterations < maxIterations {
-            iterations += 1
+        parsingLoop: while true {
 
             guard let nextByte = streamParser.peekUInt8() else {
                 break
@@ -138,10 +137,6 @@ public class TDSTokenOperations: @unchecked Sendable {
             }
         }
 
-        if iterations >= maxIterations {
-            logger.warning("Token parser reached maximum iteration limit (\(maxIterations)), stopping to prevent infinite loop. State: \(state), Position: \(streamParser.position), Buffer readable: \(streamParser.buffer.readableBytes)")
-        }
-
         return tokens
     }
 
@@ -176,6 +171,11 @@ public class TDSTokenOperations: @unchecked Sendable {
             case .sessionState:
                 let data = try TDSTokenOperations.readLengthPrefixedPayload(from: &payload, lengthFieldBytes: 4)
                 token = TDSTokens.SessionStateToken(payload: data)
+            case .sspi:
+                let data = try TDSTokenOperations.readLengthPrefixedPayload(from: &payload, lengthFieldBytes: 2)
+                var dataCopy = data
+                let bytes = dataCopy.readBytes(length: dataCopy.readableBytes) ?? []
+                token = TDSTokens.SSPIToken(data: Data(bytes))
             case .tabName:
                 var data = try TDSTokenOperations.readLengthPrefixedPayload(from: &payload, lengthFieldBytes: 2)
                 let bytes = data.readBytes(length: data.readableBytes) ?? []

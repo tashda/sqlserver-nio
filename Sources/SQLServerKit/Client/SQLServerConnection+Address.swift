@@ -31,6 +31,7 @@ extension SQLServerConnection {
         addresses: [SocketAddress],
         tlsConfiguration: TLSConfiguration?,
         serverHostname: String?,
+        encryptionMode: TDSEncryptionMode = .optional,
         connectTimeout: TimeAmount,
         on eventLoop: EventLoop,
         logger: Logger
@@ -44,6 +45,7 @@ extension SQLServerConnection {
                 to: next,
                 tlsConfiguration: tlsConfiguration,
                 serverHostname: serverHostname,
+                encryptionMode: encryptionMode,
                 connectTimeout: connectTimeout,
                 on: eventLoop
             ).flatMapError { error in
