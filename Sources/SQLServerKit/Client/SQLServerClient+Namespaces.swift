@@ -17,4 +17,5 @@ extension SQLServerClient {
     public var directory: SQLServerDirectoryClient { SQLServerDirectoryClient(client: self) }
     public var bulkCopy: SQLServerBulkCopyClient { SQLServerBulkCopyClient(client: self) }
     public var executionPlan: SQLServerExecutionPlanClient { SQLServerExecutionPlanClient(client: self) }
+    public var extendedProperties: SQLServerExtendedPropertiesClient { SQLServerExtendedPropertiesClient(client: self) }
 }
