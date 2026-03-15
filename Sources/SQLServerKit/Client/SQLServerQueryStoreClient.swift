@@ -180,7 +180,7 @@ public final class SQLServerQueryStoreClient: @unchecked Sendable {
             try await connection.query(sql)
         }
         guard let row = rows.first else {
-            throw SQLServerError.queryError("Query Store is not available for database '\(database)'")
+            throw SQLServerError.sqlExecutionError(message: "Query Store is not available for database '\(database)'")
         }
         return SQLServerQueryStoreOptions(
             actualState: row.column("actual_state_desc")?.string ?? "OFF",
