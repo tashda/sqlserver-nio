@@ -23,4 +23,8 @@ extension SQLServerClient {
     public var linkedServers: SQLServerLinkedServersClient { SQLServerLinkedServersClient(client: self) }
     public var extendedEvents: SQLServerExtendedEventsClient { SQLServerExtendedEventsClient(client: self) }
     public var availabilityGroups: SQLServerAvailabilityGroupsClient { SQLServerAvailabilityGroupsClient(client: self) }
+    public var databaseMail: SQLServerDatabaseMailClient { SQLServerDatabaseMailClient(client: self) }
+    public var changeTracking: SQLServerChangeTrackingClient { SQLServerChangeTrackingClient(client: self) }
+    public var fullText: SQLServerFullTextClient { SQLServerFullTextClient(client: self) }
+    public var maintenance: SQLServerMaintenanceClient { SQLServerMaintenanceClient(client: self) }
 }
