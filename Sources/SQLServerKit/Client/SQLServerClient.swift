@@ -72,6 +72,9 @@ public final class SQLServerClient: @unchecked Sendable {
         database: String = "master",
         authentication: SQLServerAuthentication,
         tlsEnabled: Bool = true,
+        trustServerCertificate: Bool = false,
+        caCertificatePath: String? = nil,
+        encryptionMode: SQLServerEncryptionMode = .optional,
         numberOfThreads: Int = System.coreCount,
         poolConfiguration: SQLServerConnectionPool.Configuration = .init(),
         metadataConfiguration: SQLServerMetadataOperations.Configuration = .init(),
@@ -86,6 +89,9 @@ public final class SQLServerClient: @unchecked Sendable {
                 database: database,
                 authentication: authentication,
                 tlsEnabled: tlsEnabled,
+                trustServerCertificate: trustServerCertificate,
+                caCertificatePath: caCertificatePath,
+                encryptionMode: encryptionMode,
                 poolConfiguration: poolConfiguration,
                 metadataConfiguration: metadataConfiguration,
                 retryConfiguration: retryConfiguration,
@@ -145,6 +151,7 @@ public final class SQLServerClient: @unchecked Sendable {
                             addresses: addresses,
                             tlsConfiguration: configuration.connection.tlsConfiguration,
                             serverHostname: configuration.connection.hostname,
+                            encryptionMode: configuration.connection.encryptionMode.asTDSMode,
                             connectTimeout: .seconds(Int64(configuration.connection.connectTimeoutSeconds)),
                             on: eventLoop,
                             logger: logger
@@ -154,7 +161,8 @@ public final class SQLServerClient: @unchecked Sendable {
                             serverName: configuration.connection.hostname,
                             port: configuration.connection.port,
                             database: database,
-                            authentication: configuration.connection.login.authentication.tdsAuthentication
+                            authentication: configuration.connection.login.authentication.tdsAuthentication,
+                            readOnlyIntent: configuration.connection.readOnlyIntent
                         )
                         return connection.login(configuration: cfg)
                             .flatMap { bootstrapSession(on: connection) }

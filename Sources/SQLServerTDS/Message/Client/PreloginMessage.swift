@@ -12,55 +12,76 @@ extension TDSMessages {
         
         public var version: String
         public var encryption: PreloginEncryption?
-        
-        public init(version: String, encryption: PreloginEncryption?) {
+        public var fedAuthRequired: Bool
+
+        public init(version: String, encryption: PreloginEncryption?, fedAuthRequired: Bool = false) {
             self.version = version
             self.encryption = encryption
+            self.fedAuthRequired = fedAuthRequired
         }
         
         public func serialize(into buffer: inout ByteBuffer) throws {
-            // Token List: 0x09 - 0x0E (6 bytes)
-            //
-            // Follows the form of:
-            // - Token (1 byte)
-            // - Offset from start of packet (2 btyes)
-            // - Length in # of bytes (2 bytes)
-            
-            // Version (Required)
-            buffer.writeBytes([
-                0x00,
-                0x00, 0x0B,
-                0x00, 0x06,
-            ])
-            
-            // Encryption
+            // Build option table dynamically to handle variable offsets.
+            // Each option entry: Token(1) + Offset(2) + Length(2) = 5 bytes
+            // Plus terminator: 1 byte
+
+            // Calculate how many option entries we have
+            var optionCount = 1 // VERSION is always present
+            if encryption != nil { optionCount += 1 }
+            if fedAuthRequired { optionCount += 1 } // FEDAUTHREQUIRED
+            let optionTableSize = optionCount * 5 + 1 // +1 for terminator
+
+            // Data sizes
+            let versionDataSize = 6
+            let encryptionDataSize = encryption != nil ? 1 : 0
+            let fedAuthDataSize = fedAuthRequired ? 1 : 0
+
+            // Calculate data offsets (from start of message)
+            var currentOffset = optionTableSize
+            let versionOffset = currentOffset
+            currentOffset += versionDataSize
+            let encryptionOffset = currentOffset
+            currentOffset += encryptionDataSize
+            let fedAuthOffset = currentOffset
+
+            // Write option table
+            // VERSION
+            buffer.writeInteger(UInt8(0x00)) // token
+            buffer.writeInteger(UInt16(versionOffset), endianness: .big)
+            buffer.writeInteger(UInt16(versionDataSize), endianness: .big)
+
+            // ENCRYPTION
             if encryption != nil {
-                buffer.writeBytes([
-                    0x01,
-                    0x00, 0x11,
-                    0x00, 0x01,
-                ])
+                buffer.writeInteger(UInt8(0x01))
+                buffer.writeInteger(UInt16(encryptionOffset), endianness: .big)
+                buffer.writeInteger(UInt16(encryptionDataSize), endianness: .big)
             }
-            
-            // TODO - Add support for other options
-            
-            buffer.writeBytes([
-                0xff // Terminator
-            ])
-            
-            // Data
-            
+
+            // FEDAUTHREQUIRED
+            if fedAuthRequired {
+                buffer.writeInteger(UInt8(0x06))
+                buffer.writeInteger(UInt16(fedAuthOffset), endianness: .big)
+                buffer.writeInteger(UInt16(fedAuthDataSize), endianness: .big)
+            }
+
+            // Terminator
+            buffer.writeInteger(UInt8(0xFF))
+
+            // Write data section
             // Version Data
             buffer.writeBytes([
                 0x09, 0x00, 0x00, 0x00,     // UL_VERSION (9.0.0)
                 0x00, 0x00,                 // US_SUBBUILD (0)
             ])
-            
+
             // Encryption Data
             if let enc = encryption {
-                buffer.writeBytes([
-                    enc.rawValue
-                ])
+                buffer.writeInteger(enc.rawValue)
+            }
+
+            // FEDAUTHREQUIRED Data
+            if fedAuthRequired {
+                buffer.writeInteger(UInt8(0x01)) // federated auth is required
             }
         }
     }
@@ -104,6 +125,17 @@ extension TDSMessages {
         // TERMINATOR
         case terminator = 0xFF
     }
+}
+
+/// High-level encryption mode for TDS connections.
+/// Maps to the ENCRYPT connection string option.
+public enum TDSEncryptionMode: Sendable {
+    /// Encryption is optional. Use TLS if available, fall back to unencrypted.
+    case optional
+    /// Encryption is mandatory. Fail if server doesn't support TLS.
+    case mandatory
+    /// TDS 8.0 strict mode. TLS before any TDS traffic.
+    case strict
 }
 
 extension TDSMessages {
