@@ -18,4 +18,5 @@ extension SQLServerClient {
     public var bulkCopy: SQLServerBulkCopyClient { SQLServerBulkCopyClient(client: self) }
     public var executionPlan: SQLServerExecutionPlanClient { SQLServerExecutionPlanClient(client: self) }
     public var extendedProperties: SQLServerExtendedPropertiesClient { SQLServerExtendedPropertiesClient(client: self) }
+    public var queryStore: SQLServerQueryStoreClient { SQLServerQueryStoreClient(client: self) }
 }
