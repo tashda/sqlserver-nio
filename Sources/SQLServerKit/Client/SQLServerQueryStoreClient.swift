@@ -11,6 +11,11 @@ public struct SQLServerQueryStoreOptions: Sendable, Equatable {
     public let maxStorageSizeMB: Int
     public let staleQueryThresholdDays: Int
     public let flushIntervalSeconds: Int
+    public let intervalLengthMinutes: Int
+    public let maxPlansPerQuery: Int
+    public let queryCaptureMode: String
+    public let sizeBasedCleanupMode: String
+    public let waitStatsCaptureMode: String
 
     public init(
         actualState: String,
@@ -18,7 +23,12 @@ public struct SQLServerQueryStoreOptions: Sendable, Equatable {
         currentStorageSizeMB: Int,
         maxStorageSizeMB: Int,
         staleQueryThresholdDays: Int,
-        flushIntervalSeconds: Int
+        flushIntervalSeconds: Int,
+        intervalLengthMinutes: Int = 60,
+        maxPlansPerQuery: Int = 200,
+        queryCaptureMode: String = "ALL",
+        sizeBasedCleanupMode: String = "AUTO",
+        waitStatsCaptureMode: String = "ON"
     ) {
         self.actualState = actualState
         self.desiredState = desiredState
@@ -26,12 +36,67 @@ public struct SQLServerQueryStoreOptions: Sendable, Equatable {
         self.maxStorageSizeMB = maxStorageSizeMB
         self.staleQueryThresholdDays = staleQueryThresholdDays
         self.flushIntervalSeconds = flushIntervalSeconds
+        self.intervalLengthMinutes = intervalLengthMinutes
+        self.maxPlansPerQuery = maxPlansPerQuery
+        self.queryCaptureMode = queryCaptureMode
+        self.sizeBasedCleanupMode = sizeBasedCleanupMode
+        self.waitStatsCaptureMode = waitStatsCaptureMode
     }
 
     /// Whether Query Store is currently active and collecting data.
     public var isActive: Bool {
         actualState.uppercased() == "READ_WRITE"
     }
+
+    /// Whether Query Store is in read-only mode.
+    public var isReadOnly: Bool {
+        actualState.uppercased() == "READ_ONLY"
+    }
+
+    /// Whether Query Store is off.
+    public var isOff: Bool {
+        actualState.uppercased() == "OFF"
+    }
+}
+
+/// An individual Query Store setting that can be altered.
+public enum SQLServerQueryStoreOption: Sendable {
+    case desiredState(QueryStoreDesiredState)
+    case maxStorageSizeMB(Int)
+    case intervalLengthMinutes(Int)
+    case staleQueryThresholdDays(Int)
+    case flushIntervalSeconds(Int)
+    case maxPlansPerQuery(Int)
+    case queryCaptureMode(QueryStoreCaptureMode)
+    case sizeBasedCleanupMode(QueryStoreCleanupMode)
+    case waitStatsCaptureMode(QueryStoreWaitStatsMode)
+}
+
+/// Desired operational state for Query Store.
+public enum QueryStoreDesiredState: String, Sendable, CaseIterable {
+    case off = "OFF"
+    case readOnly = "READ_ONLY"
+    case readWrite = "READ_WRITE"
+}
+
+/// Query capture mode for Query Store.
+public enum QueryStoreCaptureMode: String, Sendable, CaseIterable {
+    case all = "ALL"
+    case auto = "AUTO"
+    case none = "NONE"
+    case custom = "CUSTOM"
+}
+
+/// Size-based cleanup mode for Query Store.
+public enum QueryStoreCleanupMode: String, Sendable, CaseIterable {
+    case auto = "AUTO"
+    case off = "OFF"
+}
+
+/// Wait stats capture mode for Query Store.
+public enum QueryStoreWaitStatsMode: String, Sendable, CaseIterable {
+    case on = "ON"
+    case off = "OFF"
 }
 
 /// Ordering options for top queries.
@@ -173,7 +238,12 @@ public final class SQLServerQueryStoreClient: @unchecked Sendable {
             CAST(current_storage_size_mb AS INT) AS current_storage_size_mb,
             CAST(max_storage_size_mb AS INT) AS max_storage_size_mb,
             CAST(stale_query_threshold_days AS INT) AS stale_query_threshold_days,
-            CAST(flush_interval_seconds AS INT) AS flush_interval_seconds
+            CAST(flush_interval_seconds AS INT) AS flush_interval_seconds,
+            CAST(interval_length_minutes AS INT) AS interval_length_minutes,
+            CAST(max_plans_per_query AS INT) AS max_plans_per_query,
+            query_capture_mode_desc,
+            size_based_cleanup_mode_desc,
+            wait_stats_capture_mode_desc
         FROM sys.database_query_store_options
         """
         let rows = try await client.withDatabase(database) { connection in
@@ -188,8 +258,61 @@ public final class SQLServerQueryStoreClient: @unchecked Sendable {
             currentStorageSizeMB: row.column("current_storage_size_mb")?.int ?? 0,
             maxStorageSizeMB: row.column("max_storage_size_mb")?.int ?? 0,
             staleQueryThresholdDays: row.column("stale_query_threshold_days")?.int ?? 0,
-            flushIntervalSeconds: row.column("flush_interval_seconds")?.int ?? 0
+            flushIntervalSeconds: row.column("flush_interval_seconds")?.int ?? 0,
+            intervalLengthMinutes: row.column("interval_length_minutes")?.int ?? 60,
+            maxPlansPerQuery: row.column("max_plans_per_query")?.int ?? 200,
+            queryCaptureMode: row.column("query_capture_mode_desc")?.string ?? "ALL",
+            sizeBasedCleanupMode: row.column("size_based_cleanup_mode_desc")?.string ?? "AUTO",
+            waitStatsCaptureMode: row.column("wait_stats_capture_mode_desc")?.string ?? "ON"
         )
+    }
+
+    // MARK: - Alter Options
+
+    /// Alters a Query Store setting for a database.
+    @available(macOS 12.0, *)
+    public func alterOption(database: String, option: SQLServerQueryStoreOption) async throws {
+        let escapedDB = database.replacingOccurrences(of: "]", with: "]]")
+        let setting: String
+        switch option {
+        case .desiredState(let state):
+            setting = "OPERATION_MODE = \(state.rawValue)"
+        case .maxStorageSizeMB(let mb):
+            setting = "MAX_STORAGE_SIZE_MB = \(mb)"
+        case .intervalLengthMinutes(let mins):
+            setting = "INTERVAL_LENGTH_MINUTES = \(mins)"
+        case .staleQueryThresholdDays(let days):
+            setting = "STALE_QUERY_THRESHOLD_DAYS = \(days)"
+        case .flushIntervalSeconds(let secs):
+            setting = "DATA_FLUSH_INTERVAL_SECONDS = \(secs)"
+        case .maxPlansPerQuery(let count):
+            setting = "MAX_PLANS_PER_QUERY = \(count)"
+        case .queryCaptureMode(let mode):
+            setting = "QUERY_CAPTURE_MODE = \(mode.rawValue)"
+        case .sizeBasedCleanupMode(let mode):
+            setting = "SIZE_BASED_CLEANUP_MODE = \(mode.rawValue)"
+        case .waitStatsCaptureMode(let mode):
+            setting = "WAIT_STATS_CAPTURE_MODE = \(mode.rawValue)"
+        }
+        let sql = "ALTER DATABASE [\(escapedDB)] SET QUERY_STORE (\(setting))"
+        _ = try await client.execute(sql)
+    }
+
+    /// Enables or disables Query Store for a database.
+    @available(macOS 12.0, *)
+    public func setEnabled(database: String, enabled: Bool) async throws {
+        let escapedDB = database.replacingOccurrences(of: "]", with: "]]")
+        let state = enabled ? "ON" : "OFF"
+        let sql = "ALTER DATABASE [\(escapedDB)] SET QUERY_STORE = \(state)"
+        _ = try await client.execute(sql)
+    }
+
+    /// Purges all Query Store data for a database.
+    @available(macOS 12.0, *)
+    public func purgeData(database: String) async throws {
+        let escapedDB = database.replacingOccurrences(of: "]", with: "]]")
+        let sql = "ALTER DATABASE [\(escapedDB)] SET QUERY_STORE CLEAR"
+        _ = try await client.execute(sql)
     }
 
     // MARK: - Top Queries
