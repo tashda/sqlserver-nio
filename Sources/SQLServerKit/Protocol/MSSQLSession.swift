@@ -10,6 +10,8 @@ public protocol MSSQLSession {
     var serverSecurity: SQLServerServerSecurityClient { get }
     var extendedProperties: SQLServerExtendedPropertiesClient { get }
     var queryStore: SQLServerQueryStoreClient { get }
+    var backupRestore: SQLServerBackupRestoreClient { get }
+    var linkedServers: SQLServerLinkedServersClient { get }
     @available(*, deprecated, message: "Use client.agent instead.")
     func makeAgentClient() -> SQLServerAgentOperations
     @available(*, deprecated, message: "Use client.admin instead.")

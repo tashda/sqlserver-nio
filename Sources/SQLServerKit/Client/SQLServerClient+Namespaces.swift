@@ -19,4 +19,6 @@ extension SQLServerClient {
     public var executionPlan: SQLServerExecutionPlanClient { SQLServerExecutionPlanClient(client: self) }
     public var extendedProperties: SQLServerExtendedPropertiesClient { SQLServerExtendedPropertiesClient(client: self) }
     public var queryStore: SQLServerQueryStoreClient { SQLServerQueryStoreClient(client: self) }
+    public var backupRestore: SQLServerBackupRestoreClient { SQLServerBackupRestoreClient(client: self) }
+    public var linkedServers: SQLServerLinkedServersClient { SQLServerLinkedServersClient(client: self) }
 }
