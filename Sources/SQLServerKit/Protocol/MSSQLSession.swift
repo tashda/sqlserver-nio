@@ -13,6 +13,7 @@ public protocol MSSQLSession {
     var backupRestore: SQLServerBackupRestoreClient { get }
     var linkedServers: SQLServerLinkedServersClient { get }
     var extendedEvents: SQLServerExtendedEventsClient { get }
+    var availabilityGroups: SQLServerAvailabilityGroupsClient { get }
     @available(*, deprecated, message: "Use client.agent instead.")
     func makeAgentClient() -> SQLServerAgentOperations
     @available(*, deprecated, message: "Use client.admin instead.")
