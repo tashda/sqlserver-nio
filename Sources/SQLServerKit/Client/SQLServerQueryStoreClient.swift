@@ -1,0 +1,363 @@
+import Foundation
+import NIO
+
+// MARK: - Query Store Types
+
+/// Configuration and status of Query Store for a database.
+public struct SQLServerQueryStoreOptions: Sendable, Equatable {
+    public let actualState: String
+    public let desiredState: String
+    public let currentStorageSizeMB: Int
+    public let maxStorageSizeMB: Int
+    public let staleQueryThresholdDays: Int
+    public let flushIntervalSeconds: Int
+
+    public init(
+        actualState: String,
+        desiredState: String,
+        currentStorageSizeMB: Int,
+        maxStorageSizeMB: Int,
+        staleQueryThresholdDays: Int,
+        flushIntervalSeconds: Int
+    ) {
+        self.actualState = actualState
+        self.desiredState = desiredState
+        self.currentStorageSizeMB = currentStorageSizeMB
+        self.maxStorageSizeMB = maxStorageSizeMB
+        self.staleQueryThresholdDays = staleQueryThresholdDays
+        self.flushIntervalSeconds = flushIntervalSeconds
+    }
+
+    /// Whether Query Store is currently active and collecting data.
+    public var isActive: Bool {
+        actualState.uppercased() == "READ_WRITE"
+    }
+}
+
+/// Ordering options for top queries.
+public enum SQLServerQueryStoreTopQueryOrder: String, Sendable {
+    case totalDuration = "total_duration"
+    case totalCPU = "total_cpu"
+    case totalIOReads = "total_io_reads"
+    case totalExecutions = "total_executions"
+}
+
+/// A top resource-consuming query from Query Store.
+public struct SQLServerQueryStoreTopQuery: Sendable, Equatable, Identifiable {
+    public var id: Int { queryId }
+
+    public let queryId: Int
+    public let queryText: String
+    public let totalExecutions: Int
+    public let totalDurationUs: Double
+    public let totalCPUUs: Double
+    public let totalIOReads: Double
+    public let avgDurationUs: Double
+    public let avgCPUUs: Double
+
+    public init(
+        queryId: Int,
+        queryText: String,
+        totalExecutions: Int,
+        totalDurationUs: Double,
+        totalCPUUs: Double,
+        totalIOReads: Double,
+        avgDurationUs: Double,
+        avgCPUUs: Double
+    ) {
+        self.queryId = queryId
+        self.queryText = queryText
+        self.totalExecutions = totalExecutions
+        self.totalDurationUs = totalDurationUs
+        self.totalCPUUs = totalCPUUs
+        self.totalIOReads = totalIOReads
+        self.avgDurationUs = avgDurationUs
+        self.avgCPUUs = avgCPUUs
+    }
+}
+
+/// An execution plan associated with a query in Query Store.
+public struct SQLServerQueryStorePlan: Sendable, Equatable, Identifiable {
+    public var id: Int { planId }
+
+    public let queryId: Int
+    public let planId: Int
+    public let isForcedPlan: Bool
+    public let avgDurationUs: Double
+    public let avgCPUUs: Double
+    public let avgIOReads: Double
+    public let executionCount: Int
+    public let lastExecutionTime: Date?
+    public let planXml: String?
+
+    public init(
+        queryId: Int,
+        planId: Int,
+        isForcedPlan: Bool,
+        avgDurationUs: Double,
+        avgCPUUs: Double,
+        avgIOReads: Double,
+        executionCount: Int,
+        lastExecutionTime: Date?,
+        planXml: String?
+    ) {
+        self.queryId = queryId
+        self.planId = planId
+        self.isForcedPlan = isForcedPlan
+        self.avgDurationUs = avgDurationUs
+        self.avgCPUUs = avgCPUUs
+        self.avgIOReads = avgIOReads
+        self.executionCount = executionCount
+        self.lastExecutionTime = lastExecutionTime
+        self.planXml = planXml
+    }
+}
+
+/// A regressed query — one where newer plans perform worse than older ones.
+public struct SQLServerQueryStoreRegressedQuery: Sendable, Equatable, Identifiable {
+    public var id: Int { queryId }
+
+    public let queryId: Int
+    public let queryText: String
+    public let planCount: Int
+    public let minAvgDurationUs: Double
+    public let maxAvgDurationUs: Double
+    public let regressionRatio: Double
+
+    public init(
+        queryId: Int,
+        queryText: String,
+        planCount: Int,
+        minAvgDurationUs: Double,
+        maxAvgDurationUs: Double,
+        regressionRatio: Double
+    ) {
+        self.queryId = queryId
+        self.queryText = queryText
+        self.planCount = planCount
+        self.minAvgDurationUs = minAvgDurationUs
+        self.maxAvgDurationUs = maxAvgDurationUs
+        self.regressionRatio = regressionRatio
+    }
+}
+
+// MARK: - SQLServerQueryStoreClient
+
+/// Namespace client for SQL Server Query Store operations.
+///
+/// Query Store captures query execution history, plans, and runtime statistics.
+/// This client provides typed APIs for retrieving Query Store data and managing
+/// forced plans.
+///
+/// Usage:
+/// ```swift
+/// let options = try await client.queryStore.options(database: "MyDB")
+/// let topQueries = try await client.queryStore.topQueries(database: "MyDB")
+/// ```
+public final class SQLServerQueryStoreClient: @unchecked Sendable {
+    private let client: SQLServerClient
+
+    internal init(client: SQLServerClient) {
+        self.client = client
+    }
+
+    // MARK: - Options
+
+    /// Returns Query Store configuration and status for a database.
+    @available(macOS 12.0, *)
+    public func options(database: String) async throws -> SQLServerQueryStoreOptions {
+        let sql = """
+        SELECT
+            actual_state_desc,
+            desired_state_desc,
+            CAST(current_storage_size_mb AS INT) AS current_storage_size_mb,
+            CAST(max_storage_size_mb AS INT) AS max_storage_size_mb,
+            CAST(stale_query_threshold_days AS INT) AS stale_query_threshold_days,
+            CAST(flush_interval_seconds AS INT) AS flush_interval_seconds
+        FROM sys.database_query_store_options
+        """
+        let rows = try await client.withDatabase(database) { connection in
+            try await connection.query(sql)
+        }
+        guard let row = rows.first else {
+            throw SQLServerError.queryError("Query Store is not available for database '\(database)'")
+        }
+        return SQLServerQueryStoreOptions(
+            actualState: row.column("actual_state_desc")?.string ?? "OFF",
+            desiredState: row.column("desired_state_desc")?.string ?? "OFF",
+            currentStorageSizeMB: row.column("current_storage_size_mb")?.int ?? 0,
+            maxStorageSizeMB: row.column("max_storage_size_mb")?.int ?? 0,
+            staleQueryThresholdDays: row.column("stale_query_threshold_days")?.int ?? 0,
+            flushIntervalSeconds: row.column("flush_interval_seconds")?.int ?? 0
+        )
+    }
+
+    // MARK: - Top Queries
+
+    /// Returns the top resource-consuming queries from Query Store.
+    @available(macOS 12.0, *)
+    public func topQueries(
+        database: String,
+        limit: Int = 20,
+        orderBy: SQLServerQueryStoreTopQueryOrder = .totalDuration
+    ) async throws -> [SQLServerQueryStoreTopQuery] {
+        let orderColumn: String
+        switch orderBy {
+        case .totalDuration: orderColumn = "total_duration"
+        case .totalCPU: orderColumn = "total_cpu"
+        case .totalIOReads: orderColumn = "total_io_reads"
+        case .totalExecutions: orderColumn = "total_executions"
+        }
+
+        let sql = """
+        SELECT TOP (\(limit))
+            q.query_id,
+            qt.query_sql_text,
+            SUM(rs.count_executions) AS total_executions,
+            SUM(rs.avg_duration * rs.count_executions) AS total_duration,
+            SUM(rs.avg_cpu_time * rs.count_executions) AS total_cpu,
+            SUM(rs.avg_logical_io_reads * rs.count_executions) AS total_io_reads,
+            AVG(rs.avg_duration) AS avg_duration,
+            AVG(rs.avg_cpu_time) AS avg_cpu
+        FROM sys.query_store_query q
+        JOIN sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+        JOIN sys.query_store_plan p ON q.query_id = p.query_id
+        JOIN sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+        GROUP BY q.query_id, qt.query_sql_text
+        ORDER BY \(orderColumn) DESC
+        """
+
+        let rows = try await client.withDatabase(database) { connection in
+            try await connection.query(sql)
+        }
+
+        return rows.compactMap { row in
+            guard let queryId = row.column("query_id")?.int,
+                  let queryText = row.column("query_sql_text")?.string else { return nil }
+            return SQLServerQueryStoreTopQuery(
+                queryId: queryId,
+                queryText: queryText,
+                totalExecutions: row.column("total_executions")?.int ?? 0,
+                totalDurationUs: row.column("total_duration")?.double ?? 0,
+                totalCPUUs: row.column("total_cpu")?.double ?? 0,
+                totalIOReads: row.column("total_io_reads")?.double ?? 0,
+                avgDurationUs: row.column("avg_duration")?.double ?? 0,
+                avgCPUUs: row.column("avg_cpu")?.double ?? 0
+            )
+        }
+    }
+
+    // MARK: - Query Plans
+
+    /// Returns execution plans for a specific query.
+    @available(macOS 12.0, *)
+    public func queryPlans(database: String, queryId: Int) async throws -> [SQLServerQueryStorePlan] {
+        let sql = """
+        SELECT
+            p.query_id,
+            p.plan_id,
+            p.is_forced_plan,
+            rs.avg_duration,
+            rs.avg_cpu_time,
+            rs.avg_logical_io_reads,
+            rs.count_executions,
+            rs.last_execution_time,
+            CAST(p.query_plan AS NVARCHAR(MAX)) AS query_plan_xml
+        FROM sys.query_store_plan p
+        JOIN sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+        WHERE p.query_id = \(queryId)
+        ORDER BY rs.last_execution_time DESC
+        """
+
+        let rows = try await client.withDatabase(database) { connection in
+            try await connection.query(sql)
+        }
+
+        return rows.compactMap { row in
+            guard let planId = row.column("plan_id")?.int else { return nil }
+            return SQLServerQueryStorePlan(
+                queryId: queryId,
+                planId: planId,
+                isForcedPlan: row.column("is_forced_plan")?.bool ?? false,
+                avgDurationUs: row.column("avg_duration")?.double ?? 0,
+                avgCPUUs: row.column("avg_cpu_time")?.double ?? 0,
+                avgIOReads: row.column("avg_logical_io_reads")?.double ?? 0,
+                executionCount: row.column("count_executions")?.int ?? 0,
+                lastExecutionTime: row.column("last_execution_time")?.date,
+                planXml: row.column("query_plan_xml")?.string
+            )
+        }
+    }
+
+    // MARK: - Regressed Queries
+
+    /// Returns queries that have regressed — multiple plans where the worst plan is
+    /// significantly slower than the best.
+    @available(macOS 12.0, *)
+    public func regressedQueries(
+        database: String,
+        regressionThreshold: Double = 2.0,
+        limit: Int = 20
+    ) async throws -> [SQLServerQueryStoreRegressedQuery] {
+        let sql = """
+        SELECT TOP (\(limit))
+            q.query_id,
+            qt.query_sql_text,
+            COUNT(DISTINCT p.plan_id) AS plan_count,
+            MIN(rs.avg_duration) AS min_avg_duration,
+            MAX(rs.avg_duration) AS max_avg_duration,
+            CASE WHEN MIN(rs.avg_duration) > 0
+                 THEN MAX(rs.avg_duration) / MIN(rs.avg_duration)
+                 ELSE 0 END AS regression_ratio
+        FROM sys.query_store_query q
+        JOIN sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
+        JOIN sys.query_store_plan p ON q.query_id = p.query_id
+        JOIN sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+        GROUP BY q.query_id, qt.query_sql_text
+        HAVING COUNT(DISTINCT p.plan_id) > 1
+           AND CASE WHEN MIN(rs.avg_duration) > 0
+                    THEN MAX(rs.avg_duration) / MIN(rs.avg_duration)
+                    ELSE 0 END >= \(regressionThreshold)
+        ORDER BY regression_ratio DESC
+        """
+
+        let rows = try await client.withDatabase(database) { connection in
+            try await connection.query(sql)
+        }
+
+        return rows.compactMap { row in
+            guard let queryId = row.column("query_id")?.int,
+                  let queryText = row.column("query_sql_text")?.string else { return nil }
+            return SQLServerQueryStoreRegressedQuery(
+                queryId: queryId,
+                queryText: queryText,
+                planCount: row.column("plan_count")?.int ?? 0,
+                minAvgDurationUs: row.column("min_avg_duration")?.double ?? 0,
+                maxAvgDurationUs: row.column("max_avg_duration")?.double ?? 0,
+                regressionRatio: row.column("regression_ratio")?.double ?? 0
+            )
+        }
+    }
+
+    // MARK: - Plan Forcing
+
+    /// Forces a specific execution plan for a query.
+    @available(macOS 12.0, *)
+    public func forcePlan(database: String, queryId: Int, planId: Int) async throws {
+        try await client.withDatabase(database) { connection in
+            _ = try await connection.execute(
+                "EXEC sp_query_store_force_plan @query_id = \(queryId), @plan_id = \(planId)"
+            )
+        }
+    }
+
+    /// Removes a forced execution plan for a query.
+    @available(macOS 12.0, *)
+    public func unforcePlan(database: String, queryId: Int, planId: Int) async throws {
+        try await client.withDatabase(database) { connection in
+            _ = try await connection.execute(
+                "EXEC sp_query_store_unforce_plan @query_id = \(queryId), @plan_id = \(planId)"
+            )
+        }
+    }
+}
