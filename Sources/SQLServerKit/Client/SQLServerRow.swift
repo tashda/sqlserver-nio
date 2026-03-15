@@ -83,6 +83,8 @@ public struct SQLServerDataType: Sendable, Hashable, CustomStringConvertible {
 public enum SQLServerAuthentication: Sendable {
     case sqlPassword(username: String, password: String)
     case windowsIntegrated(username: String, password: String, domain: String?)
+    /// Azure AD / Entra ID authentication with a pre-acquired OAuth2 access token (JWT).
+    case accessToken(token: String)
 
     internal var tdsAuthentication: TDSAuthentication {
         switch self {
@@ -90,6 +92,8 @@ public enum SQLServerAuthentication: Sendable {
             return .sqlPassword(username: username, password: password)
         case .windowsIntegrated(let username, let password, let domain):
             return .windowsIntegrated(username: username, password: password, domain: domain)
+        case .accessToken(let token):
+            return .accessToken(token: token)
         }
     }
 }
