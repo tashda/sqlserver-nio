@@ -18,6 +18,8 @@ public protocol MSSQLSession {
     var changeTracking: SQLServerChangeTrackingClient { get }
     var fullText: SQLServerFullTextClient { get }
     var maintenance: SQLServerMaintenanceClient { get }
+    var replication: SQLServerReplicationClient { get }
+    var cms: SQLServerCMSClient { get }
     @available(*, deprecated, message: "Use client.agent instead.")
     func makeAgentClient() -> SQLServerAgentOperations
     @available(*, deprecated, message: "Use client.admin instead.")

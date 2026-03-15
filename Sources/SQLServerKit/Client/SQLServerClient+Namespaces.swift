@@ -27,4 +27,6 @@ extension SQLServerClient {
     public var changeTracking: SQLServerChangeTrackingClient { SQLServerChangeTrackingClient(client: self) }
     public var fullText: SQLServerFullTextClient { SQLServerFullTextClient(client: self) }
     public var maintenance: SQLServerMaintenanceClient { SQLServerMaintenanceClient(client: self) }
+    public var replication: SQLServerReplicationClient { SQLServerReplicationClient(client: self) }
+    public var cms: SQLServerCMSClient { SQLServerCMSClient(client: self) }
 }
