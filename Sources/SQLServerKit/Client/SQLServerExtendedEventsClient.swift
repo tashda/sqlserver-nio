@@ -175,9 +175,9 @@ public final class SQLServerExtendedEventsClient: @unchecked Sendable {
         let sql = """
         SELECT
             ses.name,
-            ses.create_time,
             ses.startup_state,
-            CASE WHEN ds.name IS NOT NULL THEN 1 ELSE 0 END AS is_running
+            CASE WHEN ds.name IS NOT NULL THEN 1 ELSE 0 END AS is_running,
+            ds.create_time
         FROM sys.server_event_sessions ses
         LEFT JOIN sys.dm_xe_sessions ds ON ses.name = ds.name
         ORDER BY ses.name
