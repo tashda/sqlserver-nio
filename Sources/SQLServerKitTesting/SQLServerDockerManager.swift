@@ -317,7 +317,7 @@ public class SQLServerDockerManager: @unchecked Sendable {
     
     private func loadAdventureWorks(dockerPath: String) throws {
         print("📄 Restoring AdventureWorks...")
-        
+
         let awVersion: String
         if version.contains("2025") { awVersion = "2025" }
         else if version.contains("2022") { awVersion = "2022" }
@@ -327,22 +327,43 @@ public class SQLServerDockerManager: @unchecked Sendable {
         else if version.contains("2014") { awVersion = "2014" }
         else if version.contains("2012") { awVersion = "2012" }
         else { awVersion = "2012" } // 2008 R2 fallback
-        
+
         let bakFilename = "AdventureWorks\(awVersion).bak"
         let url = "https://github.com/microsoft/sql-server-samples/releases/download/adventureworks/\(bakFilename)"
         let localBakPath = (NSTemporaryDirectory() as NSString).appendingPathComponent(bakFilename)
-        
+
+        // Download with validation — delete cached file if it's empty/corrupt
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: localBakPath),
+           let size = attrs[.size] as? Int, size < 1024 {
+            try? FileManager.default.removeItem(atPath: localBakPath)
+        }
+
         if !FileManager.default.fileExists(atPath: localBakPath) {
             print("📥 Downloading \(url)...")
             let curl = Process()
             curl.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
-            curl.arguments = ["-L", "-o", localBakPath, url]
+            curl.arguments = ["-L", "-f", "--retry", "3", "--retry-delay", "5", "-o", localBakPath, url]
+            curl.standardError = FileHandle.nullDevice
             try curl.run(); curl.waitUntilExit()
+            if curl.terminationStatus != 0 {
+                try? FileManager.default.removeItem(atPath: localBakPath)
+                throw NSError(domain: "SQLServerDockerManager", code: 5, userInfo: [NSLocalizedDescriptionKey: "Failed to download \(bakFilename) (curl exit \(curl.terminationStatus))"])
+            }
+            // Verify downloaded file is not empty
+            guard let attrs = try? FileManager.default.attributesOfItem(atPath: localBakPath),
+                  let size = attrs[.size] as? Int, size > 1024 else {
+                try? FileManager.default.removeItem(atPath: localBakPath)
+                throw NSError(domain: "SQLServerDockerManager", code: 5, userInfo: [NSLocalizedDescriptionKey: "Downloaded \(bakFilename) is empty or too small"])
+            }
+            print("📥 Downloaded \(bakFilename) (\(size / 1024 / 1024) MB)")
         }
 
         print("📦 Transferring backup to container...")
         let cp = createDockerProcess(executable: dockerPath, arguments: ["cp", localBakPath, "\(containerId!):/var/opt/mssql/data/AdventureWorks.bak"])
         try cp.run(); cp.waitUntilExit()
+        guard cp.terminationStatus == 0 else {
+            throw NSError(domain: "SQLServerDockerManager", code: 6, userInfo: [NSLocalizedDescriptionKey: "docker cp failed for AdventureWorks backup"])
+        }
 
         print("🔄 Executing RESTORE...")
         let restoreSql = """
@@ -354,7 +375,7 @@ public class SQLServerDockerManager: @unchecked Sendable {
         DECLARE @Restore nvarchar(max) = 'RESTORE DATABASE AdventureWorks FROM DISK = ''/var/opt/mssql/data/AdventureWorks.bak'' WITH MOVE ''' + @Data + ''' TO ''/var/opt/mssql/data/AdventureWorks.mdf'', MOVE ''' + @Log + ''' TO ''/var/opt/mssql/data/AdventureWorks.ldf'', REPLACE'
         EXEC(@Restore)
         """
-        
+
         try runSQL(restoreSql, dockerPath: dockerPath)
         if let compatibilityLevel = compatibilityLevel(for: version) {
             try setCompatibilityLevel(compatibilityLevel, database: "AdventureWorks", dockerPath: dockerPath)
@@ -364,19 +385,21 @@ public class SQLServerDockerManager: @unchecked Sendable {
     
     public func runSQL(_ sql: String, dockerPath: String) throws {
         let sqlcmdPath = self.sqlcmdPath ?? "/opt/mssql-tools/bin/sqlcmd"
-        var arguments = ["exec", "-i", containerId!, sqlcmdPath, "-S", "localhost", "-U", username, "-P", password]
+        var arguments = ["exec", "-i", containerId!, sqlcmdPath, "-S", "localhost", "-U", username, "-P", password, "-b"]
         if sqlcmdPath.contains("mssql-tools18") {
             arguments.append("-C")
         }
         arguments += ["-d", "master"]
         let process = createDockerProcess(executable: dockerPath, arguments: arguments)
         let inputPipe = Pipe(); process.standardInput = inputPipe
+        let errPipe = Pipe(); process.standardError = errPipe
         try process.run()
         if let data = sql.data(using: .utf8) { inputPipe.fileHandleForWriting.write(data) }
         try inputPipe.fileHandleForWriting.close()
         process.waitUntilExit()
         if process.terminationStatus != 0 {
-            throw NSError(domain: "SQLServerDockerManager", code: 3, userInfo: [NSLocalizedDescriptionKey: "SQL execution failed."])
+            let errOutput = String(data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            throw NSError(domain: "SQLServerDockerManager", code: 3, userInfo: [NSLocalizedDescriptionKey: "SQL execution failed (exit \(process.terminationStatus)): \(errOutput)"])
         }
     }
 }

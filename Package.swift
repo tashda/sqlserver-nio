@@ -32,7 +32,10 @@ let package = Package(
                 .product(name: "Atomics", package: "swift-atomics"),
                 .product(name: "Collections", package: "swift-collections"),
             ],
-            path: "Sources/SQLServerTDS"
+            path: "Sources/SQLServerTDS",
+            linkerSettings: [
+                .linkedFramework("GSS", .when(platforms: [.macOS])),
+            ]
         ),
         .target(
             name: "SQLServerKit",
