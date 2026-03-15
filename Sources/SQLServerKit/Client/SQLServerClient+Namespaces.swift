@@ -22,4 +22,5 @@ extension SQLServerClient {
     public var backupRestore: SQLServerBackupRestoreClient { SQLServerBackupRestoreClient(client: self) }
     public var linkedServers: SQLServerLinkedServersClient { SQLServerLinkedServersClient(client: self) }
     public var extendedEvents: SQLServerExtendedEventsClient { SQLServerExtendedEventsClient(client: self) }
+    public var availabilityGroups: SQLServerAvailabilityGroupsClient { SQLServerAvailabilityGroupsClient(client: self) }
 }
