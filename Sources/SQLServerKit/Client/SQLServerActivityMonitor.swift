@@ -342,10 +342,11 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
         """
 
         return client.query(sql, on: loop).map { rows in
-            rows.map { row in
+            rows.enumerated().map { index, row in
                 let hashBytes = row.column("query_hash")?.bytes ?? []
                 let hashHex = hashBytes.isEmpty ? nil : ("0x" + hashBytes.map { String(format: "%02X", $0) }.joined())
                 return SQLServerExpensiveQuery(
+                    id: "\(hashHex ?? "q")-\(index)",
                     queryHashHex: hashHex,
                     executionCount: row.column("execution_count")?.int ?? 0,
                     totalWorkerTime: Int64(row.column("total_worker_time")?.int64 ?? 0),
