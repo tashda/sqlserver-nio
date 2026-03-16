@@ -72,7 +72,7 @@ extension SQLServerAgentOperations {
     internal func listErrorLogs() -> EventLoopFuture<[SQLServerAgentErrorLog]> {
         run("EXEC xp_enumerrorlogs 2;").map { rows in
             rows.compactMap { row in
-                let columns = row.allColumns
+                let columns = row.data
                 // xp_enumerrorlogs columns can vary, typically: Archive #, Date, Log File Size (Byte)
                 guard columns.count >= 2 else { return nil }
                 
