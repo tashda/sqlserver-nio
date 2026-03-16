@@ -64,6 +64,20 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
         }
     }
 
+    internal func currentLoginName() -> EventLoopFuture<String> {
+        run(sql: "SELECT SUSER_SNAME() AS name").flatMapThrowing { rows in
+            guard let name = rows.first?.column("name")?.string else {
+                throw SQLServerError.custom("Could not fetch current login name")
+            }
+            return name
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func currentLoginName() async throws -> String {
+        try await currentLoginName().get()
+    }
+
     /// Map a login to a database by creating a user in the target database.
     internal func mapLoginToDatabase(login: String, database: String, userName: String? = nil, defaultSchema: String? = nil) -> EventLoopFuture<Void> {
         let user = userName ?? login
