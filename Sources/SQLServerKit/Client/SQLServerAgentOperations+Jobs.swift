@@ -134,16 +134,17 @@ extension SQLServerAgentOperations {
         }.map { _ in () }
     }
 
-    internal func updateJob(named jobName: String, newName: String? = nil, description: String? = nil, ownerLoginName: String? = nil, categoryName: String? = nil, enabled: Bool? = nil, startStepId: Int? = nil) -> EventLoopFuture<Void> {
+    internal func updateJob(named jobName: String, newName: String? = nil, description: String? = nil, ownerLoginName: String? = nil, categoryName: String? = nil, enabled: Bool? = nil, startStepId: Int? = nil, notifyLevelEventlog: Int? = nil) -> EventLoopFuture<Void> {
         return lookupJobId(jobName: jobName).flatMap { (jobId: String) -> EventLoopFuture<Void> in
             var parts: [String] = ["@job_id = N'\(jobId)'"]
             if let newName, !newName.isEmpty { parts.append("@new_name = N'\(Self.escapeLiteral(newName))'") }
             if let desc = description { parts.append("@description = N'\(Self.escapeLiteral(desc))'") }
             if let owner = ownerLoginName { parts.append("@owner_login_name = N'\(Self.escapeLiteral(owner))'") }
-            if let cat = categoryName { parts.append("@category_name = N'\(Self.escapeLiteral(cat))'") }
+            if let category = categoryName { parts.append("@category_name = N'\(Self.escapeLiteral(category))'") }
             if let enabled { parts.append("@enabled = \(enabled ? 1 : 0)") }
-            if let startStep = startStepId, startStep > 0 { parts.append("@start_step_id = \(startStep)") }
-            guard parts.count > 1 else { return self.run("SELECT 1").map { _ in () } }
+            if let startStepId { parts.append("@start_step_id = \(startStepId)") }
+            if let notifyLevelEventlog { parts.append("@notify_level_eventlog = \(notifyLevelEventlog)") }
+
             return self.run("EXEC msdb.dbo.sp_update_job \(parts.joined(separator: ", "));").map { _ in () }
         }
     }
@@ -249,6 +250,43 @@ extension SQLServerAgentOperations {
                 return SQLServerAgentJobHistoryDetail(instanceId: instanceId, jobName: jobName, stepId: stepId, stepName: row.column("step_name")?.string, runStatus: runStatus, runStatusDescription: self.getRunStatusDescription(runStatus), message: row.column("message")?.string ?? "", runDateTime: runDateTime, runDurationSeconds: runDurationSeconds)
             }
             return (top > 0 && entries.count > top) ? Array(entries.prefix(top)) : entries
+        }
+    }
+
+    internal func reorderJobSteps(jobName: String, stepMapping: [(oldID: Int, newID: Int)]) -> EventLoopFuture<Void> {
+        return lookupJobId(jobName: jobName).flatMap { (jobId: String) -> EventLoopFuture<Void> in
+            let caseParts = stepMapping.map { "WHEN \($0.oldID) THEN \($0.newID)" }.joined(separator: " ")
+            let successCase = "CASE on_success_step_id \(caseParts) ELSE on_success_step_id END"
+            let failCase = "CASE on_fail_step_id \(caseParts) ELSE on_fail_step_id END"
+
+            let individualUpdates = stepMapping.map {
+                "UPDATE msdb.dbo.sysjobsteps SET step_id = \($0.newID) WHERE job_id = CONVERT(uniqueidentifier, N'\(jobId)') AND step_id = \($0.oldID + 10000);"
+            }.joined(separator: "\n")
+
+            let startStepCase = "CASE start_step_id \(caseParts) ELSE start_step_id END"
+
+            let sql = """
+            BEGIN TRANSACTION;
+
+            UPDATE msdb.dbo.sysjobsteps
+            SET on_success_step_id = \(successCase),
+                on_fail_step_id = \(failCase)
+            WHERE job_id = CONVERT(uniqueidentifier, N'\(jobId)');
+
+            UPDATE msdb.dbo.sysjobsteps
+            SET step_id = step_id + 10000
+            WHERE job_id = CONVERT(uniqueidentifier, N'\(jobId)');
+
+            \(individualUpdates)
+
+            UPDATE msdb.dbo.sysjobs
+            SET start_step_id = \(startStepCase)
+            WHERE job_id = CONVERT(uniqueidentifier, N'\(jobId)');
+
+            COMMIT;
+            """
+            
+            return self.run(sql).map { _ in () }
         }
     }
 }
