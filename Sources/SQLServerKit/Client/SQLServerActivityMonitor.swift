@@ -397,6 +397,8 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
                 let d = SQLServerFileIOStatDelta(
                     databaseId: f.databaseId,
                     fileId: f.fileId,
+                    databaseName: f.databaseName,
+                    fileName: f.fileName,
                     numReadsDelta: max(0, f.numReads - prev.numReads),
                     numWritesDelta: max(0, f.numWrites - prev.numWrites),
                     bytesReadDelta: max(0, f.bytesRead - prev.bytesRead),
