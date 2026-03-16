@@ -262,4 +262,97 @@ extension SQLServerMetadataOperations {
             }
         }
     }
+
+    // MARK: - Bidirectional Dependencies
+
+    internal func objectDependencies(database: String? = nil, schema: String, name: String) -> EventLoopFuture<[SQLServerObjectDependency]> {
+        let escapedSchema = SQLServerMetadataOperations.escapeLiteral(schema)
+        let escapedName = SQLServerMetadataOperations.escapeLiteral(name)
+        let sql = """
+        SELECT
+            referencing_entity_name = OBJECT_NAME(d.referencing_id),
+            referencing_type = o1.type_desc,
+            referenced_entity_name = COALESCE(d.referenced_entity_name, OBJECT_NAME(d.referenced_id)),
+            referenced_type = COALESCE(o2.type_desc, d.referenced_class_desc)
+        FROM \(qualified(database, object: "sys.sql_expression_dependencies")) d
+        LEFT JOIN \(qualified(database, object: "sys.objects")) o1 ON d.referencing_id = o1.object_id
+        LEFT JOIN \(qualified(database, object: "sys.objects")) o2 ON d.referenced_id = o2.object_id
+        WHERE d.referencing_id = OBJECT_ID(N'\(escapedSchema).\(escapedName)')
+           OR d.referenced_id = OBJECT_ID(N'\(escapedSchema).\(escapedName)');
+        """
+        return queryExecutor(sql).map { rows in
+            rows.compactMap { row in
+                guard let referencingName = row.column("referencing_entity_name")?.string,
+                      let referencingType = row.column("referencing_type")?.string,
+                      let referencedName = row.column("referenced_entity_name")?.string,
+                      let referencedType = row.column("referenced_type")?.string
+                else { return nil }
+                return SQLServerObjectDependency(
+                    referencingName: referencingName,
+                    referencingType: referencingType,
+                    referencedName: referencedName,
+                    referencedType: referencedType
+                )
+            }
+        }
+    }
+
+    // MARK: - Table Properties
+
+    internal func tableProperties(database: String? = nil, schema: String, table: String) -> EventLoopFuture<SQLServerTableProperties> {
+        let escapedSchema = SQLServerMetadataOperations.escapeLiteral(schema)
+        let escapedTable = SQLServerMetadataOperations.escapeLiteral(table)
+
+        // Query create/modify dates from sys.objects
+        let datesSql = """
+        SELECT o.create_date, o.modify_date
+        FROM \(qualified(database, object: "sys.objects")) o
+        JOIN \(qualified(database, object: "sys.schemas")) s ON o.schema_id = s.schema_id
+        WHERE s.name = N'\(escapedSchema)' AND o.name = N'\(escapedTable)';
+        """
+
+        // Query space usage from sys.dm_db_partition_stats and sys.allocation_units
+        // This avoids sp_spaceused which returns multiple result sets
+        let spaceSql = """
+        SELECT
+            SUM(p.rows) AS row_count,
+            SUM(a.total_pages) * 8 AS reserved_kb,
+            SUM(a.data_pages) * 8 AS data_kb,
+            SUM(CASE WHEN a.type <> 1 THEN a.used_pages ELSE 0 END) * 8 AS index_kb,
+            (SUM(a.total_pages) - SUM(a.used_pages)) * 8 AS unused_kb
+        FROM \(qualified(database, object: "sys.partitions")) p
+        JOIN \(qualified(database, object: "sys.allocation_units")) a ON p.partition_id = a.container_id
+        JOIN \(qualified(database, object: "sys.objects")) o ON p.object_id = o.object_id
+        JOIN \(qualified(database, object: "sys.schemas")) s ON o.schema_id = s.schema_id
+        WHERE s.name = N'\(escapedSchema)' AND o.name = N'\(escapedTable)' AND p.index_id IN (0, 1);
+        """
+
+        return queryExecutor(datesSql).flatMap { dateRows in
+            let createDate = dateRows.first?.column("create_date")?.date
+            let modifyDate = dateRows.first?.column("modify_date")?.date
+            return self.queryExecutor(spaceSql).map { spaceRows in
+                let row = spaceRows.first
+                return SQLServerTableProperties(
+                    rowCount: row?.column("row_count")?.int64 ?? 0,
+                    reservedKB: row?.column("reserved_kb")?.int64 ?? 0,
+                    dataKB: row?.column("data_kb")?.int64 ?? 0,
+                    indexKB: row?.column("index_kb")?.int64 ?? 0,
+                    unusedKB: row?.column("unused_kb")?.int64 ?? 0,
+                    createDate: createDate,
+                    modifyDate: modifyDate
+                )
+            }
+        }
+    }
+
+    // MARK: - Object Definition (raw string)
+
+    internal func objectDefinitionString(database: String? = nil, schema: String, name: String) -> EventLoopFuture<String?> {
+        let escapedSchema = SQLServerMetadataOperations.escapeLiteral(schema)
+        let escapedName = SQLServerMetadataOperations.escapeLiteral(name)
+        let sql = "SELECT OBJECT_DEFINITION(OBJECT_ID(N'\(escapedSchema).\(escapedName)')) AS definition;"
+        return queryExecutor(sql).map { rows in
+            rows.first?.column("definition")?.string
+        }
+    }
 }

@@ -40,11 +40,16 @@ extension SQLServerIndexClient {
     }
     
     @available(macOS 12.0, *)
-    public func rebuildIndex(name: String, table: String, schema: String = "dbo", options: IndexOptions? = nil) async throws {
+    public func rebuildIndex(name: String, table: String, schema: String = "dbo", database: String? = nil, options: IndexOptions? = nil) async throws {
         let escapedIndexName = Self.escapeIdentifier(name)
         let escapedTableName = Self.escapeIdentifier(table)
         let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
-        let fullTableName = "\(schemaPrefix)\(escapedTableName)"
+        let fullTableName: String
+        if let database {
+            fullTableName = "\(Self.escapeIdentifier(database)).\(schemaPrefix)\(escapedTableName)"
+        } else {
+            fullTableName = "\(schemaPrefix)\(escapedTableName)"
+        }
         
         var sql = "ALTER INDEX \(escapedIndexName) ON \(fullTableName) REBUILD"
         
@@ -98,22 +103,32 @@ extension SQLServerIndexClient {
     }
     
     @available(macOS 12.0, *)
-    public func reorganizeIndex(name: String, table: String, schema: String = "dbo") async throws {
+    public func reorganizeIndex(name: String, table: String, schema: String = "dbo", database: String? = nil) async throws {
         let escapedIndexName = Self.escapeIdentifier(name)
         let escapedTableName = Self.escapeIdentifier(table)
         let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
-        let fullTableName = "\(schemaPrefix)\(escapedTableName)"
+        let fullTableName: String
+        if let database {
+            fullTableName = "\(Self.escapeIdentifier(database)).\(schemaPrefix)\(escapedTableName)"
+        } else {
+            fullTableName = "\(schemaPrefix)\(escapedTableName)"
+        }
 
         let sql = "ALTER INDEX \(escapedIndexName) ON \(fullTableName) REORGANIZE"
         _ = try await client.execute(sql)
     }
 
     @available(macOS 12.0, *)
-    public func disableIndex(name: String, table: String, schema: String = "dbo") async throws {
+    public func disableIndex(name: String, table: String, schema: String = "dbo", database: String? = nil) async throws {
         let escapedIndexName = Self.escapeIdentifier(name)
         let escapedTableName = Self.escapeIdentifier(table)
         let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
-        let fullTableName = "\(schemaPrefix)\(escapedTableName)"
+        let fullTableName: String
+        if let database {
+            fullTableName = "\(Self.escapeIdentifier(database)).\(schemaPrefix)\(escapedTableName)"
+        } else {
+            fullTableName = "\(schemaPrefix)\(escapedTableName)"
+        }
 
         let sql = "ALTER INDEX \(escapedIndexName) ON \(fullTableName) DISABLE"
         _ = try await client.execute(sql)
@@ -137,5 +152,77 @@ extension SQLServerIndexClient {
 
         let sql = "ALTER INDEX ALL ON \(fullTableName) REORGANIZE"
         _ = try await client.execute(sql)
+    }
+
+    /// Re-enables a disabled index by rebuilding it.
+    @available(macOS 12.0, *)
+    public func enableIndex(name: String, table: String, schema: String = "dbo", database: String? = nil) async throws {
+        let escapedIndexName = Self.escapeIdentifier(name)
+        let escapedTableName = Self.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let fullTableName: String
+        if let database {
+            fullTableName = "\(Self.escapeIdentifier(database)).\(schemaPrefix)\(escapedTableName)"
+        } else {
+            fullTableName = "\(schemaPrefix)\(escapedTableName)"
+        }
+
+        let sql = "ALTER INDEX \(escapedIndexName) ON \(fullTableName) REBUILD"
+        _ = try await client.execute(sql)
+    }
+
+    /// Returns physical stats for a specific index (fragmentation, page count, fill factor, etc.).
+    @available(macOS 12.0, *)
+    public func indexProperties(
+        schema: String = "dbo",
+        table: String,
+        indexName: String,
+        database: String? = nil
+    ) async throws -> SQLServerIndexProperties {
+        let escapedSchema = schema.replacingOccurrences(of: "'", with: "''")
+        let escapedTable = table.replacingOccurrences(of: "'", with: "''")
+        let escapedIndex = indexName.replacingOccurrences(of: "'", with: "''")
+
+        let sql = """
+        SELECT
+            ips.avg_fragmentation_in_percent AS fragmentation_percent,
+            ips.page_count,
+            ISNULL(i.fill_factor, 0) AS fill_factor,
+            ips.avg_page_space_used_in_percent AS avg_page_space_used_percent,
+            ips.record_count,
+            ips.ghost_record_count,
+            ips.index_depth,
+            ips.index_type_desc AS index_type
+        FROM sys.dm_db_index_physical_stats(
+            DB_ID(\(database.map { "N'\($0.replacingOccurrences(of: "'", with: "''"))'" } ?? "NULL")),
+            OBJECT_ID(N'\(escapedSchema).\(escapedTable)'),
+            NULL, NULL, 'DETAILED'
+        ) AS ips
+        JOIN sys.indexes AS i
+            ON ips.object_id = i.object_id AND ips.index_id = i.index_id
+        WHERE i.name = N'\(escapedIndex)';
+        """
+
+        let result = try await client.execute(sql)
+        let rows = result.rows
+
+        guard let row = rows.first else {
+            return SQLServerIndexProperties(
+                fragmentationPercent: 0,
+                pageCount: 0,
+                fillFactor: 0
+            )
+        }
+
+        return SQLServerIndexProperties(
+            fragmentationPercent: row.column("fragmentation_percent")?.double ?? 0,
+            pageCount: row.column("page_count")?.int64 ?? 0,
+            fillFactor: row.column("fill_factor")?.int ?? 0,
+            avgPageSpaceUsedPercent: row.column("avg_page_space_used_percent")?.double,
+            recordCount: row.column("record_count")?.int64,
+            ghostRecordCount: row.column("ghost_record_count")?.int64,
+            indexDepth: row.column("index_depth")?.int,
+            indexType: row.column("index_type")?.string
+        )
     }
 }
