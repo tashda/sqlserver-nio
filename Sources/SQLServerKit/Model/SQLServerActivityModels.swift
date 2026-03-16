@@ -140,8 +140,8 @@ public struct SQLServerFileIOStatDelta: Sendable, Identifiable {
 }
 
 public struct SQLServerExpensiveQuery: Sendable, Identifiable {
-    public var id: String { queryHashHex ?? UUID().uuidString }
-    
+    public let id: String
+
     public let queryHashHex: String?
     public let executionCount: Int
     public let totalWorkerTime: Int64
