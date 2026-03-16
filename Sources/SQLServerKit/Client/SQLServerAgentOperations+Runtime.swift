@@ -68,4 +68,23 @@ extension SQLServerAgentOperations {
 
         return poll(attempts: 40)
     }
+
+    internal func listErrorLogs() -> EventLoopFuture<[SQLServerAgentErrorLog]> {
+        run("EXEC xp_enumerrorlogs 2;").map { rows in
+            rows.compactMap { row in
+                let columns = row.allColumns
+                // xp_enumerrorlogs columns can vary, typically: Archive #, Date, Log File Size (Byte)
+                guard columns.count >= 2 else { return nil }
+                
+                let archiveStr = columns[0].string ?? "0"
+                let digitsOnly = archiveStr.unicodeScalars.filter { CharacterSet.decimalDigits.contains($0) }
+                let archive = Int(String(String.UnicodeScalarView(digitsOnly))) ?? 0
+                
+                let date = columns[1].string ?? ""
+                let size = columns.count >= 3 ? columns[2].string : nil
+                
+                return SQLServerAgentErrorLog(archiveNumber: archive, date: date, size: size)
+            }
+        }
+    }
 }
