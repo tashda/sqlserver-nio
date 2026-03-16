@@ -4,13 +4,74 @@ import SQLServerTDS
 extension SQLServerAdministrationClient {
     // MARK: - Database Management
 
-    /// Create a database.
+    /// Create a database with optional configuration for collation, containment, and file settings.
     @available(macOS 12.0, *)
     @discardableResult
-    public func createDatabase(name: String) async throws -> [SQLServerStreamMessage] {
+    public func createDatabase(
+        name: String,
+        collation: String? = nil,
+        containment: String? = nil,
+        dataFileName: String? = nil,
+        dataFileSize: Int? = nil,
+        dataFileMaxSize: Int? = nil,
+        dataFileGrowth: Int? = nil,
+        logFileName: String? = nil,
+        logFileSize: Int? = nil,
+        logFileMaxSize: Int? = nil,
+        logFileGrowth: Int? = nil
+    ) async throws -> [SQLServerStreamMessage] {
         let escaped = Self.escapeIdentifier(name)
-        let result = try await client.execute("CREATE DATABASE \(escaped)")
+        var sql = "CREATE DATABASE \(escaped)"
+
+        if let collation {
+            sql += "\n    COLLATE \(collation)"
+        }
+
+        if let containment {
+            sql += "\n    WITH CONTAINMENT = \(containment)"
+        }
+
+        // Primary data file
+        if dataFileName != nil || dataFileSize != nil {
+            let logicalName = dataFileName ?? name
+            let escapedLogical = logicalName.replacingOccurrences(of: "'", with: "''")
+            var fileParts = ["NAME = N'\(escapedLogical)'"]
+            if let size = dataFileSize { fileParts.append("SIZE = \(size)MB") }
+            if let maxSize = dataFileMaxSize {
+                fileParts.append("MAXSIZE = \(maxSize)MB")
+            }
+            if let growth = dataFileGrowth { fileParts.append("FILEGROWTH = \(growth)MB") }
+            sql += "\n    ON PRIMARY (\(fileParts.joined(separator: ", ")))"
+        }
+
+        // Log file
+        if logFileName != nil || logFileSize != nil {
+            let logicalName = logFileName ?? "\(name)_log"
+            let escapedLogical = logicalName.replacingOccurrences(of: "'", with: "''")
+            var fileParts = ["NAME = N'\(escapedLogical)'"]
+            if let size = logFileSize { fileParts.append("SIZE = \(size)MB") }
+            if let maxSize = logFileMaxSize {
+                fileParts.append("MAXSIZE = \(maxSize)MB")
+            }
+            if let growth = logFileGrowth { fileParts.append("FILEGROWTH = \(growth)MB") }
+            sql += "\n    LOG ON (\(fileParts.joined(separator: ", ")))"
+        }
+
+        let result = try await client.execute(sql)
         return result.messages
+    }
+
+    /// List available collations from sys.fn_helpcollations().
+    @available(macOS 12.0, *)
+    public func listCollations() async throws -> [String] {
+        let rows = try await client.query("SELECT name FROM sys.fn_helpcollations() ORDER BY name")
+        return rows.compactMap { $0.column("name")?.string }
+    }
+
+    /// List standard recovery models.
+    @available(macOS 12.0, *)
+    public func listRecoveryModels() -> [String] {
+        ["FULL", "BULK_LOGGED", "SIMPLE"]
     }
 
     /// Take a database offline with rollback of active transactions.
