@@ -67,7 +67,7 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
     internal func currentLoginName() -> EventLoopFuture<String> {
         run(sql: "SELECT SUSER_SNAME() AS name").flatMapThrowing { rows in
             guard let name = rows.first?.column("name")?.string else {
-                throw SQLServerError.custom("Could not fetch current login name")
+                throw SQLServerError.sqlExecutionError(message: "Could not fetch current login name")
             }
             return name
         }
