@@ -380,16 +380,17 @@ public final class SQLServerQueryStoreClient: @unchecked Sendable {
             p.query_id,
             p.plan_id,
             p.is_forced_plan,
-            rs.avg_duration,
-            rs.avg_cpu_time,
-            rs.avg_logical_io_reads,
-            rs.count_executions,
-            rs.last_execution_time,
+            AVG(rs.avg_duration) AS avg_duration,
+            AVG(rs.avg_cpu_time) AS avg_cpu_time,
+            AVG(rs.avg_logical_io_reads) AS avg_logical_io_reads,
+            SUM(rs.count_executions) AS count_executions,
+            MAX(rs.last_execution_time) AS last_execution_time,
             CAST(p.query_plan AS NVARCHAR(MAX)) AS query_plan_xml
         FROM sys.query_store_plan p
         JOIN sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
         WHERE p.query_id = \(queryId)
-        ORDER BY rs.last_execution_time DESC
+        GROUP BY p.query_id, p.plan_id, p.is_forced_plan, CAST(p.query_plan AS NVARCHAR(MAX))
+        ORDER BY MAX(rs.last_execution_time) DESC
         """
 
         let rows = try await client.withDatabase(database) { connection in
