@@ -126,9 +126,11 @@ public struct SQLServerFileIOStat: Sendable {
 
 public struct SQLServerFileIOStatDelta: Sendable, Identifiable {
     public var id: String { "\(databaseId):\(fileId)" }
-    
+
     public let databaseId: Int
     public let fileId: Int
+    public let databaseName: String?
+    public let fileName: String?
     public let numReadsDelta: Int
     public let numWritesDelta: Int
     public let bytesReadDelta: Int64

@@ -100,6 +100,21 @@ extension SQLServerConnection {
     }
 
     @available(macOS 12.0, *)
+    public func objectDependencies(database: String? = nil, schema: String, name: String) async throws -> [SQLServerObjectDependency] {
+        try await objectDependencies(database: database, schema: schema, name: name).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func tableProperties(database: String? = nil, schema: String, table: String) async throws -> SQLServerTableProperties {
+        try await tableProperties(database: database, schema: schema, table: table).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func objectDefinitionString(database: String? = nil, schema: String, name: String) async throws -> String? {
+        try await objectDefinitionString(database: database, schema: schema, name: name).get()
+    }
+
+    @available(macOS 12.0, *)
     public func listTriggers(database: String? = nil, schema: String? = nil, table: String? = nil, includeComments: Bool = false) async throws -> [TriggerMetadata] {
         try await listTriggers(database: database, schema: schema, table: table, includeComments: includeComments).get()
     }
@@ -180,6 +195,18 @@ extension SQLServerConnection {
 
     internal func listDependencies(database: String? = nil, schema: String, object: String) -> EventLoopFuture<[DependencyMetadata]> {
         metadataClient.listDependencies(database: database, schema: schema, object: object)
+    }
+
+    internal func objectDependencies(database: String? = nil, schema: String, name: String) -> EventLoopFuture<[SQLServerObjectDependency]> {
+        metadataClient.objectDependencies(database: database, schema: schema, name: name)
+    }
+
+    internal func tableProperties(database: String? = nil, schema: String, table: String) -> EventLoopFuture<SQLServerTableProperties> {
+        metadataClient.tableProperties(database: database, schema: schema, table: table)
+    }
+
+    internal func objectDefinitionString(database: String? = nil, schema: String, name: String) -> EventLoopFuture<String?> {
+        metadataClient.objectDefinitionString(database: database, schema: schema, name: name)
     }
 
     internal func listTriggers(database: String? = nil, schema: String? = nil, table: String? = nil, includeComments: Bool = false) -> EventLoopFuture<[TriggerMetadata]> {
