@@ -60,6 +60,29 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
         }
     }
 
+    /// Rebuilds a specific index on a table.
+    @available(macOS 12.0, *)
+    public func rebuildIndex(schema: String, table: String, name: String) async throws -> SQLServerMaintenanceResult {
+        let escapedSchema = schema.replacingOccurrences(of: "]", with: "]]")
+        let escapedTable = table.replacingOccurrences(of: "]", with: "]]")
+        let escapedName = name.replacingOccurrences(of: "]", with: "]]")
+        let sql = "ALTER INDEX [\(escapedName)] ON [\(escapedSchema)].[\(escapedTable)] REBUILD"
+        do {
+            _ = try await client.execute(sql)
+            return SQLServerMaintenanceResult(
+                operation: "Rebuild Index",
+                messages: ["Index [\(name)] on [\(schema)].[\(table)] rebuilt successfully."],
+                succeeded: true
+            )
+        } catch {
+            return SQLServerMaintenanceResult(
+                operation: "Rebuild Index",
+                messages: [error.localizedDescription],
+                succeeded: false
+            )
+        }
+    }
+
     // MARK: - Update Statistics
 
     /// Updates statistics on a table.
