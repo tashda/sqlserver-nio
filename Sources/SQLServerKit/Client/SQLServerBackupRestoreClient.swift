@@ -290,4 +290,73 @@ public final class SQLServerBackupRestoreClient: @unchecked Sendable {
         let result = try await client.execute(sql)
         return result.messages
     }
+
+    /// Retrieves recent backup history for a database from msdb.
+    @available(macOS 12.0, *)
+    public func getBackupHistory(database: String, limit: Int = 100) async throws -> [SQLServerBackupHistoryEntry] {
+        let escaped = database.replacingOccurrences(of: "'", with: "''")
+        let sql = """
+        SELECT TOP (\(limit))
+            bs.backup_set_id,
+            bs.name AS backup_name,
+            bs.description,
+            bs.backup_start_date,
+            bs.backup_finish_date,
+            bs.type,
+            bs.backup_size,
+            bs.compressed_backup_size,
+            bmf.physical_device_name,
+            bs.server_name,
+            bs.recovery_model
+        FROM msdb.dbo.backupset bs
+        JOIN msdb.dbo.backupmediafamily bmf ON bs.media_set_id = bmf.media_set_id
+        WHERE bs.database_name = N'\(escaped)'
+        ORDER BY bs.backup_finish_date DESC;
+        """
+
+        let rows = try await client.query(sql).get()
+        return rows.map { row in
+            SQLServerBackupHistoryEntry(
+                id: row.column("backup_set_id")?.int ?? 0,
+                name: row.column("backup_name")?.string,
+                description: row.column("description")?.string,
+                startDate: row.column("backup_start_date")?.date,
+                finishDate: row.column("backup_finish_date")?.date,
+                type: row.column("type")?.string ?? "D",
+                size: row.column("backup_size")?.int64 ?? 0,
+                compressedSize: row.column("compressed_backup_size")?.int64,
+                physicalPath: row.column("physical_device_name")?.string ?? "",
+                serverName: row.column("server_name")?.string ?? "",
+                recoveryModel: row.column("recovery_model")?.string ?? ""
+            )
+        }
+    }
+}
+
+/// Represents an entry in the SQL Server backup history.
+public struct SQLServerBackupHistoryEntry: Sendable, Identifiable {
+    public let id: Int
+    public let name: String?
+    public let description: String?
+    public let startDate: Date?
+    public let finishDate: Date?
+    public let type: String
+    public let size: Int64
+    public let compressedSize: Int64?
+    public let physicalPath: String
+    public let serverName: String
+    public let recoveryModel: String
+
+    public var typeDescription: String {
+        switch type {
+        case "D": return "Full"
+        case "I": return "Differential"
+        case "L": return "Log"
+        case "F": return "File or Filegroup"
+        case "G": return "Differential File"
+        case "P": return "Partial"
+        case "Q": return "Differential Partial"
+        default: return "Unknown (\(type))"
+        }
+    }
 }
