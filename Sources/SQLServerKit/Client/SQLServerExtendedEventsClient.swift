@@ -203,20 +203,19 @@ public final class SQLServerExtendedEventsClient: @unchecked Sendable {
 
         let eventsSql = """
         SELECT
-            e.event_name,
-            e.event_package_name
-        FROM sys.dm_xe_sessions s
-        JOIN sys.dm_xe_session_events e ON s.address = e.event_session_address
+            e.name AS [event_name],
+            e.package AS [event_package_name]
+        FROM sys.server_event_sessions s
+        JOIN sys.server_event_session_events e ON s.event_session_id = e.event_session_id
         WHERE s.name = '\(escapedName)'
-        ORDER BY e.event_name
+        ORDER BY e.name
         """
 
         let targetsSql = """
         SELECT
-            t.target_name,
-            CAST(t.target_data AS NVARCHAR(MAX)) AS target_data
-        FROM sys.dm_xe_sessions s
-        JOIN sys.dm_xe_session_targets t ON s.address = t.event_session_address
+            t.name AS [target_name]
+        FROM sys.server_event_sessions s
+        JOIN sys.server_event_session_targets t ON s.event_session_id = t.event_session_id
         WHERE s.name = '\(escapedName)'
         """
 
