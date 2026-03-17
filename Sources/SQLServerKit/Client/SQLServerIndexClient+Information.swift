@@ -122,7 +122,7 @@ extension SQLServerIndexClient {
 
     /// Lists indexes with their fragmentation statistics across the current database.
     @available(macOS 12.0, *)
-    public func listFragmentedIndexes(minFragmentationPercent: Double = 10.0) async throws -> [SQLServerIndexFragmentation] {
+    public func listFragmentedIndexes(minFragmentationPercent: Double = 0.1) async throws -> [SQLServerIndexFragmentation] {
         let sql = """
         SELECT 
             s.name AS [schema_name],
@@ -137,7 +137,6 @@ extension SQLServerIndexClient {
         JOIN sys.schemas AS s ON t.schema_id = s.schema_id
         JOIN sys.indexes AS i ON ips.object_id = i.object_id AND ips.index_id = i.index_id
         WHERE ips.avg_fragmentation_in_percent >= \(minFragmentationPercent)
-          AND ips.page_count > 8 -- Ignore very small tables (1 extent)
         ORDER BY ips.avg_fragmentation_in_percent DESC;
         """
         
