@@ -153,4 +153,36 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
             )
         }
     }
+
+    // MARK: - Health Information
+
+    /// Retrieves health and configuration status for the current database.
+    @available(macOS 12.0, *)
+    public func getDatabaseHealth() async throws -> SQLServerDatabaseHealth {
+        let sql = """
+        SELECT 
+            SUM(mf.size) * 8 / 1024.0 AS size_mb,
+            d.recovery_model_desc,
+            d.state_desc,
+            d.compatibility_level,
+            d.collation_name
+        FROM sys.master_files mf
+        JOIN sys.databases d ON mf.database_id = d.database_id
+        WHERE d.database_id = DB_ID()
+        GROUP BY d.recovery_model_desc, d.state_desc, d.compatibility_level, d.collation_name;
+        """
+        
+        let rows = try await client.query(sql)
+        guard let row = rows.first else {
+            throw SQLServerClientError.metadataError("Could not retrieve health stats for database.")
+        }
+        
+        return SQLServerDatabaseHealth(
+            sizeMB: row.column("size_mb")?.double ?? 0,
+            recoveryModel: row.column("recovery_model_desc")?.string ?? "Unknown",
+            status: row.column("state_desc")?.string ?? "Unknown",
+            compatibilityLevel: row.column("compatibility_level")?.int ?? 0,
+            collationName: row.column("collation_name")?.string
+        )
+    }
 }
