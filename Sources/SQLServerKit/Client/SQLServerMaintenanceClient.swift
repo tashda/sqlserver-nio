@@ -161,15 +161,18 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
     public func getDatabaseHealth() async throws -> SQLServerDatabaseHealth {
         let sql = """
         SELECT 
+            d.name,
+            SUSER_SNAME(d.owner_sid) AS [owner],
+            d.create_date,
             SUM(mf.size) * 8 / 1024.0 AS size_mb,
             d.recovery_model_desc,
             d.state_desc,
             d.compatibility_level,
             d.collation_name
-        FROM sys.master_files mf
-        JOIN sys.databases d ON mf.database_id = d.database_id
+        FROM sys.databases d
+        JOIN sys.master_files mf ON d.database_id = mf.database_id
         WHERE d.database_id = DB_ID()
-        GROUP BY d.recovery_model_desc, d.state_desc, d.compatibility_level, d.collation_name;
+        GROUP BY d.name, d.owner_sid, d.create_date, d.recovery_model_desc, d.state_desc, d.compatibility_level, d.collation_name;
         """
         
         let rows = try await client.query(sql)
@@ -178,6 +181,9 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
         }
         
         return SQLServerDatabaseHealth(
+            name: row.column("name")?.string ?? "",
+            owner: row.column("owner")?.string ?? "Unknown",
+            createDate: row.column("create_date")?.date ?? Date(),
             sizeMB: row.column("size_mb")?.double ?? 0,
             recoveryModel: row.column("recovery_model_desc")?.string ?? "Unknown",
             status: row.column("state_desc")?.string ?? "Unknown",
