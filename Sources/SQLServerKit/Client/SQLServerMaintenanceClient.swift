@@ -174,7 +174,7 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
         
         let rows = try await client.query(sql)
         guard let row = rows.first else {
-            throw SQLServerClientError.metadataError("Could not retrieve health stats for database.")
+            throw SQLServerError.sqlExecutionError(message: "Could not retrieve health stats for database.")
         }
         
         return SQLServerDatabaseHealth(
