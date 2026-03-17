@@ -107,6 +107,29 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
         }
     }
 
+    /// Updates statistics on a specific index.
+    @available(macOS 12.0, *)
+    public func updateIndexStatistics(schema: String, table: String, index: String) async throws -> SQLServerMaintenanceResult {
+        let escapedSchema = schema.replacingOccurrences(of: "]", with: "]]")
+        let escapedTable = table.replacingOccurrences(of: "]", with: "]]")
+        let escapedIndex = index.replacingOccurrences(of: "]", with: "]]")
+        let sql = "UPDATE STATISTICS [\(escapedSchema)].[\(escapedTable)] [\(escapedIndex)] WITH FULLSCAN"
+        do {
+            _ = try await client.execute(sql)
+            return SQLServerMaintenanceResult(
+                operation: "Update Statistics",
+                messages: ["Statistics on index [\(index)] for [\(schema)].[\(table)] updated successfully."],
+                succeeded: true
+            )
+        } catch {
+            return SQLServerMaintenanceResult(
+                operation: "Update Statistics",
+                messages: [error.localizedDescription],
+                succeeded: false
+            )
+        }
+    }
+
     // MARK: - Check Database Integrity
 
     /// Runs DBCC CHECKDB on the specified database.
