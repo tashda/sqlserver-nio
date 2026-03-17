@@ -119,4 +119,56 @@ extension SQLServerIndexClient {
         
         return indexes
     }
+
+    /// Lists indexes with their fragmentation statistics across the current database.
+    @available(macOS 12.0, *)
+    public func listFragmentedIndexes(minFragmentationPercent: Double = 10.0) async throws -> [SQLServerIndexFragmentation] {
+        let sql = """
+        SELECT 
+            s.name AS [schema_name],
+            t.name AS [table_name],
+            i.name AS [index_name],
+            ips.avg_fragmentation_in_percent AS [fragmentation_percent],
+            ips.page_count,
+            ips.index_type_desc AS [index_type],
+            ips.index_id
+        FROM sys.dm_db_index_physical_stats(DB_ID(), NULL, NULL, NULL, 'LIMITED') AS ips
+        JOIN sys.tables AS t ON ips.object_id = t.object_id
+        JOIN sys.schemas AS s ON t.schema_id = s.schema_id
+        JOIN sys.indexes AS i ON ips.object_id = i.object_id AND ips.index_id = i.index_id
+        WHERE ips.avg_fragmentation_in_percent >= \(minFragmentationPercent)
+          AND ips.page_count > 8 -- Ignore very small tables (1 extent)
+        ORDER BY ips.avg_fragmentation_in_percent DESC;
+        """
+        
+        let rows = try await client.query(sql)
+        return rows.compactMap { row in
+            guard let schemaName = row.column("schema_name")?.string,
+                  let tableName = row.column("table_name")?.string,
+                  let indexName = row.column("index_name")?.string else { return nil }
+            
+            return SQLServerIndexFragmentation(
+                schemaName: schemaName,
+                tableName: tableName,
+                indexName: indexName,
+                fragmentationPercent: row.column("fragmentation_percent")?.double ?? 0,
+                pageCount: row.column("page_count")?.int64 ?? 0,
+                indexType: row.column("index_type")?.string ?? "UNKNOWN",
+                indexId: row.column("index_id")?.int ?? 0
+            )
+        }
+    }
+}
+
+/// Represents fragmentation statistics for a SQL Server index.
+public struct SQLServerIndexFragmentation: Sendable, Identifiable {
+    public var id: String { "\(schemaName).\(tableName).\(indexName)" }
+    
+    public let schemaName: String
+    public let tableName: String
+    public let indexName: String
+    public let fragmentationPercent: Double
+    public let pageCount: Int64
+    public let indexType: String
+    public let indexId: Int
 }
