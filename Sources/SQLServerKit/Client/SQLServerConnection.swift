@@ -278,20 +278,29 @@ public final class SQLServerConnection: @unchecked Sendable {
             return eventLoop.makeSucceededFuture(())
         }
         if reuseOnClose {
-            let defaultDatabase = configuration.login.database
-            let currentDatabase = self.currentDatabase
-            let releaseFuture: EventLoopFuture<Void>
-            if !base.isClosed,
-               currentDatabase.caseInsensitiveCompare(defaultDatabase) != .orderedSame {
-                releaseFuture = changeDatabase(defaultDatabase).flatMap {
-                    self.release(false)
-                }.flatMapError { _ in
-                    self.release(true)
-                }
+            // Roll back any orphaned transaction before returning to pool.
+            let guardFuture: EventLoopFuture<Void>
+            if !base.isClosed {
+                guardFuture = guardOpenTransaction()
             } else {
-                releaseFuture = self.release(false)
+                guardFuture = eventLoop.makeSucceededFuture(())
             }
-            return releaseFuture.map { _ in self.fireAndForgetGroupShutdown() }
+            return guardFuture.flatMap {
+                let defaultDatabase = self.configuration.login.database
+                let currentDatabase = self.currentDatabase
+                let releaseFuture: EventLoopFuture<Void>
+                if !self.base.isClosed,
+                   currentDatabase.caseInsensitiveCompare(defaultDatabase) != .orderedSame {
+                    releaseFuture = self.changeDatabase(defaultDatabase).flatMap {
+                        self.release(false)
+                    }.flatMapError { _ in
+                        self.release(true)
+                    }
+                } else {
+                    releaseFuture = self.release(false)
+                }
+                return releaseFuture
+            }.map { _ in self.fireAndForgetGroupShutdown() }
         } else {
             return release(true).map { _ in self.fireAndForgetGroupShutdown() }
         }
@@ -308,6 +317,10 @@ public final class SQLServerConnection: @unchecked Sendable {
         guard shouldClose else { return }
 
         if reuseOnClose {
+            // Roll back any orphaned transaction before returning to pool.
+            if !base.isClosed {
+                try? await guardOpenTransaction().get()
+            }
             let defaultDatabase = configuration.login.database
             let currentDatabase = self.currentDatabase
             if !base.isClosed,
@@ -354,6 +367,14 @@ public final class SQLServerConnection: @unchecked Sendable {
 
     public func cancelActiveRequest() {
         base.sendAttention()
+    }
+
+    /// Rolls back any open transaction before the connection is returned to a pool.
+    /// This prevents leaked transactions from holding locks on the server.
+    /// Errors are ignored — if the connection is broken, the server will clean up
+    /// when the TCP session dies.
+    internal func guardOpenTransaction() -> EventLoopFuture<Void> {
+        base.rawSql("IF @@TRANCOUNT > 0 ROLLBACK;").map { _ in () }.recover { _ in () }
     }
 
     deinit {

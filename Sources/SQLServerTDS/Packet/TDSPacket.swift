@@ -94,4 +94,13 @@ extension TDSPacket {
     public static let defaultPacketLength = 4096
     public static let headerLength = 8
     public static let maximumPacketDataLength = TDSPacket.defaultPacketLength - 8
+
+    /// Sets the RESETCONNECTION bit (0x08) in the packet header status byte.
+    /// This tells SQL Server to reset session state before processing this request.
+    mutating func applyResetConnectionFlag() {
+        guard buffer.writerIndex >= 2 else { return }
+        if let currentStatus: UInt8 = buffer.getInteger(at: 1) {
+            buffer.setInteger(currentStatus | Status.resetConnection.value, at: 1)
+        }
+    }
 }
