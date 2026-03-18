@@ -29,11 +29,24 @@ extension SQLServerConnection {
         return try await execute(pagedSQL).rows.map { $0.droppingLastColumn() }
     }
 
-    internal func execute(_ sql: String) -> EventLoopFuture<SQLServerExecutionResult> {
+    internal func execute(_ sql: String, applyDefaultTimeout: Bool = true) -> EventLoopFuture<SQLServerExecutionResult> {
         let future = executeWithRetry(operationName: "execute") {
             self.runBatch(sql)
         }
-        return future.flatMapError { error in
+        // Apply configured default query timeout (sends ATTENTION on expiry)
+        let guarded: EventLoopFuture<SQLServerExecutionResult>
+        if applyDefaultTimeout, let timeout = configuration.sessionOptions.defaultQueryTimeout {
+            let timed = future.withTimeout(on: self.eventLoop, seconds: timeout)
+            timed.whenFailure { error in
+                if case .timeout = SQLServerError.normalize(error) {
+                    self.base.sendAttention()
+                }
+            }
+            guarded = timed
+        } else {
+            guarded = future
+        }
+        return guarded.flatMapError { error in
             let normalized = SQLServerError.normalize(error)
             switch normalized {
             case .timeout:
@@ -85,7 +98,7 @@ extension SQLServerConnection {
         timeout seconds: TimeInterval,
         invalidateOnTimeout: Bool
     ) -> EventLoopFuture<SQLServerExecutionResult> {
-        let fut: EventLoopFuture<SQLServerExecutionResult> = execute(sql)
+        let fut: EventLoopFuture<SQLServerExecutionResult> = execute(sql, applyDefaultTimeout: false)
         let timed = fut.withTimeout(on: self.eventLoop, seconds: seconds)
         timed.whenFailure { error in
             if case .timeout = SQLServerError.normalize(error) {
