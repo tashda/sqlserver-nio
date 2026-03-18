@@ -14,7 +14,7 @@ extension TDSConnection {
             return existing
         }
         let payload: TDSMessages.Login7Message
-        var authenticator: KerberosAuthenticator?
+        var authenticator: (any TDSAuthenticator)?
 
         switch configuration.authentication {
         case .sqlPassword(let username, let password):
@@ -30,14 +30,28 @@ extension TDSConnection {
 
         case .windowsIntegrated(let username, let password, let domain):
             do {
-                let authenticatorInstance = try KerberosAuthenticator(
-                    username: username,
-                    password: password,
-                    domain: domain,
-                    server: configuration.serverName,
-                    port: configuration.port,
-                    logger: logger
-                )
+                // If explicit credentials are provided, use NTLMv2 (direct challenge-response,
+                // no KDC needed). If credentials are empty, fall back to Kerberos (GSS.framework).
+                let authenticatorInstance: any TDSAuthenticator
+                if !username.isEmpty && !password.isEmpty {
+                    authenticatorInstance = try NTLMv2Authenticator(
+                        username: username,
+                        password: password,
+                        domain: domain ?? "",
+                        server: configuration.serverName,
+                        port: configuration.port,
+                        logger: logger
+                    )
+                } else {
+                    authenticatorInstance = try KerberosAuthenticator(
+                        username: username,
+                        password: password,
+                        domain: domain,
+                        server: configuration.serverName,
+                        port: configuration.port,
+                        logger: logger
+                    )
+                }
                 let initialToken = try authenticatorInstance.initialToken()
                 let loginUsername = domain.flatMap { "\($0)\\\(username)" } ?? username
                 payload = TDSMessages.Login7Message(
