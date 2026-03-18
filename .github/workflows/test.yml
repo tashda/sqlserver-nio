@@ -25,6 +25,7 @@ jobs:
       - uses: swift-actions/setup-swift@v3
         with:
           swift-version: "6.2"
+          skip-verify-signature: true
       - name: Build library
         run: swift build
       - name: Build tests
@@ -41,6 +42,7 @@ jobs:
       - uses: swift-actions/setup-swift@v3
         with:
           swift-version: "6.2"
+          skip-verify-signature: true
       - name: Run tests against SQL Server 2022
         env:
           USE_DOCKER: "1"
@@ -81,6 +83,7 @@ jobs:
       - uses: swift-actions/setup-swift@v3
         with:
           swift-version: "6.2"
+          skip-verify-signature: true
       - name: Run tests against SQL Server ${{ matrix.version }}
         env:
           USE_DOCKER: "1"
