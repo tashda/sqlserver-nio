@@ -137,7 +137,8 @@ extension SQLServerIndexClient {
             ISNULL(ius.user_seeks, 0) + ISNULL(ius.user_scans, 0) + ISNULL(ius.user_lookups, 0) AS [total_scans],
             ISNULL(ius.user_updates, 0) AS [total_updates],
             CAST((ips.page_count * 8.0) AS FLOAT) AS [size_kb],
-            CAST((SELECT SUM(a.total_pages) * 8.0 FROM sys.partitions p JOIN sys.allocation_units a ON p.partition_id = a.container_id WHERE p.object_id = t.object_id) AS FLOAT) AS [table_size_kb]
+            CAST((SELECT SUM(a.total_pages) * 8.0 FROM sys.partitions p JOIN sys.allocation_units a ON p.partition_id = a.container_id WHERE p.object_id = t.object_id) AS FLOAT) AS [table_size_kb],
+            STATS_DATE(i.object_id, i.index_id) AS [last_stats_update]
         FROM sys.dm_db_index_physical_stats(DB_ID(), NULL, NULL, NULL, 'LIMITED') AS ips
         JOIN sys.tables AS t ON ips.object_id = t.object_id
         JOIN sys.schemas AS s ON t.schema_id = s.schema_id
@@ -148,25 +149,38 @@ extension SQLServerIndexClient {
         """
         
         let rows = try await client.query(sql)
-        return rows.compactMap { row in
+        return rows.compactMap { row -> SQLServerIndexFragmentation? in
             guard let schemaName = row.column("schema_name")?.string,
                   let tableName = row.column("table_name")?.string,
                   let indexName = row.column("index_name")?.string else { return nil }
-            
+
+            let fragPercent = row.column("fragmentation_percent")?.double ?? 0
+            let pages = row.column("page_count")?.int64 ?? 0
+            let type = row.column("index_type")?.string ?? "UNKNOWN"
+            let idxId = row.column("index_id")?.int ?? 0
+            let unique = (row.column("is_unique")?.int ?? 0) != 0
+            let pk = (row.column("is_primary_key")?.int ?? 0) != 0
+            let scans = row.column("total_scans")?.int64 ?? 0
+            let updates = row.column("total_updates")?.int64 ?? 0
+            let sizeKB = row.column("size_kb")?.double ?? 0
+            let tableSizeKB = row.column("table_size_kb")?.double ?? 0
+            let statsDate = row.column("last_stats_update")?.date
+
             return SQLServerIndexFragmentation(
                 schemaName: schemaName,
                 tableName: tableName,
                 indexName: indexName,
-                fragmentationPercent: row.column("fragmentation_percent")?.double ?? 0,
-                pageCount: row.column("page_count")?.int64 ?? 0,
-                indexType: row.column("index_type")?.string ?? "UNKNOWN",
-                indexId: row.column("index_id")?.int ?? 0,
-                isUnique: (row.column("is_unique")?.int ?? 0) != 0,
-                isPrimaryKey: (row.column("is_primary_key")?.int ?? 0) != 0,
-                totalScans: row.column("total_scans")?.int64 ?? 0,
-                totalUpdates: row.column("total_updates")?.int64 ?? 0,
-                sizeKB: row.column("size_kb")?.double ?? 0,
-                tableSizeKB: row.column("table_size_kb")?.double ?? 0
+                fragmentationPercent: fragPercent,
+                pageCount: pages,
+                indexType: type,
+                indexId: idxId,
+                isUnique: unique,
+                isPrimaryKey: pk,
+                totalScans: scans,
+                totalUpdates: updates,
+                sizeKB: sizeKB,
+                tableSizeKB: tableSizeKB,
+                lastStatsUpdate: statsDate
             )
         }
     }
@@ -189,4 +203,5 @@ public struct SQLServerIndexFragmentation: Sendable, Identifiable {
     public let totalUpdates: Int64
     public let sizeKB: Double
     public let tableSizeKB: Double
+    public let lastStatsUpdate: Date?
 }
