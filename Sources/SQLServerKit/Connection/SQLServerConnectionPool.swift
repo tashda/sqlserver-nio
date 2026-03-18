@@ -263,6 +263,8 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
                 return .succeed(request: waiter, connection: connection)
             }
 
+            // Mark for RESETCONNECTION so the next user gets a clean session
+            connection.markForReset()
             let task = scheduleIdleClose(for: connection)
             idle.append(IdleConnection(connection: connection, idleTask: task))
             shouldEnsure = true

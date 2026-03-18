@@ -40,6 +40,11 @@ public final class TDSConnection {
     // Session state & data classification snapshots (raw payloads)
     private var lastSessionStatePayload: [UInt8] = []
     private var lastDataClassificationPayload: [UInt8] = []
+    // Connection reset flag — set when a pooled connection is returned.
+    // The next outbound request will carry the RESETCONNECTION bit in its
+    // TDS packet header, telling SQL Server to reset session state.
+    internal var needsConnectionReset: Bool = false
+
     // Stall detection support
     var lastStallSnapshot: String = ""
     
@@ -118,6 +123,12 @@ public final class TDSConnection {
     // Sends an ATTENTION signal to the server to cancel the currently running request.
     // This is best-effort and does not remove the current request from the queue; the
     // server will respond by terminating the active operation.
+    /// Marks this connection for a TDS RESETCONNECTION on the next outbound request.
+    /// Called when a connection is returned to a pool and will be reused.
+    public func markForReset() {
+        needsConnectionReset = true
+    }
+
     public func sendAttention() {
         self.channel.triggerUserOutboundEvent(TDSUserEvent.attention, promise: nil)
     }
