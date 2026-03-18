@@ -111,6 +111,32 @@ public final class PipelineOrganizationHandler: ChannelDuplexHandler, RemovableC
         self.state = .sslHandshake(handshakeState)
     }
 
+    public func removeHandler(context: ChannelHandlerContext, removalToken: ChannelHandlerContext.RemovalToken) {
+        // Drain any buffered outbound TLS data before removal to prevent raw
+        // IOData from being forwarded to the next handler (firstEncoder) which
+        // expects TDSPacket.
+        switch self.state {
+        case .sslHandshake(var sslHandshakeState):
+            if sslHandshakeState.outputBuffer.readableBytes > 0 {
+                do {
+                    let message = try TDSMessage(from: &sslHandshakeState.outputBuffer, ofType: .prelogin, allocator: context.channel.allocator)
+                    for packet in message.packets {
+                        context.write(self.wrapOutboundOut(packet), promise: nil)
+                    }
+                    context.flush()
+                } catch {
+                    logger.debug("Failed to flush pending TLS data during handler removal: \(error)")
+                }
+                sslHandshakeState.outputBuffer.clear()
+                state = .sslHandshake(sslHandshakeState)
+            }
+        default:
+            break
+        }
+        self.state = .allDone
+        context.leavePipeline(removalToken: removalToken)
+    }
+
     public func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         do {
             try self._channelRead(context: context, data: data)
