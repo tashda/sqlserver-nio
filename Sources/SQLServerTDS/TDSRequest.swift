@@ -617,10 +617,10 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
             // Remove pipeline coordinator and rearrange message encoder/decoder
             
             let pipeline = context.channel.pipeline
-            // Remove firstEncoder BEFORE coordinator: when the coordinator is removed,
-            // NIO forwards any pending outbound data to the next outbound handler.
-            // If firstEncoder is still present, it receives raw IOData but expects
-            // TDSPacket, causing a fatal type mismatch crash.
+            // Remove firstEncoder BEFORE coordinator to prevent type mismatch:
+            // when the coordinator is removed, NIO may forward pending outbound data
+            // to the next outbound handler. If firstEncoder is still present, it
+            // receives raw IOData but expects TDSPacket — fatalError.
             let removals = pipeline.removeHandler(name: self.firstEncoderName)
                 .flatMap {
                     pipeline.removeHandler(name: self.pipelineCoordinatorName)
