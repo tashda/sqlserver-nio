@@ -1,4 +1,4 @@
-// swift-tools-version:6.0
+// swift-tools-version:6.2
 import PackageDescription
 
 let package = Package(
@@ -20,6 +20,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-log.git", from: "1.5.4"),
         .package(url: "https://github.com/apple/swift-atomics.git", from: "1.2.0"),
         .package(url: "https://github.com/apple/swift-collections.git", from: "1.1.0"),
+        .package(url: "https://github.com/swiftlang/swift-docc-plugin", from: "1.4.0"),
     ],
     targets: [
         .target(
