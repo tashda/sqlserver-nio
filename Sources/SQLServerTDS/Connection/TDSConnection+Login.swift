@@ -33,7 +33,6 @@ extension TDSConnection {
                 // If explicit credentials are provided, use NTLMv2 (direct challenge-response,
                 // no KDC needed). If credentials are empty, fall back to Kerberos (GSS.framework).
                 let authenticatorInstance: any TDSAuthenticator
-                logger.debug("[login] Windows Integrated: username='\(username)' passwordEmpty=\(password.isEmpty) domain=\(domain ?? "<nil>")")
                 if !username.isEmpty && !password.isEmpty {
                     authenticatorInstance = try NTLMv2Authenticator(
                         username: username,

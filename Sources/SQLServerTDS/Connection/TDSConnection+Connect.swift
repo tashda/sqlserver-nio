@@ -132,12 +132,11 @@ private final class TDSErrorHandler: ChannelInboundHandler {
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         switch error {
         case NIOSSLError.uncleanShutdown:
-            // TODO: Verify this is because the server didn't reply with a CLOSE_NOTIFY
-            // Ignore this only if the channel is already shut down
-//            if context.channel.isActive {
-//                fallthrough
-//            }
-        fallthrough
+            // SQL Server with "optional" encryption uses TLS only during login,
+            // then drops to raw TDS without sending a TLS close_notify. The NIO
+            // SSL handler interprets subsequent unencrypted data as an unclean
+            // shutdown. This is expected and should not close the connection.
+            logger.debug("SSL unclean shutdown (expected with SQL Server optional encryption)")
         default:
             self.logger.error("Uncaught error: \(error)")
             context.close(promise: nil)
