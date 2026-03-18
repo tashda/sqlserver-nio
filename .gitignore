@@ -45,8 +45,10 @@ Private*.xctestplan
 # -----------------------------------------------------------------------
 # Local development notes (personal docs, not for public consumption)
 # -----------------------------------------------------------------------
-CLAUDE.md
+AGENT.md
 AGENTS.md
+GEMINI.md
+CLAUDE.md
 Tests/SETUP.md
 Docs/
 Debug/
