@@ -187,6 +187,33 @@ struct NTLMv2AuthenticatorTests {
 
     // MARK: - TDSAuthenticator Protocol
 
+    @Test("Empty domain does not crash during authentication")
+    func emptyDomainAuth() throws {
+        let auth = try NTLMv2Authenticator(
+            username: "User",
+            password: "Password",
+            domain: "",
+            server: "server",
+            port: 1433,
+            logger: logger
+        )
+
+        _ = try auth.initialToken()
+        let type2 = buildMockType2(serverChallenge: Data(count: 8), includeTimestamp: false)
+        let (responseData, _) = try auth.continueAuthentication(serverToken: type2)
+
+        // Should produce valid Type 3 even with empty domain
+        guard let type3 = responseData else {
+            Issue.record("Expected response data")
+            return
+        }
+        #expect(type3.readUInt32LE(at: 8) == 3)
+
+        // Domain length should be 0
+        let domainLen = type3.readUInt16LE(at: 28)
+        #expect(domainLen == 0)
+    }
+
     @Test("NTLMv2Authenticator conforms to TDSAuthenticator")
     func protocolConformance() throws {
         let auth: any TDSAuthenticator = try NTLMv2Authenticator(
