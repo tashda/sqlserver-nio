@@ -244,7 +244,7 @@ public class TDSTokenOperations: @unchecked Sendable {
             }
             length = Int(len)
         default:
-            fatalError("Unsupported length-field width \(lengthFieldBytes)")
+            throw TDSError.protocolError("Unsupported length-field width \(lengthFieldBytes)")
         }
 
         guard let slice = buffer.readSlice(length: length) else {

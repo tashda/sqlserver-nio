@@ -427,13 +427,20 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
             throw TDSError.protocolError("Encryption was requested but a TLS Configuration was not provided.")
         }
         
-        let sslContext = try! NIOSSLContext(configuration: tlsConfig)
-        let sslHandler = try! NIOSSLClientHandler(context: sslContext, serverHostname: serverHostname)
+        let sslContext: NIOSSLContext
+        let sslHandler: NIOSSLClientHandler
+        do {
+            sslContext = try NIOSSLContext(configuration: tlsConfig)
+            sslHandler = try NIOSSLClientHandler(context: sslContext, serverHostname: serverHostname)
+        } catch {
+            self.errorCaught(context: context, error: TDSError.sslError("Failed to initialize TLS: \(error)"))
+            return
+        }
         self.sslClientHandler = sslHandler
-        
+
         let coordinator = PipelineOrganizationHandler(logger: logger, firstDecoder, firstEncoder, sslHandler)
         self.pipelineCoordinator = coordinator
-        
+
         do {
             let ops = context.channel.pipeline.syncOperations
             try ops.addHandler(coordinator, name: pipelineCoordinatorName, position: .before(self))
