@@ -188,6 +188,46 @@ public final class SQLServerMetadataNamespace: @unchecked Sendable {
         }
     }
 
+    /// Returns bidirectional dependencies for an object (both what it references and what references it).
+    @available(macOS 12.0, *)
+    public func objectDependencies(
+        database: String? = nil,
+        schema: String,
+        name: String
+    ) async throws -> [SQLServerObjectDependency] {
+        try await client.withConnection { connection in
+            try await connection.objectDependencies(database: database, schema: schema, name: name)
+        }
+    }
+
+    // MARK: - Table Properties
+
+    /// Returns row count, space usage, and create/modify dates for a table.
+    @available(macOS 12.0, *)
+    public func tableProperties(
+        database: String? = nil,
+        schema: String,
+        table: String
+    ) async throws -> SQLServerTableProperties {
+        try await client.withConnection { connection in
+            try await connection.tableProperties(database: database, schema: schema, table: table)
+        }
+    }
+
+    // MARK: - Object Definition (raw string)
+
+    /// Returns the T-SQL definition of a programmable object as a raw string, or nil if not found.
+    @available(macOS 12.0, *)
+    public func objectDefinitionString(
+        database: String? = nil,
+        schema: String,
+        name: String
+    ) async throws -> String? {
+        try await client.withConnection { connection in
+            try await connection.objectDefinitionString(database: database, schema: schema, name: name)
+        }
+    }
+
     // MARK: - Triggers
 
     @available(macOS 12.0, *)

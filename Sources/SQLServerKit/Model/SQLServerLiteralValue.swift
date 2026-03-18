@@ -17,7 +17,7 @@ public enum SQLServerLiteralValue: Sendable {
 }
 
 extension SQLServerLiteralValue {
-    internal func sqlLiteral() -> String {
+    public func sqlLiteral() -> String {
         switch self {
         case .null:
             return "NULL"

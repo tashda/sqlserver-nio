@@ -220,29 +220,60 @@ extension SQLServerConnection {
     }
 
     @available(macOS 12.0, *)
+    @discardableResult
     public func insertRow(
         into table: String,
         schema: String = "dbo",
         database: String? = nil,
         values: [String: SQLServerLiteralValue]
-    ) async throws {
+    ) async throws -> Int {
         guard !values.isEmpty else {
             throw SQLServerError.invalidArgument("insertRow requires at least one value")
         }
         let ordered = values.keys.sorted()
         let columns = ordered.map { escapeIdentifier($0) }.joined(separator: ", ")
         let literals = ordered.compactMap { values[$0]?.sqlLiteral() }.joined(separator: ", ")
-        _ = try await execute("INSERT INTO \(qualifiedTableName(name: table, schema: schema, database: database)) (\(columns)) VALUES (\(literals))")
+        let result = try await execute("INSERT INTO \(qualifiedTableName(name: table, schema: schema, database: database)) (\(columns)) VALUES (\(literals))")
+        return Int(result.totalRowCount)
     }
 
     @available(macOS 12.0, *)
+    @discardableResult
+    public func insertRows(
+        into table: String,
+        schema: String = "dbo",
+        database: String? = nil,
+        columns: [String],
+        values: [[SQLServerLiteralValue]]
+    ) async throws -> Int {
+        guard !columns.isEmpty else {
+            throw SQLServerError.invalidArgument("insertRows requires at least one column")
+        }
+        guard !values.isEmpty else {
+            throw SQLServerError.invalidArgument("insertRows requires at least one row")
+        }
+        for (index, row) in values.enumerated() {
+            guard row.count == columns.count else {
+                throw SQLServerError.invalidArgument("Row \(index) has \(row.count) values but \(columns.count) columns were specified")
+            }
+        }
+        let columnList = columns.map { escapeIdentifier($0) }.joined(separator: ", ")
+        let valueRows = values.map { row in
+            "(" + row.map { $0.sqlLiteral() }.joined(separator: ", ") + ")"
+        }.joined(separator: ", ")
+        let result = try await execute("INSERT INTO \(qualifiedTableName(name: table, schema: schema, database: database)) (\(columnList)) VALUES \(valueRows)")
+        return Int(result.totalRowCount)
+    }
+
+    @available(macOS 12.0, *)
+    @discardableResult
     public func updateRows(
         in table: String,
         schema: String = "dbo",
         database: String? = nil,
         set assignments: [String: SQLServerLiteralValue],
         where predicate: String
-    ) async throws {
+    ) async throws -> Int {
         guard !assignments.isEmpty else {
             throw SQLServerError.invalidArgument("updateRows requires at least one assignment")
         }
@@ -250,21 +281,24 @@ extension SQLServerConnection {
             guard let value = assignments[key] else { return nil }
             return "\(escapeIdentifier(key)) = \(value.sqlLiteral())"
         }.joined(separator: ", ")
-        _ = try await execute("UPDATE \(qualifiedTableName(name: table, schema: schema, database: database)) SET \(setClause) WHERE \(predicate)")
+        let result = try await execute("UPDATE \(qualifiedTableName(name: table, schema: schema, database: database)) SET \(setClause) WHERE \(predicate)")
+        return Int(result.totalRowCount)
     }
 
     @available(macOS 12.0, *)
+    @discardableResult
     public func deleteRows(
         from table: String,
         schema: String = "dbo",
         database: String? = nil,
         where predicate: String? = nil
-    ) async throws {
+    ) async throws -> Int {
         var sql = "DELETE FROM \(qualifiedTableName(name: table, schema: schema, database: database))"
         if let predicate, !predicate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             sql += " WHERE \(predicate)"
         }
-        _ = try await execute(sql)
+        let result = try await execute(sql)
+        return Int(result.totalRowCount)
     }
 
     @available(macOS 12.0, *)

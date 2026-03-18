@@ -56,8 +56,8 @@ extension SQLServerAgentOperations {
     }
 
     @available(macOS 12.0, *)
-    public func updateJob(named jobName: String, newName: String? = nil, description: String? = nil, ownerLoginName: String? = nil, categoryName: String? = nil, enabled: Bool? = nil, startStepId: Int? = nil) async throws {
-        _ = try await updateJob(named: jobName, newName: newName, description: description, ownerLoginName: ownerLoginName, categoryName: categoryName, enabled: enabled, startStepId: startStepId).get()
+    public func updateJob(named jobName: String, newName: String? = nil, description: String? = nil, ownerLoginName: String? = nil, categoryName: String? = nil, enabled: Bool? = nil, startStepId: Int? = nil, notifyLevelEventlog: Int? = nil) async throws {
+        _ = try await updateJob(named: jobName, newName: newName, description: description, ownerLoginName: ownerLoginName, categoryName: categoryName, enabled: enabled, startStepId: startStepId, notifyLevelEventlog: notifyLevelEventlog).get()
     }
 
     @available(macOS 12.0, *)
@@ -133,6 +133,11 @@ extension SQLServerAgentOperations {
         try await lookupJobId(jobName: jobName).get()
     }
 
+    @available(macOS 12.0, *)
+    public func reorderJobSteps(jobName: String, stepMapping: [(oldID: Int, newID: Int)]) async throws {
+        _ = try await reorderJobSteps(jobName: jobName, stepMapping: stepMapping).get()
+    }
+
     // MARK: - Async Schedules
 
     @available(macOS 12.0, *)
@@ -168,6 +173,11 @@ extension SQLServerAgentOperations {
     @available(macOS 12.0, *)
     public func getJobSchedules(jobName: String) async throws -> [SQLServerAgentJobScheduleDetail] {
         try await getJobSchedules(jobName: jobName).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func listErrorLogs() async throws -> [SQLServerAgentErrorLog] {
+        try await listErrorLogs().get()
     }
 
     // MARK: - Async Operators

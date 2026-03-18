@@ -119,4 +119,74 @@ extension SQLServerIndexClient {
         
         return indexes
     }
+
+    /// Lists indexes with their fragmentation statistics across the current database.
+    @available(macOS 12.0, *)
+    public func listFragmentedIndexes(minFragmentationPercent: Double = 0.1) async throws -> [SQLServerIndexFragmentation] {
+        let sql = """
+        SELECT 
+            s.name AS [schema_name],
+            t.name AS [table_name],
+            i.name AS [index_name],
+            ips.avg_fragmentation_in_percent AS [fragmentation_percent],
+            ips.page_count,
+            ips.index_type_desc AS [index_type],
+            ips.index_id,
+            i.is_unique,
+            i.is_primary_key,
+            ISNULL(ius.user_seeks, 0) + ISNULL(ius.user_scans, 0) + ISNULL(ius.user_lookups, 0) AS [total_scans],
+            ISNULL(ius.user_updates, 0) AS [total_updates],
+            CAST((ips.page_count * 8.0) AS FLOAT) AS [size_kb],
+            CAST((SELECT SUM(a.total_pages) * 8.0 FROM sys.partitions p JOIN sys.allocation_units a ON p.partition_id = a.container_id WHERE p.object_id = t.object_id) AS FLOAT) AS [table_size_kb]
+        FROM sys.dm_db_index_physical_stats(DB_ID(), NULL, NULL, NULL, 'LIMITED') AS ips
+        JOIN sys.tables AS t ON ips.object_id = t.object_id
+        JOIN sys.schemas AS s ON t.schema_id = s.schema_id
+        JOIN sys.indexes AS i ON ips.object_id = i.object_id AND ips.index_id = i.index_id
+        LEFT JOIN sys.dm_db_index_usage_stats AS ius ON ius.database_id = DB_ID() AND ius.object_id = i.object_id AND ius.index_id = i.index_id
+        WHERE ips.avg_fragmentation_in_percent >= \(minFragmentationPercent)
+        ORDER BY ips.avg_fragmentation_in_percent DESC;
+        """
+        
+        let rows = try await client.query(sql)
+        return rows.compactMap { row in
+            guard let schemaName = row.column("schema_name")?.string,
+                  let tableName = row.column("table_name")?.string,
+                  let indexName = row.column("index_name")?.string else { return nil }
+            
+            return SQLServerIndexFragmentation(
+                schemaName: schemaName,
+                tableName: tableName,
+                indexName: indexName,
+                fragmentationPercent: row.column("fragmentation_percent")?.double ?? 0,
+                pageCount: row.column("page_count")?.int64 ?? 0,
+                indexType: row.column("index_type")?.string ?? "UNKNOWN",
+                indexId: row.column("index_id")?.int ?? 0,
+                isUnique: (row.column("is_unique")?.int ?? 0) != 0,
+                isPrimaryKey: (row.column("is_primary_key")?.int ?? 0) != 0,
+                totalScans: row.column("total_scans")?.int64 ?? 0,
+                totalUpdates: row.column("total_updates")?.int64 ?? 0,
+                sizeKB: row.column("size_kb")?.double ?? 0,
+                tableSizeKB: row.column("table_size_kb")?.double ?? 0
+            )
+        }
+    }
+}
+
+/// Represents fragmentation and usage statistics for a SQL Server index.
+public struct SQLServerIndexFragmentation: Sendable, Identifiable {
+    public var id: String { "\(schemaName).\(tableName).\(indexName)" }
+    
+    public let schemaName: String
+    public let tableName: String
+    public let indexName: String
+    public let fragmentationPercent: Double
+    public let pageCount: Int64
+    public let indexType: String
+    public let indexId: Int
+    public let isUnique: Bool
+    public let isPrimaryKey: Bool
+    public let totalScans: Int64
+    public let totalUpdates: Int64
+    public let sizeKB: Double
+    public let tableSizeKB: Double
 }

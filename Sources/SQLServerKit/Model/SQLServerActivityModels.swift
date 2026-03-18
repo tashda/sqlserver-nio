@@ -126,9 +126,11 @@ public struct SQLServerFileIOStat: Sendable {
 
 public struct SQLServerFileIOStatDelta: Sendable, Identifiable {
     public var id: String { "\(databaseId):\(fileId)" }
-    
+
     public let databaseId: Int
     public let fileId: Int
+    public let databaseName: String?
+    public let fileName: String?
     public let numReadsDelta: Int
     public let numWritesDelta: Int
     public let bytesReadDelta: Int64
@@ -138,8 +140,8 @@ public struct SQLServerFileIOStatDelta: Sendable, Identifiable {
 }
 
 public struct SQLServerExpensiveQuery: Sendable, Identifiable {
-    public var id: String { queryHashHex ?? UUID().uuidString }
-    
+    public let id: String
+
     public let queryHashHex: String?
     public let executionCount: Int
     public let totalWorkerTime: Int64

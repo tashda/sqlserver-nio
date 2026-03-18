@@ -183,6 +183,19 @@ extension SQLServerConstraintClient {
         return constraints.sorted { $0.name < $1.name }
     }
     
+    // MARK: - Generic Drop Constraint
+
+    @available(macOS 12.0, *)
+    public func dropConstraint(name: String, table: String, schema: String = "dbo") async throws {
+        let escapedConstraintName = Self.escapeIdentifier(name)
+        let escapedTableName = Self.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let fullTableName = "\(schemaPrefix)\(escapedTableName)"
+
+        let sql = "ALTER TABLE \(fullTableName) DROP CONSTRAINT \(escapedConstraintName)"
+        _ = try await client.execute(sql)
+    }
+
     // MARK: - Constraint Validation
     
     @available(macOS 12.0, *)
