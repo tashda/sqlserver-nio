@@ -47,7 +47,7 @@ public enum KerberosError: Error, Sendable, CustomStringConvertible {
 
 /// Wraps macOS GSS.framework to perform SPNEGO/Kerberos authentication
 /// for SQL Server connections using the TDS SSPI authentication flow.
-final class KerberosAuthenticator: @unchecked Sendable {
+final class KerberosAuthenticator: TDSAuthenticator, @unchecked Sendable {
     private let servicePrincipalName: String
     private var context: gss_ctx_id_t?
     private var credentials: gss_cred_id_t?
@@ -294,7 +294,7 @@ public enum KerberosError: Error, Sendable, CustomStringConvertible {
     }
 }
 
-final class KerberosAuthenticator: @unchecked Sendable {
+final class KerberosAuthenticator: TDSAuthenticator, @unchecked Sendable {
     init(username: String, password: String, domain: String?, server: String, port: Int, logger: Logger) throws {
         throw KerberosError.unsupported
     }
