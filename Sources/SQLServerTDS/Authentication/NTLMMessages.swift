@@ -376,7 +376,9 @@ struct NTLMAuthenticateMessage {
     }
 
     private func utf16LE(_ string: String) -> Data {
-        Array(string.utf16).withUnsafeBufferPointer { buf in
+        let codeUnits = Array(string.utf16)
+        guard !codeUnits.isEmpty else { return Data() }
+        return codeUnits.withUnsafeBufferPointer { buf in
             Data(bytes: buf.baseAddress!, count: buf.count * 2)
         }
     }
