@@ -666,8 +666,12 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
                     let newDecoder = ByteToMessageHandler(self.packetDecoder)
                     let newEncoder = MessageToByteHandler(TDSPacketEncoder(logger: self.logger))
                     let ops = pipeline.syncOperations
-                    try ops.addHandler(newDecoder, name: self.firstDecoderName, position: .last)
-                    try ops.addHandler(newEncoder, name: self.firstEncoderName, position: .last)
+                    // Add decoder/encoder BEFORE requestHandler (between SSL and request handler).
+                    // Adding at .last would put them after requestHandler in the outbound
+                    // direction, causing TDSRequestContext to reach the encoder before
+                    // requestHandler can convert it to TDSPacket — fatal type mismatch.
+                    try ops.addHandler(newDecoder, name: self.firstDecoderName, position: .before(self))
+                    try ops.addHandler(newEncoder, name: self.firstEncoderName, position: .before(self))
                     self.firstDecoder = newDecoder
                     self.firstEncoder = newEncoder
                     self.pipelineCoordinator = nil
