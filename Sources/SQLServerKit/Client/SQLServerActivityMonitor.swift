@@ -17,6 +17,9 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
     private var lastBatchRequests: Int64?
     private var lastSnapshotTime: Date?
 
+    /// Tracks consecutive permission-denied errors to stop polling.
+    private var permissionDeniedCount: Int = 0
+
     public init(client: SQLServerClient) {
         self.client = client
         self.waitIgnoreList = [
@@ -38,27 +41,34 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
         
         logger.debug("Activity Monitor: Starting snapshot")
 
+        var permDeniedInSnapshot = 0
+
         let overviewFut = fetchOverview(on: loop).recover { [weak self] error in
+            if Self.isPermissionDenied(error) { permDeniedInSnapshot += 1 }
             self?.logger.error("Activity Monitor: Failed to fetch overview: \(error)")
             return nil
         }
-        
+
         let processesFut = fetchProcesses(options: options, on: loop).recover { [weak self] error in
+            if Self.isPermissionDenied(error) { permDeniedInSnapshot += 1 }
             self?.logger.error("Activity Monitor: Failed to fetch processes: \(error)")
             return []
         }
-        
+
         let waitsFut = fetchWaits(on: loop).recover { [weak self] error in
+            if Self.isPermissionDenied(error) { permDeniedInSnapshot += 1 }
             self?.logger.error("Activity Monitor: Failed to fetch waits: \(error)")
             return []
         }
-        
+
         let fileIoFut = fetchFileIO(on: loop).recover { [weak self] error in
+            if Self.isPermissionDenied(error) { permDeniedInSnapshot += 1 }
             self?.logger.error("Activity Monitor: Failed to fetch file IO: \(error)")
             return []
         }
-        
+
         let expensiveFut = fetchExpensiveQueries(options: options, on: loop).recover { [weak self] error in
+            if Self.isPermissionDenied(error) { permDeniedInSnapshot += 1 }
             self?.logger.error("Activity Monitor: Failed to fetch expensive queries: \(error)")
             return []
         }
@@ -66,12 +76,20 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
         return overviewFut.and(processesFut).flatMap { overview, procs in
             return waitsFut.and(fileIoFut).flatMap { waits, fileIO in
                 return expensiveFut.map { expensive in
+                    // Track permission-denied errors across snapshots
+                    if permDeniedInSnapshot >= 4 {
+                        self.baselineLock.withLock { self.permissionDeniedCount += 1 }
+                        self.logger.warning("Activity Monitor: All DMV queries denied — user lacks VIEW SERVER STATE. Snapshot \(self.permissionDeniedCount) of 2 before stopping.")
+                    } else {
+                        self.baselineLock.withLock { self.permissionDeniedCount = 0 }
+                    }
+
                     let waitsDelta = self.computeWaitDeltas(current: waits)
                     let fileDelta = self.computeFileIODeltas(current: fileIO)
-                    
+
                     let totalIoBytes = (fileDelta ?? []).reduce(Int64(0)) { $0 + $1.bytesReadDelta + $1.bytesWrittenDelta }
                     let ioMB = Double(totalIoBytes) / (1024 * 1024)
-                    
+
                     let finalOverview: SQLServerActivityOverview?
                     if let ov = overview {
                         finalOverview = SQLServerActivityOverview(
@@ -99,6 +117,11 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
         }
     }
 
+    /// Whether polling should stop due to repeated permission-denied errors.
+    public var isPermissionDenied: Bool {
+        baselineLock.withLock { permissionDeniedCount >= 2 }
+    }
+
     @available(macOS 12.0, *)
     public func snapshot(options: SQLServerActivityOptions = .init()) async throws -> SQLServerActivitySnapshot {
         try await withCheckedThrowingContinuation { continuation in
@@ -120,6 +143,7 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
     }
 
     /// Streams snapshots on a configurable interval (default 5s). Cancels when the consumer drops.
+    /// Automatically stops if the user lacks VIEW SERVER STATE after two consecutive failed snapshots.
     @available(macOS 12.0, *)
     public func streamSnapshots(every seconds: TimeInterval = 5.0, options: SQLServerActivityOptions = .init()) -> AsyncThrowingStream<SQLServerActivitySnapshot, Error> {
         AsyncThrowingStream { continuation in
@@ -131,12 +155,25 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
                     } catch {
                         logger.error("Activity Monitor: Stream snapshot error: \(error)")
                     }
+
+                    // Stop polling if permission denied on consecutive snapshots
+                    if self.isPermissionDenied {
+                        self.logger.warning("Activity Monitor: Stopping polling — user lacks required server permissions.")
+                        break
+                    }
+
                     try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
                 }
                 continuation.finish()
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    /// Whether the error message indicates a permission-denied failure.
+    private static func isPermissionDenied(_ error: Error) -> Bool {
+        let msg = "\(error)"
+        return msg.contains("permission was denied") || msg.contains("not have permission")
     }
 
     // MARK: - Queries
