@@ -19,6 +19,9 @@ public struct SQLServerBackupOptions: Sendable {
     public let description: String?
     public let compression: Bool
     public let copyOnly: Bool
+    public let checksum: Bool
+    public let continueAfterError: Bool
+    public let initMedia: Bool
     public let statsPercentage: Int
 
     public init(
@@ -29,6 +32,9 @@ public struct SQLServerBackupOptions: Sendable {
         description: String? = nil,
         compression: Bool = false,
         copyOnly: Bool = false,
+        checksum: Bool = false,
+        continueAfterError: Bool = false,
+        initMedia: Bool = false,
         statsPercentage: Int = 10
     ) {
         self.database = database
@@ -38,6 +44,9 @@ public struct SQLServerBackupOptions: Sendable {
         self.description = description
         self.compression = compression
         self.copyOnly = copyOnly
+        self.checksum = checksum
+        self.continueAfterError = continueAfterError
+        self.initMedia = initMedia
         self.statsPercentage = statsPercentage
     }
 }
@@ -48,6 +57,9 @@ public struct SQLServerRestoreOptions: Sendable {
     public let diskPath: String
     public let fileNumber: Int
     public let withRecovery: Bool
+    public let replace: Bool
+    public let checksum: Bool
+    public let continueAfterError: Bool
     public let statsPercentage: Int
     public let relocateFiles: [FileRelocation]
     public let stopAt: Date?
@@ -67,6 +79,9 @@ public struct SQLServerRestoreOptions: Sendable {
         diskPath: String,
         fileNumber: Int = 1,
         withRecovery: Bool = true,
+        replace: Bool = false,
+        checksum: Bool = false,
+        continueAfterError: Bool = false,
         statsPercentage: Int = 5,
         relocateFiles: [FileRelocation] = [],
         stopAt: Date? = nil
@@ -75,6 +90,9 @@ public struct SQLServerRestoreOptions: Sendable {
         self.diskPath = diskPath
         self.fileNumber = fileNumber
         self.withRecovery = withRecovery
+        self.replace = replace
+        self.checksum = checksum
+        self.continueAfterError = continueAfterError
         self.statsPercentage = statsPercentage
         self.relocateFiles = relocateFiles
         self.stopAt = stopAt
@@ -239,7 +257,8 @@ public final class SQLServerBackupRestoreClient: @unchecked Sendable {
         }
 
         parts.append("TO DISK = N'\(path)'")
-        parts.append("WITH NOFORMAT, NOINIT")
+        parts.append("WITH NOFORMAT")
+        parts.append(options.initMedia ? "INIT" : "NOINIT")
 
         if let name = options.backupName {
             let escaped = name.replacingOccurrences(of: "'", with: "''")
@@ -263,6 +282,14 @@ public final class SQLServerBackupRestoreClient: @unchecked Sendable {
             parts.append("COPY_ONLY")
         }
 
+        if options.checksum {
+            parts.append("CHECKSUM")
+        }
+
+        if options.continueAfterError {
+            parts.append("CONTINUE_AFTER_ERROR")
+        }
+
         parts.append("SKIP, NOREWIND, NOUNLOAD")
         parts.append("STATS = \(max(1, min(100, options.statsPercentage)))")
 
@@ -280,6 +307,18 @@ public final class SQLServerBackupRestoreClient: @unchecked Sendable {
 
         if !options.withRecovery {
             parts.append("NORECOVERY")
+        }
+
+        if options.replace {
+            parts.append("REPLACE")
+        }
+
+        if options.checksum {
+            parts.append("CHECKSUM")
+        }
+
+        if options.continueAfterError {
+            parts.append("CONTINUE_AFTER_ERROR")
         }
 
         for relocation in options.relocateFiles {
