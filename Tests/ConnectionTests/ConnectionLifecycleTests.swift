@@ -225,6 +225,44 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(followUp.first?.column("still_healthy")?.int, 1)
     }
 
+    func testCancelledStreamQueryDoesNotPoisonDedicatedConnection() async throws {
+        let connection = try await SQLServerConnection.connect(
+            configuration: client.configuration.connection,
+            numberOfThreads: 1
+        )
+        defer {
+            Task {
+                try? await connection.close()
+            }
+        }
+
+        let streamTask = Task {
+            for try await _ in connection.streamQuery("""
+                WAITFOR DELAY '00:00:05';
+                SELECT TOP 5000
+                    ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS row_id
+                FROM sys.all_objects AS a
+                CROSS JOIN sys.all_objects AS b
+                """) {
+                // Intentionally discard events; cancellation is the behavior under test.
+            }
+        }
+
+        try await Task.sleep(for: .milliseconds(250))
+        streamTask.cancel()
+
+        do {
+            try await streamTask.value
+        } catch is CancellationError {
+            // Expected.
+        } catch {
+            // Accept driver-level cancellation errors here; health is checked by the follow-up query.
+        }
+
+        let followUp = try await connection.query("SELECT 1 AS still_healthy")
+        XCTAssertEqual(followUp.first?.column("still_healthy")?.int, 1)
+    }
+
     func testConnectionPoolExhaustion() async throws {
         // Test behavior when connection pool is exhausted
         let maxConnections = client.configuration.poolConfiguration.maximumConcurrentConnections

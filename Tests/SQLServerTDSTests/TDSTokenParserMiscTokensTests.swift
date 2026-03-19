@@ -93,48 +93,20 @@ final class TDSTokenOperationsMiscTokensTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(v.readInteger(endianness: Endianness.little, as: Int32.self), 42)
     }
 
-    func testParseColumnStatusToken() throws {
-        var buffer = ByteBufferAllocator().buffer(capacity: 8)
-        buffer.writeInteger(TDSTokens.TokenType.columnStatus.rawValue)
-        buffer.writeInteger(UInt16(4), endianness: .little) // payload length
-        buffer.writeInteger(UInt16(0x1234), endianness: .little)
-        buffer.writeBytes([0xAA, 0xBB])
+    func testSkipsUndocumentedTokenBytesWithoutInventedPayloadFormats() throws {
+        var buffer = ByteBufferAllocator().buffer(capacity: 6)
+        buffer.writeBytes([0x61, 0x02, 0x00, 0x01, 0x02, TDSTokens.TokenType.done.rawValue])
+        buffer.writeInteger(UInt16(0), endianness: .little)
+        buffer.writeInteger(UInt16(0), endianness: .little)
+        buffer.writeInteger(UInt64(0), endianness: .little)
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
         let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
 
         let tokens = try parser.parse()
+
         XCTAssertEqual(tokens.count, 1)
-
-        let status = try XCTUnwrap(tokens.first as? TDSTokens.ColumnStatusToken)
-        XCTAssertEqual(status.status, 0x1234)
-        XCTAssertEqual(status.data, [0xAA, 0xBB])
-    }
-
-    func testParseUnknownTokenPayloads() throws {
-        var buffer = ByteBufferAllocator().buffer(capacity: 18)
-        buffer.writeInteger(TDSTokens.TokenType.unknown0x61.rawValue)
-        buffer.writeInteger(UInt16(2), endianness: .little)
-        buffer.writeBytes([0x01, 0x02])
-
-        buffer.writeInteger(TDSTokens.TokenType.unknown0x74.rawValue)
-        buffer.writeInteger(UInt16(1), endianness: .little)
-        buffer.writeBytes([0x03])
-
-        buffer.writeInteger(TDSTokens.TokenType.unknown0xc1.rawValue)
-        buffer.writeInteger(UInt16(3), endianness: .little)
-        buffer.writeBytes([0x04, 0x05, 0x06])
-
-        let stream = TDSStreamParser()
-        stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
-
-        let tokens = try parser.parse()
-
-        XCTAssertEqual(tokens.count, 3)
-        XCTAssertTrue(tokens[0] is TDSTokens.Unknown0x61Token)
-        XCTAssertTrue(tokens[1] is TDSTokens.Unknown0x74Token)
-        XCTAssertTrue(tokens[2] is TDSTokens.Unknown0xC1Token)
+        XCTAssertTrue(tokens[0] is TDSTokens.DoneToken)
     }
 }

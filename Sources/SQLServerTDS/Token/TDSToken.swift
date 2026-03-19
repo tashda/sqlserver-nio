@@ -73,15 +73,6 @@ public enum TDSTokens {
         case tabName = 0xA4
         /// DATA_CLASSIFICATION
         case dataClassification = 0xA3
-        /// SQL_RESULT_COLUMN_SOURCES
-        case sqlResultColumnSources = 0xAF // Adjusted value
-        
-        // Extended/Unknown types from tracing
-        case unknown0x04 = 0x04
-        case unknown0x61 = 0x61
-        case unknown0x74 = 0x74
-        case unknown0xc1 = 0xC1
-        case columnStatus = 0x12 // Placeholder
         case tvpRow = 0xD4 // Placeholder for TVP rows
     }
 
@@ -331,30 +322,6 @@ public enum TDSTokens {
         public init(payload: ByteBuffer) { self.payload = payload }
     }
 
-    public struct SQLResultColumnSourcesToken: TDSToken {
-        public var type: TokenType = .sqlResultColumnSources
-        public var payload: ByteBuffer
-        public init(payload: ByteBuffer) { self.payload = payload }
-    }
-
-    public struct Unknown0x61Token: TDSToken {
-        public var type: TokenType = .unknown0x61
-        public var payload: ByteBuffer
-        public init(payload: ByteBuffer) { self.payload = payload }
-    }
-
-    public struct Unknown0x74Token: TDSToken {
-        public var type: TokenType = .unknown0x74
-        public var payload: ByteBuffer
-        public init(payload: ByteBuffer) { self.payload = payload }
-    }
-
-    public struct Unknown0xC1Token: TDSToken {
-        public var type: TokenType = .unknown0xc1
-        public var payload: ByteBuffer
-        public init(payload: ByteBuffer) { self.payload = payload }
-    }
-
     public struct ReturnStatusToken: TDSToken {
         public var type: TokenType = .returnStatus
         public var value: Int32
@@ -385,14 +352,6 @@ public enum TDSTokens {
             ordinal
         }
     }
-
-    public struct ColumnStatusToken: TDSToken {
-        public var type: TokenType = .columnStatus
-        public var status: UInt16
-        public var data: [Byte]
-        public init(status: UInt16, data: [Byte]) { self.status = status; self.data = data }
-    }
-
     public struct SSPIToken: TDSToken {
         public var type: TokenType = .sspi
         public var data: Data
