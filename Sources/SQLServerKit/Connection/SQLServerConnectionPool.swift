@@ -263,8 +263,10 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
                 return .succeed(request: waiter, connection: connection)
             }
 
-            // Mark for RESETCONNECTION so the next user gets a clean session
-            connection.markForReset()
+            // TODO: Re-enable RESETCONNECTION once session re-bootstrap is implemented
+            // after pool checkout. Without re-bootstrap, RESETCONNECTION resets the
+            // database context to master and clears SET options, breaking callers.
+            // connection.markForReset()
             let task = scheduleIdleClose(for: connection)
             idle.append(IdleConnection(connection: connection, idleTask: task))
             shouldEnsure = true
