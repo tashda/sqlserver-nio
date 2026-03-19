@@ -16,10 +16,11 @@ extension SQLServerMetadataOperations {
     }
 
     internal func listDatabases() -> EventLoopFuture<[DatabaseMetadata]> {
-        queryExecutor("SELECT name, state_desc FROM sys.databases WITH (NOLOCK) ORDER BY name").map { rows in
+        queryExecutor("SELECT name, state_desc, HAS_DBACCESS(name) AS has_access FROM sys.databases WITH (NOLOCK) ORDER BY name").map { rows in
             rows.compactMap { row in
                 guard let name = row.column("name")?.string else { return nil }
-                return DatabaseMetadata(name: name, stateDescription: row.column("state_desc")?.string)
+                let hasAccess: Bool? = row.column("has_access")?.int.map { $0 == 1 }
+                return DatabaseMetadata(name: name, stateDescription: row.column("state_desc")?.string, hasAccess: hasAccess)
             }
         }
     }
