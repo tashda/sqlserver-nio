@@ -50,6 +50,7 @@ public struct SQLServerRestoreOptions: Sendable {
     public let withRecovery: Bool
     public let statsPercentage: Int
     public let relocateFiles: [FileRelocation]
+    public let stopAt: Date?
 
     public struct FileRelocation: Sendable {
         public let logicalName: String
@@ -67,7 +68,8 @@ public struct SQLServerRestoreOptions: Sendable {
         fileNumber: Int = 1,
         withRecovery: Bool = true,
         statsPercentage: Int = 5,
-        relocateFiles: [FileRelocation] = []
+        relocateFiles: [FileRelocation] = [],
+        stopAt: Date? = nil
     ) {
         self.database = database
         self.diskPath = diskPath
@@ -75,6 +77,7 @@ public struct SQLServerRestoreOptions: Sendable {
         self.withRecovery = withRecovery
         self.statsPercentage = statsPercentage
         self.relocateFiles = relocateFiles
+        self.stopAt = stopAt
     }
 }
 
@@ -160,6 +163,14 @@ public final class SQLServerBackupRestoreClient: @unchecked Sendable {
     @available(macOS 12.0, *)
     public func restore(options: SQLServerRestoreOptions) async throws -> [SQLServerStreamMessage] {
         let sql = buildRestoreSQL(options)
+        return try await executeLongRunning(sql)
+    }
+
+    /// Verifies a backup file without restoring it (RESTORE VERIFYONLY).
+    @available(macOS 12.0, *)
+    public func verifyBackup(diskPath: String, fileNumber: Int = 1) async throws -> [SQLServerStreamMessage] {
+        let escaped = diskPath.replacingOccurrences(of: "'", with: "''")
+        let sql = "RESTORE VERIFYONLY FROM DISK = N'\(escaped)' WITH FILE = \(max(1, fileNumber));"
         return try await executeLongRunning(sql)
     }
 
@@ -275,6 +286,14 @@ public final class SQLServerBackupRestoreClient: @unchecked Sendable {
             let logical = relocation.logicalName.replacingOccurrences(of: "'", with: "''")
             let physical = relocation.physicalPath.replacingOccurrences(of: "'", with: "''")
             parts.append("MOVE N'\(logical)' TO N'\(physical)'")
+        }
+
+        if let stopAt = options.stopAt {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+            formatter.timeZone = TimeZone(identifier: "UTC")
+            let formatted = formatter.string(from: stopAt)
+            parts.append("STOPAT = N'\(formatted)'")
         }
 
         parts.append("NOUNLOAD")
