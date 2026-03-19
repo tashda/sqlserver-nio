@@ -23,6 +23,26 @@ public final class SQLServerMetadataNamespace: @unchecked Sendable {
         }
     }
 
+    /// Checks the current login's server-level permissions relevant to monitoring and maintenance.
+    @available(macOS 12.0, *)
+    public func checkServerPermissions() async throws -> ServerPermissions {
+        try await client.withConnection { connection in
+            let sql = """
+            SELECT
+                HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW SERVER STATE') AS has_view_server_state,
+                HAS_DBACCESS('master') AS has_master_access,
+                HAS_DBACCESS('msdb') AS has_msdb_access
+            """
+            let rows = try await connection.queryExecutor(sql).get()
+            let row = rows.first
+            return ServerPermissions(
+                hasViewServerState: (row?.column("has_view_server_state")?.int ?? 0) == 1,
+                hasMasterAccess: (row?.column("has_master_access")?.int ?? 0) == 1,
+                hasMsdbAccess: (row?.column("has_msdb_access")?.int ?? 0) == 1
+            )
+        }
+    }
+
     // MARK: - Databases
 
     @available(macOS 12.0, *)
