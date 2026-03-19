@@ -358,6 +358,7 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
                     // failed when the ATTENTION was sent.
                     if isAttn && attentionPending {
                         attentionPending = false
+                        resetStreamParser()
                         logger.debug("ATTENTION acknowledged by server, resuming pipeline")
                         // If the request is still in the queue (ATTENTION sent without
                         // failCurrentRequestTimeout), clean it up now.
@@ -365,7 +366,7 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
                             cleanupRequest(request, error: TDSError.protocolError("query cancelled"))
                         }
                         startNextIfQueued(context: context)
-                        continue
+                        return
                     }
 
                     request.tokenHandler.onDone(doneToken)
@@ -475,6 +476,7 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
     
     private func cleanupRequest(_ request: TDSRequestContext, error: Error? = nil) {
         self.queue.removeFirst()
+        compactStreamParserIfFullyConsumed()
         if let error = error {
             request.completionPromise.fail(error)
             request.resultPromise.fail(error)
@@ -482,6 +484,17 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
             request.completionPromise.succeed(())
             request.resultPromise.succeed(request.rows.flatMap { $0.data })
         }
+    }
+
+    private func compactStreamParserIfFullyConsumed() {
+        guard streamParser.position >= streamParser.buffer.writerIndex else { return }
+        streamParser.buffer.clear()
+        streamParser.position = streamParser.buffer.readerIndex
+    }
+
+    private func resetStreamParser() {
+        streamParser.buffer.clear()
+        streamParser.position = streamParser.buffer.readerIndex
     }
     
     private func write(context: ChannelHandlerContext, packets: [TDSPacket], promise: EventLoopPromise<Void>?) throws {

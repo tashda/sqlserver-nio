@@ -21,13 +21,8 @@ public class TDSTokenOperations: @unchecked Sendable {
         .colInfo,
         .offset,
         .dataClassification,
-        .sqlResultColumnSources,
-        .unknown0x61,
-        .unknown0x74,
-        .unknown0xc1,
         .returnStatus,
-        .returnValue,
-        .columnStatus
+        .returnValue
     ]
 
     internal enum State {
@@ -55,7 +50,7 @@ public class TDSTokenOperations: @unchecked Sendable {
                 continue
             }
 
-            if nextByte == TDSTokens.TokenType.unknown0x04.rawValue {
+            if nextByte == 0x04 {
                 logger.debug("Skipping unknown token 0x04 at position \(streamParser.position)")
                 _ = streamParser.readUInt8()
                 continue
@@ -191,18 +186,6 @@ public class TDSTokenOperations: @unchecked Sendable {
             case .dataClassification:
                 let data = try TDSTokenOperations.readLengthPrefixedPayload(from: &payload, lengthFieldBytes: 2)
                 token = TDSTokens.DataClassificationToken(payload: data)
-            case .sqlResultColumnSources:
-                let data = try TDSTokenOperations.readLengthPrefixedPayload(from: &payload, lengthFieldBytes: 4)
-                token = TDSTokens.SQLResultColumnSourcesToken(payload: data)
-            case .unknown0x61:
-                let data = try TDSTokenOperations.readLengthPrefixedPayload(from: &payload, lengthFieldBytes: 2)
-                token = TDSTokens.Unknown0x61Token(payload: data)
-            case .unknown0x74:
-                let data = try TDSTokenOperations.readLengthPrefixedPayload(from: &payload, lengthFieldBytes: 2)
-                token = TDSTokens.Unknown0x74Token(payload: data)
-            case .unknown0xc1:
-                let data = try TDSTokenOperations.readLengthPrefixedPayload(from: &payload, lengthFieldBytes: 2)
-                token = TDSTokens.Unknown0xC1Token(payload: data)
             case .returnStatus:
                 guard let value = payload.readInteger(endianness: .little, as: Int32.self) else {
                     throw TDSError.needMoreData
@@ -210,12 +193,6 @@ public class TDSTokenOperations: @unchecked Sendable {
                 token = TDSTokens.ReturnStatusToken(value: value)
             case .returnValue:
                 token = try parseReturnValueToken(from: &payload, allocator: allocator)
-            case .columnStatus:
-                var data = try TDSTokenOperations.readLengthPrefixedPayload(from: &payload, lengthFieldBytes: 2)
-                let bytes = data.readBytes(length: data.readableBytes) ?? []
-                let status = bytes.count >= 2 ? UInt16(bytes[0]) | UInt16(bytes[1]) << 8 : 0
-                let statusBytes = bytes.count >= 4 ? Array(bytes.dropFirst(2)) : []
-                token = TDSTokens.ColumnStatusToken(status: status, data: statusBytes)
             default:
                 // Should never happen due to guard
                 streamParser.position = start
