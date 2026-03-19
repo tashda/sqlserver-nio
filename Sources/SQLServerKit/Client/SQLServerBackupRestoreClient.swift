@@ -10,6 +10,31 @@ public enum SQLServerBackupType: String, Sendable, CaseIterable {
     case log = "Log"
 }
 
+/// Encryption algorithm for SQL Server backup encryption.
+public enum SQLServerBackupEncryptionAlgorithm: String, Sendable, CaseIterable {
+    case aes128 = "AES_128"
+    case aes192 = "AES_192"
+    case aes256 = "AES_256"
+    case tripleDES = "TRIPLE_DES_3KEY"
+}
+
+/// Encryption options for a SQL Server backup.
+public struct SQLServerBackupEncryption: Sendable {
+    public let algorithm: SQLServerBackupEncryptionAlgorithm
+    public let serverCertificate: String?
+    public let serverAsymmetricKey: String?
+
+    public init(
+        algorithm: SQLServerBackupEncryptionAlgorithm,
+        serverCertificate: String? = nil,
+        serverAsymmetricKey: String? = nil
+    ) {
+        self.algorithm = algorithm
+        self.serverCertificate = serverCertificate
+        self.serverAsymmetricKey = serverAsymmetricKey
+    }
+}
+
 /// Options for a SQL Server BACKUP operation.
 public struct SQLServerBackupOptions: Sendable {
     public let database: String
@@ -22,6 +47,11 @@ public struct SQLServerBackupOptions: Sendable {
     public let checksum: Bool
     public let continueAfterError: Bool
     public let initMedia: Bool
+    public let formatMedia: Bool
+    public let mediaName: String?
+    public let verifyAfterBackup: Bool
+    public let expireDate: Date?
+    public let encryption: SQLServerBackupEncryption?
     public let statsPercentage: Int
 
     public init(
@@ -35,6 +65,11 @@ public struct SQLServerBackupOptions: Sendable {
         checksum: Bool = false,
         continueAfterError: Bool = false,
         initMedia: Bool = false,
+        formatMedia: Bool = false,
+        mediaName: String? = nil,
+        verifyAfterBackup: Bool = false,
+        expireDate: Date? = nil,
+        encryption: SQLServerBackupEncryption? = nil,
         statsPercentage: Int = 10
     ) {
         self.database = database
@@ -47,8 +82,20 @@ public struct SQLServerBackupOptions: Sendable {
         self.checksum = checksum
         self.continueAfterError = continueAfterError
         self.initMedia = initMedia
+        self.formatMedia = formatMedia
+        self.mediaName = mediaName
+        self.verifyAfterBackup = verifyAfterBackup
+        self.expireDate = expireDate
+        self.encryption = encryption
         self.statsPercentage = statsPercentage
     }
+}
+
+/// Recovery mode for a SQL Server RESTORE operation.
+public enum SQLServerRestoreRecoveryMode: String, Sendable, CaseIterable {
+    case recovery = "RECOVERY"
+    case noRecovery = "NORECOVERY"
+    case standby = "STANDBY"
 }
 
 /// Options for a SQL Server RESTORE operation.
@@ -56,13 +103,17 @@ public struct SQLServerRestoreOptions: Sendable {
     public let database: String
     public let diskPath: String
     public let fileNumber: Int
-    public let withRecovery: Bool
+    public let recoveryMode: SQLServerRestoreRecoveryMode
     public let replace: Bool
+    public let closeExistingConnections: Bool
+    public let keepReplication: Bool
+    public let restrictedUser: Bool
     public let checksum: Bool
     public let continueAfterError: Bool
     public let statsPercentage: Int
     public let relocateFiles: [FileRelocation]
     public let stopAt: Date?
+    public let standbyFile: String?
 
     public struct FileRelocation: Sendable {
         public let logicalName: String
@@ -78,6 +129,39 @@ public struct SQLServerRestoreOptions: Sendable {
         database: String,
         diskPath: String,
         fileNumber: Int = 1,
+        recoveryMode: SQLServerRestoreRecoveryMode = .recovery,
+        replace: Bool = false,
+        closeExistingConnections: Bool = false,
+        keepReplication: Bool = false,
+        restrictedUser: Bool = false,
+        checksum: Bool = false,
+        continueAfterError: Bool = false,
+        statsPercentage: Int = 5,
+        relocateFiles: [FileRelocation] = [],
+        stopAt: Date? = nil,
+        standbyFile: String? = nil
+    ) {
+        self.database = database
+        self.diskPath = diskPath
+        self.fileNumber = fileNumber
+        self.recoveryMode = recoveryMode
+        self.replace = replace
+        self.closeExistingConnections = closeExistingConnections
+        self.keepReplication = keepReplication
+        self.restrictedUser = restrictedUser
+        self.checksum = checksum
+        self.continueAfterError = continueAfterError
+        self.statsPercentage = statsPercentage
+        self.relocateFiles = relocateFiles
+        self.stopAt = stopAt
+        self.standbyFile = standbyFile
+    }
+
+    /// Backward-compatible initializer using `withRecovery` boolean.
+    public init(
+        database: String,
+        diskPath: String,
+        fileNumber: Int = 1,
         withRecovery: Bool = true,
         replace: Bool = false,
         checksum: Bool = false,
@@ -86,16 +170,18 @@ public struct SQLServerRestoreOptions: Sendable {
         relocateFiles: [FileRelocation] = [],
         stopAt: Date? = nil
     ) {
-        self.database = database
-        self.diskPath = diskPath
-        self.fileNumber = fileNumber
-        self.withRecovery = withRecovery
-        self.replace = replace
-        self.checksum = checksum
-        self.continueAfterError = continueAfterError
-        self.statsPercentage = statsPercentage
-        self.relocateFiles = relocateFiles
-        self.stopAt = stopAt
+        self.init(
+            database: database,
+            diskPath: diskPath,
+            fileNumber: fileNumber,
+            recoveryMode: withRecovery ? .recovery : .noRecovery,
+            replace: replace,
+            checksum: checksum,
+            continueAfterError: continueAfterError,
+            statsPercentage: statsPercentage,
+            relocateFiles: relocateFiles,
+            stopAt: stopAt
+        )
     }
 }
 
@@ -241,6 +327,25 @@ public final class SQLServerBackupRestoreClient: @unchecked Sendable {
         }
     }
 
+    // MARK: - Connection Management
+
+    /// Sets a database to SINGLE_USER mode, disconnecting all other sessions.
+    /// Call this before restoring over an active database.
+    @available(macOS 12.0, *)
+    public func closeConnections(database: String) async throws {
+        let db = SQLServerAdministrationClient.escapeIdentifier(database)
+        let sql = "ALTER DATABASE \(db) SET SINGLE_USER WITH ROLLBACK IMMEDIATE;"
+        _ = try await client.execute(sql)
+    }
+
+    /// Restores a database to MULTI_USER mode after a restore operation.
+    @available(macOS 12.0, *)
+    public func restoreMultiUser(database: String) async throws {
+        let db = SQLServerAdministrationClient.escapeIdentifier(database)
+        let sql = "ALTER DATABASE \(db) SET MULTI_USER;"
+        _ = try await client.execute(sql)
+    }
+
     // MARK: - SQL Building
 
     private func buildBackupSQL(_ options: SQLServerBackupOptions) -> String {
@@ -257,8 +362,13 @@ public final class SQLServerBackupRestoreClient: @unchecked Sendable {
         }
 
         parts.append("TO DISK = N'\(path)'")
-        parts.append("WITH NOFORMAT")
+        parts.append(options.formatMedia ? "WITH FORMAT" : "WITH NOFORMAT")
         parts.append(options.initMedia ? "INIT" : "NOINIT")
+
+        if let mediaName = options.mediaName, !mediaName.isEmpty {
+            let escaped = mediaName.replacingOccurrences(of: "'", with: "''")
+            parts.append("MEDIANAME = N'\(escaped)'")
+        }
 
         if let name = options.backupName {
             let escaped = name.replacingOccurrences(of: "'", with: "''")
@@ -290,6 +400,26 @@ public final class SQLServerBackupRestoreClient: @unchecked Sendable {
             parts.append("CONTINUE_AFTER_ERROR")
         }
 
+        if let expireDate = options.expireDate {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+            formatter.timeZone = TimeZone(identifier: "UTC")
+            parts.append("EXPIREDATE = N'\(formatter.string(from: expireDate))'")
+        }
+
+        if let encryption = options.encryption {
+            var encParts = "ENCRYPTION(ALGORITHM = \(encryption.algorithm.rawValue)"
+            if let cert = encryption.serverCertificate, !cert.isEmpty {
+                let escaped = cert.replacingOccurrences(of: "'", with: "''")
+                encParts += ", SERVER CERTIFICATE = [\(escaped)]"
+            } else if let key = encryption.serverAsymmetricKey, !key.isEmpty {
+                let escaped = key.replacingOccurrences(of: "'", with: "''")
+                encParts += ", SERVER ASYMMETRIC KEY = [\(escaped)]"
+            }
+            encParts += ")"
+            parts.append(encParts)
+        }
+
         parts.append("SKIP, NOREWIND, NOUNLOAD")
         parts.append("STATS = \(max(1, min(100, options.statsPercentage)))")
 
@@ -305,12 +435,30 @@ public final class SQLServerBackupRestoreClient: @unchecked Sendable {
         parts.append("FROM DISK = N'\(path)'")
         parts.append("WITH FILE = \(max(1, options.fileNumber))")
 
-        if !options.withRecovery {
+        switch options.recoveryMode {
+        case .recovery:
+            break
+        case .noRecovery:
             parts.append("NORECOVERY")
+        case .standby:
+            if let standbyFile = options.standbyFile, !standbyFile.isEmpty {
+                let escaped = standbyFile.replacingOccurrences(of: "'", with: "''")
+                parts.append("STANDBY = N'\(escaped)'")
+            } else {
+                parts.append("NORECOVERY")
+            }
         }
 
         if options.replace {
             parts.append("REPLACE")
+        }
+
+        if options.keepReplication {
+            parts.append("KEEP_REPLICATION")
+        }
+
+        if options.restrictedUser {
+            parts.append("RESTRICTED_USER")
         }
 
         if options.checksum {
