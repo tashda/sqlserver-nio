@@ -194,6 +194,37 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
         XCTAssertLessThan(duration, 5.0, "Query should complete within 5 seconds")
     }
 
+    func testCompletedStreamQueryDoesNotPoisonDedicatedConnection() async throws {
+        let connection = try await SQLServerConnection.connect(
+            configuration: client.configuration.connection,
+            numberOfThreads: 1
+        )
+        defer {
+            Task {
+                try? await connection.close()
+            }
+        }
+
+        var sawRow = false
+        let sql = """
+        SELECT TOP 5000
+            ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS row_id
+        FROM sys.all_objects AS a
+        CROSS JOIN sys.all_objects AS b
+        """
+
+        for try await event in connection.streamQuery(sql) {
+            if case .row = event {
+                sawRow = true
+            }
+        }
+
+        XCTAssertTrue(sawRow, "Expected streamed query to produce at least one row")
+
+        let followUp = try await connection.query("SELECT 1 AS still_healthy")
+        XCTAssertEqual(followUp.first?.column("still_healthy")?.int, 1)
+    }
+
     func testConnectionPoolExhaustion() async throws {
         // Test behavior when connection pool is exhausted
         let maxConnections = client.configuration.poolConfiguration.maximumConcurrentConnections

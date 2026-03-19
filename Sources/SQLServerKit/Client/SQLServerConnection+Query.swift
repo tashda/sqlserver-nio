@@ -214,7 +214,10 @@ extension SQLServerConnection {
                 case .failure(let error): continuation.finish(throwing: error)
                 }
             }
-            continuation.onTermination = { _ in self.base.sendAttention() }
+            continuation.onTermination = { termination in
+                guard case .cancelled = termination else { return }
+                self.base.sendAttention()
+            }
         }
     }
 
