@@ -354,17 +354,24 @@ public final class SQLServerTransactionClient: @unchecked Sendable {
             }
     }
 
-    /// Executes a closure within a transaction context, automatically handling commit/rollback (async version)
+    /// Executes a closure within a transaction context, automatically handling commit/rollback (async version).
+    /// Pins a single connection for the entire transaction lifetime via task-local scoping.
     @available(macOS 12.0, *)
     public func executeInTransaction<T: Sendable>(_ operation: @Sendable @escaping () async throws -> T) async throws -> T {
-        try await beginTransaction()
-        do {
-            let result = try await operation()
-            try await commitTransaction()
-            return result
-        } catch {
-            try await rollbackTransaction()
-            throw error
+        try await client.withConnection { connection in
+            try await ClientScopedConnection.$current.withValue(connection) {
+                _ = try await self.client.execute("BEGIN TRANSACTION")
+                do {
+                    let result = try await operation()
+                    _ = try await self.client.execute("COMMIT")
+                    self.activeSavepoints.removeAll()
+                    return result
+                } catch {
+                    _ = try? await self.client.execute("ROLLBACK")
+                    self.activeSavepoints.removeAll()
+                    throw error
+                }
+            }
         }
     }
 
