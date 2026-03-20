@@ -84,7 +84,7 @@ public class SQLServerDockerManager: @unchecked Sendable {
         return process
     }
     
-    public func startIfNeeded() throws {
+    public func startIfNeeded(requireAdventureWorks: Bool = false) throws {
         lock.lock()
         defer { lock.unlock() }
 
@@ -121,7 +121,7 @@ public class SQLServerDockerManager: @unchecked Sendable {
                 try setCompatibilityLevel(compatibilityLevel, database: "master", dockerPath: dockerPath)
             }
 
-            if envFlagEnabled("TDS_LOAD_ADVENTUREWORKS") {
+            if requireAdventureWorks || envFlagEnabled("TDS_LOAD_ADVENTUREWORKS") {
                 try ensureAdventureWorksAvailable(
                     dockerPath: dockerPath,
                     reusedExistingContainer: reusedExistingContainer
@@ -140,7 +140,7 @@ public class SQLServerDockerManager: @unchecked Sendable {
 
     public func ensureFixture(requireAdventureWorks: Bool = false) throws -> SQLServerFixtureReport {
         do {
-            try startIfNeeded()
+            try startIfNeeded(requireAdventureWorks: requireAdventureWorks)
             let validations = try validateFixture(requireAdventureWorks: requireAdventureWorks)
             return SQLServerFixtureReport(
                 image: resolvedImageName(for: version),
@@ -152,7 +152,7 @@ public class SQLServerDockerManager: @unchecked Sendable {
             )
         } catch {
             try recreateFixtureContainer()
-            try startIfNeeded()
+            try startIfNeeded(requireAdventureWorks: requireAdventureWorks)
             let validations = try validateFixture(requireAdventureWorks: requireAdventureWorks)
             return SQLServerFixtureReport(
                 image: resolvedImageName(for: version),
