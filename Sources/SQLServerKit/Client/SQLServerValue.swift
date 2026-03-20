@@ -82,6 +82,10 @@ public struct SQLServerValue: Sendable, CustomStringConvertible {
     }
     public var description: String {
         if isNull { return "NULL" }
+        if let bytes, udtTypeName?.caseInsensitiveCompare("hierarchyid") == .orderedSame,
+           let hierarchyID = SQLServerHierarchyID.string(from: bytes) {
+            return hierarchyID
+        }
         if let string { return string }
         if let int { return String(int) }
         if let int64 { return String(int64) }
