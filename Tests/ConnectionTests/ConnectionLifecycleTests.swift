@@ -310,6 +310,42 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
         XCTAssertNotNil(followUp.first?.column("BusinessEntityID"))
     }
 
+    func testAdventureWorksHierarchyIDRendersCanonicalPaths() async throws {
+        guard ProcessInfo.processInfo.environment["TDS_AW_DATABASE"] != nil else {
+            throw XCTSkip("AdventureWorks database not configured")
+        }
+
+        let targetDatabase = ProcessInfo.processInfo.environment["TDS_AW_DATABASE"] ?? "AdventureWorks"
+        let availableDatabases = try await client.query("SELECT name FROM sys.databases")
+            .compactMap { $0.column("name")?.string?.lowercased() }
+        guard availableDatabases.contains(targetDatabase.lowercased()) else {
+            throw XCTSkip("AdventureWorks database is not available on this server")
+        }
+
+        var configuration = client.configuration.connection
+        configuration.login.database = targetDatabase
+
+        let connection = try await SQLServerConnection.connect(
+            configuration: configuration,
+            numberOfThreads: 1
+        )
+        defer {
+            Task {
+                try? await connection.close()
+            }
+        }
+
+        let rows = try await connection.query("""
+            SELECT TOP 5 OrganizationNode
+            FROM HumanResources.Employee
+            WHERE OrganizationNode IS NOT NULL
+            ORDER BY OrganizationNode
+            """)
+
+        let rendered = rows.compactMap { $0.column("OrganizationNode")?.description }
+        XCTAssertEqual(rendered, ["/1/", "/1/1/", "/1/1/1/", "/1/1/2/", "/1/1/3/"])
+    }
+
     func testConnectionPoolExhaustion() async throws {
         // Test behavior when connection pool is exhausted
         let maxConnections = client.configuration.poolConfiguration.maximumConcurrentConnections
