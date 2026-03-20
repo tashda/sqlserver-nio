@@ -37,8 +37,6 @@ jobs:
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.base_ref != 'main')
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      DOCKER_CONFIG: ${{ runner.temp }}/docker-config
     steps:
       - uses: actions/checkout@v5
       - uses: swift-actions/setup-swift@v3
@@ -49,6 +47,7 @@ jobs:
         env:
           TDS_VERSION: "2022-latest"
         run: |
+          export DOCKER_CONFIG="$RUNNER_TEMP/docker-config"
           mkdir -p "$DOCKER_CONFIG"
           printf '{}\n' > "$DOCKER_CONFIG/config.json"
           docker info
@@ -85,8 +84,6 @@ jobs:
     if: github.event_name == 'pull_request' && github.base_ref == 'main'
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    env:
-      DOCKER_CONFIG: ${{ runner.temp }}/docker-config
     strategy:
       fail-fast: false
       matrix:
@@ -117,6 +114,7 @@ jobs:
         env:
           TDS_VERSION: ${{ matrix.version }}
         run: |
+          export DOCKER_CONFIG="$RUNNER_TEMP/docker-config"
           mkdir -p "$DOCKER_CONFIG"
           printf '{}\n' > "$DOCKER_CONFIG/config.json"
           docker info
