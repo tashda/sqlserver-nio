@@ -50,7 +50,8 @@ public struct SQLServerColumn: Sendable {
     public var name: String { base.colName }
     public var colName: String { name }
     public var dataType: SQLServerDataType { SQLServerDataType(base: base.dataType) }
-    public var typeName: String { dataType.name }
+    public var udtTypeName: String? { base.udtInfo?.typeName }
+    public var typeName: String { udtTypeName ?? dataType.name }
     public var isNullable: Bool { (base.flags & 0x01) != 0 }
     public var maxLength: Int? { normalizedLength }
     public var length: Int { Int(base.length) }

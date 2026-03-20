@@ -263,6 +263,53 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(followUp.first?.column("still_healthy")?.int, 1)
     }
 
+    func testAdventureWorksEmployeeStreamDoesNotPoisonDedicatedConnection() async throws {
+        guard ProcessInfo.processInfo.environment["TDS_AW_DATABASE"] != nil else {
+            throw XCTSkip("AdventureWorks database not configured")
+        }
+
+        let targetDatabase = ProcessInfo.processInfo.environment["TDS_AW_DATABASE"] ?? "AdventureWorks"
+        let availableDatabases = try await client.query("SELECT name FROM sys.databases")
+            .compactMap { $0.column("name")?.string?.lowercased() }
+        guard availableDatabases.contains(targetDatabase.lowercased()) else {
+            throw XCTSkip("AdventureWorks database is not available on this server")
+        }
+
+        var configuration = client.configuration.connection
+        configuration.login.database = targetDatabase
+
+        let connection = try await SQLServerConnection.connect(
+            configuration: configuration,
+            numberOfThreads: 1
+        )
+        defer {
+            Task {
+                try? await connection.close()
+            }
+        }
+
+        var sawMetadata = false
+        var sawRows = false
+
+        for try await event in connection.streamQuery("SELECT * FROM HumanResources.Employee") {
+            switch event {
+            case .metadata(let columns):
+                sawMetadata = !columns.isEmpty
+            case .row:
+                sawRows = true
+            case .done, .message:
+                break
+            }
+        }
+
+        XCTAssertTrue(sawMetadata)
+        XCTAssertTrue(sawRows)
+
+        let followUp = try await connection.query("SELECT TOP 1 BusinessEntityID FROM HumanResources.Employee")
+        XCTAssertEqual(followUp.count, 1)
+        XCTAssertNotNil(followUp.first?.column("BusinessEntityID"))
+    }
+
     func testConnectionPoolExhaustion() async throws {
         // Test behavior when connection pool is exhausted
         let maxConnections = client.configuration.poolConfiguration.maximumConcurrentConnections

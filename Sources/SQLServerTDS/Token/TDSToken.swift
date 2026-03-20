@@ -114,6 +114,20 @@ public enum TDSTokens {
         public var count: Int { colData.count }
 
         public struct ColumnData: Metadata, Sendable {
+            public struct UDTInfo: Sendable {
+                public var databaseName: String
+                public var schemaName: String
+                public var typeName: String
+                public var assemblyName: String
+
+                public init(databaseName: String, schemaName: String, typeName: String, assemblyName: String) {
+                    self.databaseName = databaseName
+                    self.schemaName = schemaName
+                    self.typeName = typeName
+                    self.assemblyName = assemblyName
+                }
+            }
+
             public var userType: UInt32
             public var flags: UInt16
             public var dataType: TDSDataType
@@ -123,9 +137,20 @@ public enum TDSTokens {
             public var scale: UInt8
             public var collation: [UInt8]
             public var colName: String
+            public var udtInfo: UDTInfo?
             public var isView: Bool = false
             
-            public init(userType: UInt32, flags: UInt16, dataType: TDSDataType, length: Int32, precision: UInt8, scale: UInt8, collation: [UInt8] = [], colName: String) {
+            public init(
+                userType: UInt32,
+                flags: UInt16,
+                dataType: TDSDataType,
+                length: Int32,
+                precision: UInt8,
+                scale: UInt8,
+                collation: [UInt8] = [],
+                colName: String,
+                udtInfo: UDTInfo? = nil
+            ) {
                 self.userType = userType
                 self.flags = flags
                 self.dataType = dataType
@@ -134,6 +159,7 @@ public enum TDSTokens {
                 self.scale = scale
                 self.collation = collation
                 self.colName = colName
+                self.udtInfo = udtInfo
             }
 
             public init(
@@ -145,7 +171,8 @@ public enum TDSTokens {
                 tableName: String? = nil,
                 colName: String,
                 precision: UInt8? = nil,
-                scale: UInt8? = nil
+                scale: UInt8? = nil,
+                udtInfo: UDTInfo? = nil
             ) {
                 let _ = tableName
                 self.init(
@@ -156,7 +183,8 @@ public enum TDSTokens {
                     precision: precision ?? 0,
                     scale: scale ?? 0,
                     collation: collation,
-                    colName: colName
+                    colName: colName,
+                    udtInfo: udtInfo
                 )
             }
         }

@@ -4,7 +4,7 @@ import NIO
 extension TDSData {
     public var bytes: [UInt8]? {
         switch self.metadata.dataType {
-        case .binaryLegacy, .varbinaryLegacy, .varbinary, .binary, .image:
+        case .binaryLegacy, .varbinaryLegacy, .varbinary, .binary, .image, .clrUdt:
             guard let buffer = self.value else {
                 return nil
             }

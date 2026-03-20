@@ -4,6 +4,7 @@ import SQLServerTDS
 public struct SQLServerColumnDescription: Sendable {
     public let name: String
     public let type: SQLServerDataType
+    public let typeName: String
     public let length: Int
     public let precision: Int?
     public let scale: Int?
