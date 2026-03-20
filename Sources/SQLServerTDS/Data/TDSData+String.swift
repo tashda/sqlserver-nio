@@ -122,7 +122,9 @@ extension TDSData {
         case .vector:
             return nil
         case .clrUdt:
-            return nil
+            return self.bytes.map { bytes in
+                "0x" + bytes.map { String(format: "%02X", $0) }.joined()
+            }
         case .null:
             return nil
         case .sqlVariant:

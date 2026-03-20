@@ -198,7 +198,15 @@ extension SQLServerConnection {
                 onRow: { row in _ = continuation.yield(.row(SQLServerRow(base: row))) },
                 onMetadata: { metadata in
                     let columns = metadata.map { column in
-                        SQLServerColumnDescription(name: column.colName, type: SQLServerDataType(base: column.dataType), length: Int(column.length), precision: Int(column.precision), scale: Int(column.scale), flags: column.flags)
+                        SQLServerColumnDescription(
+                            name: column.colName,
+                            type: SQLServerDataType(base: column.dataType),
+                            typeName: column.udtInfo?.typeName ?? SQLServerDataType(base: column.dataType).name,
+                            length: Int(column.length),
+                            precision: Int(column.precision),
+                            scale: Int(column.scale),
+                            flags: column.flags
+                        )
                     }
                     _ = continuation.yield(.metadata(columns))
                 },
