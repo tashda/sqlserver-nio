@@ -8,8 +8,9 @@ public class LoginRequest: TDSRequest, @unchecked Sendable {
     /// Captured server error message from ErrorInfoToken during login.
     public internal(set) var serverErrorMessage: String?
 
-    /// Kerberos authenticator for SSPI token exchange (nil for SQL password auth).
-    internal let authenticator: KerberosAuthenticator?
+    /// Authenticator for SSPI token exchange (nil for SQL password auth).
+    /// Supports both Kerberos (via GSS.framework) and NTLMv2 (pure challenge-response).
+    internal let authenticator: (any TDSAuthenticator)?
 
     /// Reference to the connection for sending SSPI response packets.
     internal weak var connection: TDSConnection?
@@ -36,7 +37,7 @@ public class LoginRequest: TDSRequest, @unchecked Sendable {
 
     internal init(
         payload: TDSMessages.Login7Message,
-        authenticator: KerberosAuthenticator?,
+        authenticator: (any TDSAuthenticator)?,
         connection: TDSConnection?,
         onMessage: (@Sendable (TDSTokens.ErrorInfoToken, Bool) -> Void)? = nil
     ) {

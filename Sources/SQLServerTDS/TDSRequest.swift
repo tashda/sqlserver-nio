@@ -200,7 +200,12 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
     private var state = State.start
     
     private var queue: [TDSRequestContext]
-    
+
+    /// Set to `true` after sending an ATTENTION signal. While pending, the handler
+    /// drains the server's remaining response tokens until a DONE token with the
+    /// ATTN bit (0x0020) arrives, then starts the next queued request.
+    private var attentionPending = false
+
     let logger: Logger
     
     var currentRequest: TDSRequestContext? {
@@ -345,7 +350,25 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
                     let doneToken = token as! TDSTokens.DoneToken
                     let hasMore = (doneToken.status & 0x0001) != 0
                     let hasCount = (doneToken.status & 0x0010) != 0
-                    logger.debug("[TDS DONE] type=\(token.type) status=0x\(String(format: "%04X", doneToken.status)) hasMore=\(hasMore) hasCount=\(hasCount) rowCount=\(doneToken.doneRowCount) curCmd=\(doneToken.curCmd)")
+                    let isAttn = (doneToken.status & 0x0020) != 0
+                    logger.debug("[TDS DONE] type=\(token.type) status=0x\(String(format: "%04X", doneToken.status)) hasMore=\(hasMore) hasCount=\(hasCount) isAttn=\(isAttn) rowCount=\(doneToken.doneRowCount) curCmd=\(doneToken.curCmd)")
+
+                    // If this is the server's ATTENTION acknowledgment, drain it and
+                    // resume the pipeline. The current request's promises were already
+                    // failed when the ATTENTION was sent.
+                    if isAttn && attentionPending {
+                        attentionPending = false
+                        resetStreamParser()
+                        logger.debug("ATTENTION acknowledged by server, resuming pipeline")
+                        // If the request is still in the queue (ATTENTION sent without
+                        // failCurrentRequestTimeout), clean it up now.
+                        if !queue.isEmpty && queue.first === request {
+                            cleanupRequest(request, error: TDSError.protocolError("query cancelled"))
+                        }
+                        startNextIfQueued(context: context)
+                        return
+                    }
+
                     request.tokenHandler.onDone(doneToken)
                     let doneMoreFlag: UShort = 0x0001
                     if (doneToken.status & doneMoreFlag) == 0 {
@@ -427,13 +450,20 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
             throw TDSError.protocolError("Encryption was requested but a TLS Configuration was not provided.")
         }
         
-        let sslContext = try! NIOSSLContext(configuration: tlsConfig)
-        let sslHandler = try! NIOSSLClientHandler(context: sslContext, serverHostname: serverHostname)
+        let sslContext: NIOSSLContext
+        let sslHandler: NIOSSLClientHandler
+        do {
+            sslContext = try NIOSSLContext(configuration: tlsConfig)
+            sslHandler = try NIOSSLClientHandler(context: sslContext, serverHostname: serverHostname)
+        } catch {
+            self.errorCaught(context: context, error: TDSError.sslError("Failed to initialize TLS: \(error)"))
+            return
+        }
         self.sslClientHandler = sslHandler
-        
+
         let coordinator = PipelineOrganizationHandler(logger: logger, firstDecoder, firstEncoder, sslHandler)
         self.pipelineCoordinator = coordinator
-        
+
         do {
             let ops = context.channel.pipeline.syncOperations
             try ops.addHandler(coordinator, name: pipelineCoordinatorName, position: .before(self))
@@ -446,6 +476,7 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
     
     private func cleanupRequest(_ request: TDSRequestContext, error: Error? = nil) {
         self.queue.removeFirst()
+        compactStreamParserIfFullyConsumed()
         if let error = error {
             request.completionPromise.fail(error)
             request.resultPromise.fail(error)
@@ -453,6 +484,17 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
             request.completionPromise.succeed(())
             request.resultPromise.succeed(request.rows.flatMap { $0.data })
         }
+    }
+
+    private func compactStreamParserIfFullyConsumed() {
+        guard streamParser.position >= streamParser.buffer.writerIndex else { return }
+        streamParser.buffer.clear()
+        streamParser.position = streamParser.buffer.readerIndex
+    }
+
+    private func resetStreamParser() {
+        streamParser.buffer.clear()
+        streamParser.position = streamParser.buffer.readerIndex
     }
     
     private func write(context: ChannelHandlerContext, packets: [TDSPacket], promise: EventLoopPromise<Void>?) throws {
@@ -501,7 +543,17 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
         default:
             break
         }
-        
+
+        // Apply RESETCONNECTION flag if the connection was returned from a pool
+        // and needs session state reset. Applied to all packets in this message.
+        if let connection = self.connection, connection.needsConnectionReset {
+            for i in packets.indices {
+                packets[i].applyResetConnectionFlag()
+            }
+            connection.needsConnectionReset = false
+            logger.debug("Applied RESETCONNECTION flag to outbound request")
+        }
+
         if let last = packets.popLast() {
             for item in packets {
                 context.write(self.wrapOutboundOut(item), promise: nil)
@@ -610,12 +662,16 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
             // Remove pipeline coordinator and rearrange message encoder/decoder
             
             let pipeline = context.channel.pipeline
-            let removals = pipeline.removeHandler(name: pipelineCoordinatorName)
+            // Remove firstEncoder BEFORE coordinator to prevent type mismatch:
+            // when the coordinator is removed, NIO may forward pending outbound data
+            // to the next outbound handler. If firstEncoder is still present, it
+            // receives raw IOData but expects TDSPacket — fatalError.
+            let removals = pipeline.removeHandler(name: self.firstEncoderName)
                 .flatMap {
-                    pipeline.removeHandler(name: self.firstDecoderName)
+                    pipeline.removeHandler(name: self.pipelineCoordinatorName)
                 }
                 .flatMap {
-                    pipeline.removeHandler(name: self.firstEncoderName)
+                    pipeline.removeHandler(name: self.firstDecoderName)
                 }
             
             let future = removals.flatMap { _ in
@@ -623,8 +679,12 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
                     let newDecoder = ByteToMessageHandler(self.packetDecoder)
                     let newEncoder = MessageToByteHandler(TDSPacketEncoder(logger: self.logger))
                     let ops = pipeline.syncOperations
-                    try ops.addHandler(newDecoder, name: self.firstDecoderName, position: .last)
-                    try ops.addHandler(newEncoder, name: self.firstEncoderName, position: .last)
+                    // Add decoder/encoder BEFORE requestHandler (between SSL and request handler).
+                    // Adding at .last would put them after requestHandler in the outbound
+                    // direction, causing TDSRequestContext to reach the encoder before
+                    // requestHandler can convert it to TDSPacket — fatal type mismatch.
+                    try ops.addHandler(newDecoder, name: self.firstDecoderName, position: .before(self))
+                    try ops.addHandler(newEncoder, name: self.firstEncoderName, position: .before(self))
                     self.firstDecoder = newDecoder
                     self.firstEncoder = newEncoder
                     self.pipelineCoordinator = nil
@@ -686,16 +746,39 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
                 do {
                     try write(context: context, packets: [packet], promise: nil)
                     context.flush()
+                    attentionPending = true
+                    logger.debug("ATTENTION signal sent, waiting for server acknowledgment")
                     promise?.succeed(())
                 } catch {
                     promise?.fail(error)
                 }
                 return
             case .failCurrentRequestTimeout:
-                // Fail the current request promise with a timeout-like error without closing the channel.
+                // Fail the current request's promises so the caller gets unblocked,
+                // then send ATTENTION and wait for the server's DONE+ATTN ack before
+                // starting the next queued request.
                 if let current = self.currentRequest, context.channel.isActive {
                     current.completionPromise.fail(TDSError.protocolError("request timeout"))
                     current.resultPromise.fail(TDSError.protocolError("request timeout"))
+                    // Remove from queue so cleanupRequest doesn't double-fail
+                    self.queue.removeFirst()
+                    // Send ATTENTION to cancel the server-side operation
+                    var empty = context.channel.allocator.buffer(capacity: 0)
+                    let packet = TDSPacket(
+                        from: &empty,
+                        ofType: .attentionSignal,
+                        isLastPacket: true,
+                        packetId: 1,
+                        allocator: context.channel.allocator
+                    )
+                    do {
+                        try write(context: context, packets: [packet], promise: nil)
+                        context.flush()
+                        attentionPending = true
+                        logger.debug("ATTENTION signal sent after timeout, waiting for server acknowledgment")
+                    } catch {
+                        logger.error("Failed to send ATTENTION after timeout: \(error)")
+                    }
                 }
                 promise?.succeed(())
                 return
@@ -707,6 +790,7 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
     func channelInactive(context: ChannelHandlerContext) {
         self.currentContext = nil
         self.currentEventLoop = nil
+        self.attentionPending = false
         logger.debug("TDSRequestHandler.channelInactive: draining \(queue.count) pending requests; pipelineState=\(pipelineCoordinator?.stateDescription ?? "<nil>")")
         // Fail any pending TLS handshake output promise to avoid leaking promises on loop shutdown.
         pipelineCoordinator?.failHandshakeIfPending()
@@ -735,6 +819,7 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
 
     // MARK: - Queue progression
     private func startNextIfQueued(context: ChannelHandlerContext) {
+        guard !attentionPending else { return }  // Wait for server to ack ATTENTION
         guard let next = self.currentRequest else { return }
         guard context.channel.isActive else { return }
         guard !next.started else { return }

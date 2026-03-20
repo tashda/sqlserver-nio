@@ -194,6 +194,158 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
         XCTAssertLessThan(duration, 5.0, "Query should complete within 5 seconds")
     }
 
+    func testCompletedStreamQueryDoesNotPoisonDedicatedConnection() async throws {
+        let connection = try await SQLServerConnection.connect(
+            configuration: client.configuration.connection,
+            numberOfThreads: 1
+        )
+        defer {
+            Task {
+                try? await connection.close()
+            }
+        }
+
+        var sawRow = false
+        let sql = """
+        SELECT TOP 5000
+            ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS row_id
+        FROM sys.all_objects AS a
+        CROSS JOIN sys.all_objects AS b
+        """
+
+        for try await event in connection.streamQuery(sql) {
+            if case .row = event {
+                sawRow = true
+            }
+        }
+
+        XCTAssertTrue(sawRow, "Expected streamed query to produce at least one row")
+
+        let followUp = try await connection.query("SELECT 1 AS still_healthy")
+        XCTAssertEqual(followUp.first?.column("still_healthy")?.int, 1)
+    }
+
+    func testCancelledStreamQueryDoesNotPoisonDedicatedConnection() async throws {
+        let connection = try await SQLServerConnection.connect(
+            configuration: client.configuration.connection,
+            numberOfThreads: 1
+        )
+        defer {
+            Task {
+                try? await connection.close()
+            }
+        }
+
+        let streamTask = Task {
+            for try await _ in connection.streamQuery("""
+                WAITFOR DELAY '00:00:05';
+                SELECT TOP 5000
+                    ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS row_id
+                FROM sys.all_objects AS a
+                CROSS JOIN sys.all_objects AS b
+                """) {
+                // Intentionally discard events; cancellation is the behavior under test.
+            }
+        }
+
+        try await Task.sleep(for: .milliseconds(250))
+        streamTask.cancel()
+
+        do {
+            try await streamTask.value
+        } catch is CancellationError {
+            // Expected.
+        } catch {
+            // Accept driver-level cancellation errors here; health is checked by the follow-up query.
+        }
+
+        let followUp = try await assertEventuallyHealthy(connection)
+        XCTAssertEqual(followUp.first?.column("still_healthy")?.int, 1)
+    }
+
+    func testAdventureWorksEmployeeStreamDoesNotPoisonDedicatedConnection() async throws {
+        guard ProcessInfo.processInfo.environment["TDS_AW_DATABASE"] != nil else {
+            throw XCTSkip("AdventureWorks database not configured")
+        }
+
+        let targetDatabase = ProcessInfo.processInfo.environment["TDS_AW_DATABASE"] ?? "AdventureWorks"
+        let availableDatabases = try await client.query("SELECT name FROM sys.databases")
+            .compactMap { $0.column("name")?.string?.lowercased() }
+        guard availableDatabases.contains(targetDatabase.lowercased()) else {
+            throw XCTSkip("AdventureWorks database is not available on this server")
+        }
+
+        var configuration = client.configuration.connection
+        configuration.login.database = targetDatabase
+
+        let connection = try await SQLServerConnection.connect(
+            configuration: configuration,
+            numberOfThreads: 1
+        )
+        defer {
+            Task {
+                try? await connection.close()
+            }
+        }
+
+        var sawMetadata = false
+        var sawRows = false
+
+        for try await event in connection.streamQuery("SELECT * FROM HumanResources.Employee") {
+            switch event {
+            case .metadata(let columns):
+                sawMetadata = !columns.isEmpty
+            case .row:
+                sawRows = true
+            case .done, .message:
+                break
+            }
+        }
+
+        XCTAssertTrue(sawMetadata)
+        XCTAssertTrue(sawRows)
+
+        let followUp = try await connection.query("SELECT TOP 1 BusinessEntityID FROM HumanResources.Employee")
+        XCTAssertEqual(followUp.count, 1)
+        XCTAssertNotNil(followUp.first?.column("BusinessEntityID"))
+    }
+
+    func testAdventureWorksHierarchyIDRendersCanonicalPaths() async throws {
+        guard ProcessInfo.processInfo.environment["TDS_AW_DATABASE"] != nil else {
+            throw XCTSkip("AdventureWorks database not configured")
+        }
+
+        let targetDatabase = ProcessInfo.processInfo.environment["TDS_AW_DATABASE"] ?? "AdventureWorks"
+        let availableDatabases = try await client.query("SELECT name FROM sys.databases")
+            .compactMap { $0.column("name")?.string?.lowercased() }
+        guard availableDatabases.contains(targetDatabase.lowercased()) else {
+            throw XCTSkip("AdventureWorks database is not available on this server")
+        }
+
+        var configuration = client.configuration.connection
+        configuration.login.database = targetDatabase
+
+        let connection = try await SQLServerConnection.connect(
+            configuration: configuration,
+            numberOfThreads: 1
+        )
+        defer {
+            Task {
+                try? await connection.close()
+            }
+        }
+
+        let rows = try await connection.query("""
+            SELECT TOP 5 OrganizationNode
+            FROM HumanResources.Employee
+            WHERE OrganizationNode IS NOT NULL
+            ORDER BY OrganizationNode
+            """)
+
+        let rendered = rows.compactMap { $0.column("OrganizationNode")?.description }
+        XCTAssertEqual(rendered, ["/1/", "/1/1/", "/1/1/1/", "/1/1/2/", "/1/1/3/"])
+    }
+
     func testConnectionPoolExhaustion() async throws {
         // Test behavior when connection pool is exhausted
         let maxConnections = client.configuration.poolConfiguration.maximumConcurrentConnections
@@ -364,5 +516,31 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
             }
             XCTAssertGreaterThanOrEqual(count, 0)
         }
+    }
+}
+
+private extension SQLServerConnectionTests {
+    func assertEventuallyHealthy(
+        _ connection: SQLServerConnection,
+        attempts: Int = 5,
+        delay: Duration = .milliseconds(100)
+    ) async throws -> [SQLServerRow] {
+        var lastError: Error?
+
+        for attempt in 0..<attempts {
+            do {
+                return try await connection.query("SELECT 1 AS still_healthy")
+            } catch {
+                lastError = error
+                let description = String(describing: error).lowercased()
+                let isTransientCancellation = description.contains("query cancelled")
+                guard isTransientCancellation, attempt < attempts - 1 else {
+                    throw error
+                }
+                try await Task.sleep(for: delay)
+            }
+        }
+
+        throw lastError ?? XCTSkip("Expected follow-up query to succeed")
     }
 }

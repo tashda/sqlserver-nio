@@ -36,6 +36,24 @@ final class SQLServerMetadataAnalysisTests: XCTestCase, @unchecked Sendable {
 
     /// Main analysis test - systematically tests all metadata operations
     func testComprehensiveMetadataAnalysis() async throws {
+        if env("TDS_AW_DATABASE") != nil || env("TDS_TEST_DB") != nil {
+            do {
+                _ = try await requireDatabaseNamedInEnvironment(
+                    env("TDS_TEST_DB") != nil ? "TDS_TEST_DB" : "TDS_AW_DATABASE",
+                    using: client,
+                    defaultName: testDatabase
+                )
+            } catch let error as SQLServerFixtureUnavailable {
+                throw XCTSkip(error.message)
+            }
+        } else {
+            let rows = try await client.query("SELECT name FROM sys.databases")
+            let availableDatabases = rows.compactMap { $0.column("name")?.string?.lowercased() }
+            guard availableDatabases.contains(testDatabase.lowercased()) else {
+                throw XCTSkip("Skipping: database '\(testDatabase)' is not available on this server")
+            }
+        }
+
         print("\n🚀 COMPREHENSIVE METADATA ANALYSIS STARTING")
         print("📊 Database: \(testDatabase)")
         print("=" * 80)

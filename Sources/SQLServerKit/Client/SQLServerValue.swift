@@ -77,8 +77,15 @@ public struct SQLServerValue: Sendable, CustomStringConvertible {
     public var bytes: [UInt8]? { base.bytes }
     public var data: Data? { base.bytes.map { Data($0) } }
     public var type: SQLServerDataType { SQLServerDataType(base: base.metadata.dataType) }
+    public var udtTypeName: String? {
+        (base.metadata as? TDSTokens.ColMetadataToken.ColumnData)?.udtInfo?.typeName
+    }
     public var description: String {
         if isNull { return "NULL" }
+        if let bytes, udtTypeName?.caseInsensitiveCompare("hierarchyid") == .orderedSame,
+           let hierarchyID = SQLServerHierarchyID.string(from: bytes) {
+            return hierarchyID
+        }
         if let string { return string }
         if let int { return String(int) }
         if let int64 { return String(int64) }
@@ -87,8 +94,11 @@ public struct SQLServerValue: Sendable, CustomStringConvertible {
         if let date { return ISO8601DateFormatter().string(from: date) }
         if let decimal { return NSDecimalNumber(decimal: decimal).stringValue }
         if let uuid { return uuid.uuidString }
-        if let bytes { return bytes.map { String(format: "%02X", $0) }.joined() }
-        return "<\(type.name)>"
+        if let bytes {
+            let hex = bytes.map { String(format: "%02X", $0) }.joined()
+            return "0x\(hex)"
+        }
+        return "<\(udtTypeName ?? type.name)>"
     }
 }
 

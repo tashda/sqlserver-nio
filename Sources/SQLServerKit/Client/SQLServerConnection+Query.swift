@@ -29,11 +29,24 @@ extension SQLServerConnection {
         return try await execute(pagedSQL).rows.map { $0.droppingLastColumn() }
     }
 
-    internal func execute(_ sql: String) -> EventLoopFuture<SQLServerExecutionResult> {
+    internal func execute(_ sql: String, applyDefaultTimeout: Bool = true) -> EventLoopFuture<SQLServerExecutionResult> {
         let future = executeWithRetry(operationName: "execute") {
             self.runBatch(sql)
         }
-        return future.flatMapError { error in
+        // Apply configured default query timeout (sends ATTENTION on expiry)
+        let guarded: EventLoopFuture<SQLServerExecutionResult>
+        if applyDefaultTimeout, let timeout = configuration.sessionOptions.defaultQueryTimeout {
+            let timed = future.withTimeout(on: self.eventLoop, seconds: timeout)
+            timed.whenFailure { error in
+                if case .timeout = SQLServerError.normalize(error) {
+                    self.base.sendAttention()
+                }
+            }
+            guarded = timed
+        } else {
+            guarded = future
+        }
+        return guarded.flatMapError { error in
             let normalized = SQLServerError.normalize(error)
             switch normalized {
             case .timeout:
@@ -85,7 +98,7 @@ extension SQLServerConnection {
         timeout seconds: TimeInterval,
         invalidateOnTimeout: Bool
     ) -> EventLoopFuture<SQLServerExecutionResult> {
-        let fut: EventLoopFuture<SQLServerExecutionResult> = execute(sql)
+        let fut: EventLoopFuture<SQLServerExecutionResult> = execute(sql, applyDefaultTimeout: false)
         let timed = fut.withTimeout(on: self.eventLoop, seconds: seconds)
         timed.whenFailure { error in
             if case .timeout = SQLServerError.normalize(error) {
@@ -185,7 +198,15 @@ extension SQLServerConnection {
                 onRow: { row in _ = continuation.yield(.row(SQLServerRow(base: row))) },
                 onMetadata: { metadata in
                     let columns = metadata.map { column in
-                        SQLServerColumnDescription(name: column.colName, type: SQLServerDataType(base: column.dataType), length: Int(column.length), precision: Int(column.precision), scale: Int(column.scale), flags: column.flags)
+                        SQLServerColumnDescription(
+                            name: column.colName,
+                            type: SQLServerDataType(base: column.dataType),
+                            typeName: column.udtInfo?.typeName ?? SQLServerDataType(base: column.dataType).name,
+                            length: Int(column.length),
+                            precision: Int(column.precision),
+                            scale: Int(column.scale),
+                            flags: column.flags
+                        )
                     }
                     _ = continuation.yield(.metadata(columns))
                 },
@@ -201,7 +222,10 @@ extension SQLServerConnection {
                 case .failure(let error): continuation.finish(throwing: error)
                 }
             }
-            continuation.onTermination = { _ in self.base.sendAttention() }
+            continuation.onTermination = { termination in
+                guard case .cancelled = termination else { return }
+                self.base.sendAttention()
+            }
         }
     }
 

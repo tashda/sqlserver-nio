@@ -45,13 +45,6 @@ extension TDSMessages {
             // ClientID serializes inbetween `basicFields` and `extendedFields`
             let clientId: [UInt8] = [0x00, 0x50, 0x8b, 0xe3, 0xb7, 0x8f]
 
-            // Each extended field needs to serialize the length & offset
-            let extendedFields = [
-                ("", false),
-                ("", false),
-                ("", true)
-            ]
-
             // Stores the position and skips an UInt32 so the length can be added later
             let login7HeaderPosition = buffer.writerIndex
             buffer.moveWriterIndex(forwardBy: 4)
@@ -77,14 +70,28 @@ extension TDSMessages {
             // Each pair is 4 bytes (offset: UInt16 + length: UInt16)
             let extensionOffsetPosition = buffer.writerIndex + 5 * 4 // 5th entry (0-indexed)
 
+            // LOGIN7 fixed header layout after ClientLCID (offset 36):
+            //   9 basic offset/length pairs (36 bytes)  → offsets 36-71
+            //   ClientID (6 bytes)                       → offsets 72-77
+            //   ibSSPI/cbSSPI (4 bytes)                  → offsets 78-81
+            //   ibAtchDBFile/cchAtchDBFile (4 bytes)     → offsets 82-85
+            //   ibChangePassword/cchChangePassword (4 bytes) → offsets 86-89
+            //   cbSSPILong (4 bytes)                     → offsets 90-93
             var offsetLengthsPosition = buffer.writerIndex
-            buffer.moveWriterIndex(forwardBy: basicFields.count * 4)
-            buffer.writeBytes(clientId)
+            buffer.moveWriterIndex(forwardBy: basicFields.count * 4) // 9 * 4 = 36
+            buffer.writeBytes(clientId) // 6 bytes
 
-            buffer.moveWriterIndex(forwardBy: extendedFields.count * 4)
+            let sspiOffsetPosition = buffer.writerIndex // offset 78
+            buffer.moveWriterIndex(forwardBy: 4) // ibSSPI + cbSSPI
 
-            let sspiOffsetPosition = buffer.writerIndex
-            buffer.moveWriterIndex(forwardBy: 4)
+            // AtchDBFile and ChangePassword offset/length pairs
+            let atchDBFilePosition = buffer.writerIndex // offset 82
+            buffer.moveWriterIndex(forwardBy: 4) // ibAtchDBFile + cchAtchDBFile
+            let changePasswordPosition = buffer.writerIndex // offset 86
+            buffer.moveWriterIndex(forwardBy: 4) // ibChangePassword + cchChangePassword
+
+            let sspiLongPosition = buffer.writerIndex // offset 90
+            buffer.moveWriterIndex(forwardBy: 4) // cbSSPILong
 
             func writeField(_ string: String, isPassword: Bool) {
                 let utf16 = string.utf16
@@ -111,20 +118,29 @@ extension TDSMessages {
                 writeField(field, isPassword: isPassword)
             }
 
-            offsetLengthsPosition += clientId.count
+            // Skip ClientID (already written), SSPI, AtchDBFile, ChangePassword, SSPILong
+            // — these are written separately below, not via writeField.
+            // (offsetLengthsPosition is not used for these fields)
 
-            for (field, isPassword) in extendedFields {
-                writeField(field, isPassword: isPassword)
-            }
+            // AtchDBFile — empty
+            buffer.setInteger(UInt16(buffer.writerIndex - login7HeaderPosition), at: atchDBFilePosition, endianness: .little)
+            buffer.setInteger(UInt16(0), at: atchDBFilePosition + 2, endianness: .little)
 
+            // ChangePassword — empty
+            buffer.setInteger(UInt16(buffer.writerIndex - login7HeaderPosition), at: changePasswordPosition, endianness: .little)
+            buffer.setInteger(UInt16(0), at: changePasswordPosition + 2, endianness: .little)
+
+            // SSPI data
             if let sspiData, !sspiData.isEmpty {
                 let offset = UInt16(buffer.writerIndex - login7HeaderPosition)
                 buffer.setInteger(offset, at: sspiOffsetPosition, endianness: .little)
                 buffer.setInteger(UInt16(sspiData.count), at: sspiOffsetPosition + 2, endianness: .little)
+                buffer.setInteger(UInt32(0), at: sspiLongPosition, endianness: .little) // cbSSPILong = 0 (not needed for < 65535 bytes)
                 buffer.writeBytes(sspiData)
             } else {
                 buffer.setInteger(UInt16(0), at: sspiOffsetPosition, endianness: .little)
                 buffer.setInteger(UInt16(0), at: sspiOffsetPosition + 2, endianness: .little)
+                buffer.setInteger(UInt32(0), at: sspiLongPosition, endianness: .little)
             }
 
             // FEDAUTH FeatureExt — appended after all other variable data

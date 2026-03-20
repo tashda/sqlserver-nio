@@ -47,7 +47,7 @@ public enum KerberosError: Error, Sendable, CustomStringConvertible {
 
 /// Wraps macOS GSS.framework to perform SPNEGO/Kerberos authentication
 /// for SQL Server connections using the TDS SSPI authentication flow.
-final class KerberosAuthenticator: @unchecked Sendable {
+final class KerberosAuthenticator: TDSAuthenticator, @unchecked Sendable {
     private let servicePrincipalName: String
     private var context: gss_ctx_id_t?
     private var credentials: gss_cred_id_t?
@@ -121,7 +121,9 @@ final class KerberosAuthenticator: @unchecked Sendable {
             gss_release_name(&ms, &clientName)
         }
 
-        let passwordData = password.data(using: .utf8)!
+        guard let passwordData = password.data(using: .utf8) else {
+            throw KerberosError.credentialAcquisitionFailed("Password contains invalid characters")
+        }
         let cfPassword = passwordData as CFData
 
         var error: Unmanaged<CFError>?
@@ -179,10 +181,13 @@ final class KerberosAuthenticator: @unchecked Sendable {
 
         let majorStatus: OM_uint32
         if let inputToken {
-            majorStatus = inputToken.withUnsafeBytes { rawBuffer -> OM_uint32 in
+            majorStatus = try inputToken.withUnsafeBytes { rawBuffer -> OM_uint32 in
+                guard let baseAddress = rawBuffer.baseAddress else {
+                    throw KerberosError.contextInitFailed("Server sent empty SSPI challenge token")
+                }
                 var inputTokenBuffer = gss_buffer_desc(
                     length: rawBuffer.count,
-                    value: UnsafeMutableRawPointer(mutating: rawBuffer.baseAddress!)
+                    value: UnsafeMutableRawPointer(mutating: baseAddress)
                 )
                 return gss_init_sec_context(
                     &minorStatus,
@@ -289,7 +294,7 @@ public enum KerberosError: Error, Sendable, CustomStringConvertible {
     }
 }
 
-final class KerberosAuthenticator: @unchecked Sendable {
+final class KerberosAuthenticator: TDSAuthenticator, @unchecked Sendable {
     init(username: String, password: String, domain: String?, server: String, port: Int, logger: Logger) throws {
         throw KerberosError.unsupported
     }

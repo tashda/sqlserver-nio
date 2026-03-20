@@ -5,12 +5,13 @@ public enum TDSError: Error, LocalizedError, CustomStringConvertible, Equatable 
     case connectionClosed
     case invalidCredentials(String)
     case needMoreData
-    
+    case sslError(String)
+
     /// See `LocalizedError`.
     public var errorDescription: String? {
         return self.description
     }
-    
+
     /// See `CustomStringConvertible`.
     public var description: String {
         let description: String
@@ -23,6 +24,8 @@ public enum TDSError: Error, LocalizedError, CustomStringConvertible, Equatable 
             description = message
         case .needMoreData:
             description = "need more data"
+        case .sslError(let message):
+            description = "SSL error: \(message)"
         }
         return "TDS error: \(description)"
     }

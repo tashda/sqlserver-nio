@@ -65,6 +65,7 @@ extension TDSTokenOperations {
             
             var precision: UInt8 = 0
             var scale: UInt8 = 0
+            var udtInfo: TDSTokens.ColMetadataToken.ColumnData.UDTInfo?
             if dataType == .decimal || dataType == .numeric || dataType == .decimalLegacy || dataType == .numericLegacy {
                 precision = buffer.readInteger() ?? 0
                 scale = buffer.readInteger() ?? 0
@@ -85,14 +86,66 @@ extension TDSTokenOperations {
                         throw TDSError.needMoreData
                     }
                 }
+            } else if dataType == .clrUdt {
+                udtInfo = try consumeUDTTypeInfo(from: &buffer)
             }
 
             guard let colNameLen: UInt8 = buffer.readInteger() else { throw TDSError.needMoreData }
             guard let colName = buffer.readUTF16String(length: Int(colNameLen) * 2) else { throw TDSError.needMoreData }
 
-            colData.append(TDSTokens.ColMetadataToken.ColumnData(userType: userType, flags: flags, dataType: dataType, length: length, precision: precision, scale: scale, colName: colName))
+            colData.append(
+                TDSTokens.ColMetadataToken.ColumnData(
+                    userType: userType,
+                    flags: flags,
+                    dataType: dataType,
+                    length: length,
+                    precision: precision,
+                    scale: scale,
+                    colName: colName,
+                    udtInfo: udtInfo
+                )
+            )
         }
 
         return TDSTokens.ColMetadataToken(colData: colData)
+    }
+
+    private static func consumeUDTTypeInfo(
+        from buffer: inout ByteBuffer
+    ) throws -> TDSTokens.ColMetadataToken.ColumnData.UDTInfo {
+        guard let databaseNameLength: UInt8 = buffer.readInteger() else {
+            throw TDSError.needMoreData
+        }
+        guard let databaseName = buffer.readUTF16String(length: Int(databaseNameLength) * 2) else {
+            throw TDSError.needMoreData
+        }
+
+        guard let schemaNameLength: UInt8 = buffer.readInteger() else {
+            throw TDSError.needMoreData
+        }
+        guard let schemaName = buffer.readUTF16String(length: Int(schemaNameLength) * 2) else {
+            throw TDSError.needMoreData
+        }
+
+        guard let typeNameLength: UInt8 = buffer.readInteger() else {
+            throw TDSError.needMoreData
+        }
+        guard let typeName = buffer.readUTF16String(length: Int(typeNameLength) * 2) else {
+            throw TDSError.needMoreData
+        }
+
+        guard let assemblyNameLength: UInt16 = buffer.readInteger(endianness: .little) else {
+            throw TDSError.needMoreData
+        }
+        guard let assemblyName = buffer.readUTF16String(length: Int(assemblyNameLength) * 2) else {
+            throw TDSError.needMoreData
+        }
+
+        return .init(
+            databaseName: databaseName,
+            schemaName: schemaName,
+            typeName: typeName,
+            assemblyName: assemblyName
+        )
     }
 }

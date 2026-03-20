@@ -13,6 +13,9 @@ let package = Package(
         .library(
             name: "SQLServerKitTesting",
             targets: ["SQLServerKitTesting"]),
+        .executable(
+            name: "sqlserver-test-fixture",
+            targets: ["SQLServerFixtureTool"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0"),
@@ -20,6 +23,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-log.git", from: "1.5.4"),
         .package(url: "https://github.com/apple/swift-atomics.git", from: "1.2.0"),
         .package(url: "https://github.com/apple/swift-collections.git", from: "1.1.0"),
+        .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
         .package(url: "https://github.com/swiftlang/swift-docc-plugin", from: "1.4.0"),
     ],
     targets: [
@@ -32,6 +36,7 @@ let package = Package(
                 .product(name: "Logging", package: "swift-log"),
                 .product(name: "Atomics", package: "swift-atomics"),
                 .product(name: "Collections", package: "swift-collections"),
+                .product(name: "Crypto", package: "swift-crypto"),
             ],
             path: "Sources/SQLServerTDS",
             linkerSettings: [
@@ -58,11 +63,25 @@ let package = Package(
             ],
             path: "Sources/SQLServerKitTesting"
         ),
+        .target(
+            name: "SQLServerKitXCTestSupport",
+            dependencies: [
+                "SQLServerKit",
+                "SQLServerKitTesting",
+            ],
+            path: "Sources/SQLServerKitXCTestSupport"
+        ),
+        .executableTarget(
+            name: "SQLServerFixtureTool",
+            dependencies: ["SQLServerKitTesting"],
+            path: "Sources/SQLServerFixtureTool"
+        ),
         .testTarget(
             name: "SQLServerKitTests",
             dependencies: [
                 "SQLServerKit",
                 "SQLServerKitTesting",
+                "SQLServerKitXCTestSupport",
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
                 .product(name: "NIOTestUtils", package: "swift-nio"),
@@ -90,6 +109,7 @@ let package = Package(
             dependencies: [
                 "SQLServerTDS",
                 "SQLServerKitTesting",
+                "SQLServerKitXCTestSupport",
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
                 .product(name: "NIOTestUtils", package: "swift-nio"),

@@ -178,6 +178,29 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
 
     // MARK: - Reorganize Indexes
 
+    /// Reorganizes a specific index on a table (lighter than rebuild).
+    @available(macOS 12.0, *)
+    public func reorganizeIndex(schema: String, table: String, name: String) async throws -> SQLServerMaintenanceResult {
+        let escapedSchema = schema.replacingOccurrences(of: "]", with: "]]")
+        let escapedTable = table.replacingOccurrences(of: "]", with: "]]")
+        let escapedName = name.replacingOccurrences(of: "]", with: "]]")
+        let sql = "ALTER INDEX [\(escapedName)] ON [\(escapedSchema)].[\(escapedTable)] REORGANIZE"
+        do {
+            _ = try await client.execute(sql)
+            return SQLServerMaintenanceResult(
+                operation: "Reorganize Index",
+                messages: ["Index [\(name)] on [\(schema)].[\(table)] reorganized successfully."],
+                succeeded: true
+            )
+        } catch {
+            return SQLServerMaintenanceResult(
+                operation: "Reorganize Index",
+                messages: [error.localizedDescription],
+                succeeded: false
+            )
+        }
+    }
+
     /// Reorganizes all indexes on a table (lighter than rebuild).
     @available(macOS 12.0, *)
     public func reorganizeIndexes(schema: String, table: String) async throws -> SQLServerMaintenanceResult {

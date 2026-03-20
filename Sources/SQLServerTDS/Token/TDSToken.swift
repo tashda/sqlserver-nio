@@ -74,15 +74,15 @@ public enum TDSTokens {
         /// DATA_CLASSIFICATION
         case dataClassification = 0xA3
         /// SQL_RESULT_COLUMN_SOURCES
-        case sqlResultColumnSources = 0xAF // Adjusted value
-        
+        case sqlResultColumnSources = 0xAF
+        case tvpRow = 0xD4 // Placeholder for TVP rows
+
         // Extended/Unknown types from tracing
         case unknown0x04 = 0x04
         case unknown0x61 = 0x61
         case unknown0x74 = 0x74
         case unknown0xc1 = 0xC1
-        case columnStatus = 0x12 // Placeholder
-        case tvpRow = 0xD4 // Placeholder for TVP rows
+        case columnStatus = 0x12
     }
 
     public struct DoneToken: TDSToken {
@@ -114,6 +114,20 @@ public enum TDSTokens {
         public var count: Int { colData.count }
 
         public struct ColumnData: Metadata, Sendable {
+            public struct UDTInfo: Sendable {
+                public var databaseName: String
+                public var schemaName: String
+                public var typeName: String
+                public var assemblyName: String
+
+                public init(databaseName: String, schemaName: String, typeName: String, assemblyName: String) {
+                    self.databaseName = databaseName
+                    self.schemaName = schemaName
+                    self.typeName = typeName
+                    self.assemblyName = assemblyName
+                }
+            }
+
             public var userType: UInt32
             public var flags: UInt16
             public var dataType: TDSDataType
@@ -123,9 +137,20 @@ public enum TDSTokens {
             public var scale: UInt8
             public var collation: [UInt8]
             public var colName: String
+            public var udtInfo: UDTInfo?
             public var isView: Bool = false
             
-            public init(userType: UInt32, flags: UInt16, dataType: TDSDataType, length: Int32, precision: UInt8, scale: UInt8, collation: [UInt8] = [], colName: String) {
+            public init(
+                userType: UInt32,
+                flags: UInt16,
+                dataType: TDSDataType,
+                length: Int32,
+                precision: UInt8,
+                scale: UInt8,
+                collation: [UInt8] = [],
+                colName: String,
+                udtInfo: UDTInfo? = nil
+            ) {
                 self.userType = userType
                 self.flags = flags
                 self.dataType = dataType
@@ -134,6 +159,7 @@ public enum TDSTokens {
                 self.scale = scale
                 self.collation = collation
                 self.colName = colName
+                self.udtInfo = udtInfo
             }
 
             public init(
@@ -145,7 +171,8 @@ public enum TDSTokens {
                 tableName: String? = nil,
                 colName: String,
                 precision: UInt8? = nil,
-                scale: UInt8? = nil
+                scale: UInt8? = nil,
+                udtInfo: UDTInfo? = nil
             ) {
                 let _ = tableName
                 self.init(
@@ -156,7 +183,8 @@ public enum TDSTokens {
                     precision: precision ?? 0,
                     scale: scale ?? 0,
                     collation: collation,
-                    colName: colName
+                    colName: colName,
+                    udtInfo: udtInfo
                 )
             }
         }
@@ -321,8 +349,13 @@ public enum TDSTokens {
 
     public struct OffsetToken: TDSToken {
         public var type: TokenType = .offset
-        public var data: [Byte]
-        public init(data: [Byte]) { self.data = data }
+        public var identifier: UInt16
+        public var offset: UInt16
+
+        public init(identifier: UInt16, offset: UInt16) {
+            self.identifier = identifier
+            self.offset = offset
+        }
     }
 
     public struct DataClassificationToken: TDSToken {
@@ -355,6 +388,13 @@ public enum TDSTokens {
         public init(payload: ByteBuffer) { self.payload = payload }
     }
 
+    public struct ColumnStatusToken: TDSToken {
+        public var type: TokenType = .columnStatus
+        public var status: UInt16
+        public var data: [Byte]
+        public init(status: UInt16, data: [Byte]) { self.status = status; self.data = data }
+    }
+
     public struct ReturnStatusToken: TDSToken {
         public var type: TokenType = .returnStatus
         public var value: Int32
@@ -385,14 +425,6 @@ public enum TDSTokens {
             ordinal
         }
     }
-
-    public struct ColumnStatusToken: TDSToken {
-        public var type: TokenType = .columnStatus
-        public var status: UInt16
-        public var data: [Byte]
-        public init(status: UInt16, data: [Byte]) { self.status = status; self.data = data }
-    }
-
     public struct SSPIToken: TDSToken {
         public var type: TokenType = .sspi
         public var data: Data

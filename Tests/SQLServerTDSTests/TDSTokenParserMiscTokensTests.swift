@@ -50,10 +50,10 @@ final class TDSTokenOperationsMiscTokensTests: XCTestCase, @unchecked Sendable {
     }
 
     func testParseOffsetToken() throws {
-        var buffer = ByteBufferAllocator().buffer(capacity: 4)
+        var buffer = ByteBufferAllocator().buffer(capacity: 5)
         buffer.writeInteger(TDSTokens.TokenType.offset.rawValue)
-        buffer.writeInteger(UInt16(2), endianness: .little)
-        buffer.writeBytes([0x00, 0x01])
+        buffer.writeInteger(UInt16(16), endianness: .little)
+        buffer.writeInteger(UInt16(56), endianness: .little)
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
         let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
@@ -62,7 +62,43 @@ final class TDSTokenOperationsMiscTokensTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(tokens.count, 1)
 
         let off = try XCTUnwrap(tokens[0] as? TDSTokens.OffsetToken)
-        XCTAssertEqual(off.data, [0x00, 0x01])
+        XCTAssertEqual(off.identifier, 16)
+        XCTAssertEqual(off.offset, 56)
+    }
+
+    func testParseOffsetFollowedByBrowseMetadata() throws {
+        var buffer = ByteBufferAllocator().buffer(capacity: 64)
+        buffer.writeInteger(TDSTokens.TokenType.offset.rawValue)
+        buffer.writeInteger(UInt16(0x0810), endianness: .little)
+        buffer.writeInteger(UInt16(0x1038), endianness: .little)
+
+        let baseColumnName = "BusinessEntityID"
+        let utf16Bytes = Array(baseColumnName.utf16).flatMap {
+            [UInt8($0 & 0x00ff), UInt8(($0 & 0xff00) >> 8)]
+        }
+
+        buffer.writeInteger(TDSTokens.TokenType.colInfo.rawValue)
+        buffer.writeInteger(UInt16(1 + 1 + 1 + 1 + utf16Bytes.count), endianness: .little)
+        buffer.writeInteger(UInt8(16)) // ColNum
+        buffer.writeInteger(UInt8(8)) // TableNum
+        buffer.writeInteger(UInt8(0x38)) // KEY | HIDDEN | DIFFERENT_NAME
+        buffer.writeInteger(UInt8(baseColumnName.count))
+        buffer.writeBytes(utf16Bytes)
+
+        let stream = TDSStreamParser()
+        stream.buffer.writeBuffer(&buffer)
+        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
+
+        let tokens = try parser.parse()
+
+        XCTAssertEqual(tokens.count, 2)
+
+        let offset = try XCTUnwrap(tokens[0] as? TDSTokens.OffsetToken)
+        XCTAssertEqual(offset.identifier, 0x0810)
+        XCTAssertEqual(offset.offset, 0x1038)
+
+        let colInfo = try XCTUnwrap(tokens[1] as? TDSTokens.ColInfoToken)
+        XCTAssertEqual(colInfo.data.count, 1 + 1 + 1 + 1 + utf16Bytes.count)
     }
 
     func testParseTVPRow() throws {
@@ -93,38 +129,12 @@ final class TDSTokenOperationsMiscTokensTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(v.readInteger(endianness: Endianness.little, as: Int32.self), 42)
     }
 
-    func testParseColumnStatusToken() throws {
-        var buffer = ByteBufferAllocator().buffer(capacity: 8)
-        buffer.writeInteger(TDSTokens.TokenType.columnStatus.rawValue)
-        buffer.writeInteger(UInt16(4), endianness: .little) // payload length
-        buffer.writeInteger(UInt16(0x1234), endianness: .little)
-        buffer.writeBytes([0xAA, 0xBB])
-
-        let stream = TDSStreamParser()
-        stream.buffer.writeBuffer(&buffer)
-        let parser = TDSTokenOperations(streamParser: stream, logger: .init(label: "test"))
-
-        let tokens = try parser.parse()
-        XCTAssertEqual(tokens.count, 1)
-
-        let status = try XCTUnwrap(tokens.first as? TDSTokens.ColumnStatusToken)
-        XCTAssertEqual(status.status, 0x1234)
-        XCTAssertEqual(status.data, [0xAA, 0xBB])
-    }
-
-    func testParseUnknownTokenPayloads() throws {
-        var buffer = ByteBufferAllocator().buffer(capacity: 18)
-        buffer.writeInteger(TDSTokens.TokenType.unknown0x61.rawValue)
-        buffer.writeInteger(UInt16(2), endianness: .little)
-        buffer.writeBytes([0x01, 0x02])
-
-        buffer.writeInteger(TDSTokens.TokenType.unknown0x74.rawValue)
-        buffer.writeInteger(UInt16(1), endianness: .little)
-        buffer.writeBytes([0x03])
-
-        buffer.writeInteger(TDSTokens.TokenType.unknown0xc1.rawValue)
-        buffer.writeInteger(UInt16(3), endianness: .little)
-        buffer.writeBytes([0x04, 0x05, 0x06])
+    func testRestored0x61TokenDoesNotCorruptFollowingStream() throws {
+        var buffer = ByteBufferAllocator().buffer(capacity: 6)
+        buffer.writeBytes([0x61, 0x02, 0x00, 0x01, 0x02, TDSTokens.TokenType.done.rawValue])
+        buffer.writeInteger(UInt16(0), endianness: .little)
+        buffer.writeInteger(UInt16(0), endianness: .little)
+        buffer.writeInteger(UInt64(0), endianness: .little)
 
         let stream = TDSStreamParser()
         stream.buffer.writeBuffer(&buffer)
@@ -132,9 +142,8 @@ final class TDSTokenOperationsMiscTokensTests: XCTestCase, @unchecked Sendable {
 
         let tokens = try parser.parse()
 
-        XCTAssertEqual(tokens.count, 3)
+        XCTAssertEqual(tokens.count, 2)
         XCTAssertTrue(tokens[0] is TDSTokens.Unknown0x61Token)
-        XCTAssertTrue(tokens[1] is TDSTokens.Unknown0x74Token)
-        XCTAssertTrue(tokens[2] is TDSTokens.Unknown0xC1Token)
+        XCTAssertTrue(tokens[1] is TDSTokens.DoneToken)
     }
 }

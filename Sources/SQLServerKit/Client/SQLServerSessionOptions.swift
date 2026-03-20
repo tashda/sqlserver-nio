@@ -7,12 +7,17 @@ extension SQLServerConnection {
         public var ansiPadding: Bool
         public var ansiWarnings: Bool
         public var arithAbort: Bool
+        public var xactAbort: Bool
         public var concatNullYieldsNull: Bool
         public var implicitTransactions: Bool
         public var nocount: Bool
         public var fmtOnlyOff: Bool
         public var language: String?
         public var dateFormat: String?
+        /// Default query timeout in seconds. When set, all queries are automatically
+        /// wrapped with a timeout that sends a TDS ATTENTION signal on expiry.
+        /// `nil` means no default timeout (queries wait indefinitely).
+        public var defaultQueryTimeout: TimeInterval?
         public var additionalStatements: [String]
 
         public init(
@@ -21,12 +26,14 @@ extension SQLServerConnection {
             ansiPadding: Bool = true,
             ansiWarnings: Bool = true,
             arithAbort: Bool = true,
+            xactAbort: Bool = true,
             concatNullYieldsNull: Bool = true,
             implicitTransactions: Bool = false,
             nocount: Bool = true,
             fmtOnlyOff: Bool = true,
             language: String? = nil,
             dateFormat: String? = nil,
+            defaultQueryTimeout: TimeInterval? = nil,
             additionalStatements: [String] = []
         ) {
             self.ansiNulls = ansiNulls
@@ -34,12 +41,14 @@ extension SQLServerConnection {
             self.ansiPadding = ansiPadding
             self.ansiWarnings = ansiWarnings
             self.arithAbort = arithAbort
+            self.xactAbort = xactAbort
             self.concatNullYieldsNull = concatNullYieldsNull
             self.implicitTransactions = implicitTransactions
             self.nocount = nocount
             self.fmtOnlyOff = fmtOnlyOff
             self.language = language
             self.dateFormat = dateFormat
+            self.defaultQueryTimeout = defaultQueryTimeout
             self.additionalStatements = additionalStatements
         }
 
@@ -50,12 +59,14 @@ extension SQLServerConnection {
                 ansiPadding: true,
                 ansiWarnings: true,
                 arithAbort: true,
+                xactAbort: true,
                 concatNullYieldsNull: true,
                 implicitTransactions: false,
                 nocount: true,
                 fmtOnlyOff: true,
                 language: nil,
                 dateFormat: nil,
+                defaultQueryTimeout: nil,
                 additionalStatements: []
             )
         }
@@ -66,6 +77,7 @@ extension SQLServerConnection {
                 let value = enabled ? "ON" : "OFF"
                 statements.append("SET \(keyword) \(value);")
             }
+            append("XACT_ABORT", xactAbort)
             append("ANSI_NULLS", ansiNulls)
             append("QUOTED_IDENTIFIER", quotedIdentifier)
             append("ANSI_PADDING", ansiPadding)
