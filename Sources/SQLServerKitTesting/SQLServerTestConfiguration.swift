@@ -10,7 +10,7 @@ public func makeSQLServerConnectionConfiguration() -> SQLServerConnection.Config
         setenv("TDS_HOSTNAME", "127.0.0.1", 1)
         setenv("TDS_PORT", env("TDS_DOCKER_PORT") ?? "14331", 1)
         do {
-            try SQLServerDockerManager.shared.startIfNeeded()
+            _ = try ensureSQLServerTestFixture(requireAdventureWorks: envFlagEnabled("TDS_LOAD_ADVENTUREWORKS"))
         } catch {
             fatalError("Failed to start SQL Server Docker test environment: \(error)")
         }

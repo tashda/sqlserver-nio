@@ -12,7 +12,7 @@ open class SQLServerIntegrationTestCase: XCTestCase {
         XCTAssertTrue(isLoggingConfigured)
 
         if envFlagEnabled("USE_DOCKER") {
-            try SQLServerDockerManager.shared.startIfNeeded()
+            _ = try ensureSQLServerTestFixture(requireAdventureWorks: envFlagEnabled("TDS_LOAD_ADVENTUREWORKS"))
         }
 
         TestEnvironmentManager.loadEnvironmentVariables()
