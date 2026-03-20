@@ -260,6 +260,19 @@ public final class SQLServerMetadataNamespace: @unchecked Sendable {
         }
     }
 
+    // MARK: - Synonyms
+
+    @available(macOS 12.0, *)
+    public func listSynonyms(
+        database: String? = nil,
+        schema: String? = nil,
+        includeComments: Bool = false
+    ) async throws -> [SynonymMetadata] {
+        try await client.withConnection { connection in
+            try await connection.listSynonyms(database: database, schema: schema, includeComments: includeComments)
+        }
+    }
+
     // MARK: - Routines
 
     @available(macOS 12.0, *)

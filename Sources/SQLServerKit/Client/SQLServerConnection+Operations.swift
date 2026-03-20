@@ -130,6 +130,11 @@ extension SQLServerConnection {
     }
 
     @available(macOS 12.0, *)
+    public func listSynonyms(database: String? = nil, schema: String? = nil, includeComments: Bool = false) async throws -> [SynonymMetadata] {
+        try await listSynonyms(database: database, schema: schema, includeComments: includeComments).get()
+    }
+
+    @available(macOS 12.0, *)
     public func fetchObjectDefinitions(_ identifiers: [SQLServerMetadataObjectIdentifier]) async throws -> [ObjectDefinition] {
         try await fetchObjectDefinitions(identifiers).get()
     }
@@ -219,6 +224,10 @@ extension SQLServerConnection {
 
     internal func listFunctions(database: String? = nil, schema: String? = nil, includeComments: Bool = false) -> EventLoopFuture<[RoutineMetadata]> {
         metadataClient.listFunctions(database: database, schema: schema, includeComments: includeComments)
+    }
+
+    internal func listSynonyms(database: String? = nil, schema: String? = nil, includeComments: Bool = false) -> EventLoopFuture<[SynonymMetadata]> {
+        metadataClient.listSynonyms(database: database, schema: schema, includeComments: includeComments)
     }
 
     internal func fetchObjectDefinitions(_ identifiers: [SQLServerMetadataObjectIdentifier]) -> EventLoopFuture<[ObjectDefinition]> {
