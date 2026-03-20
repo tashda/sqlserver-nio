@@ -92,11 +92,14 @@ extension SQLServerAgentOperations {
                         let nextRunDateInt = row.column("next_run_date")?.int
                         let nextRunTimeInt = row.column("next_run_time")?.int
                         let hasSchedule = (row.column("has_schedule")?.int ?? 0) != 0
+                        let notifyLevelEmail = row.column("notify_level_email")?.int ?? 0
+                        let notifyEmailOperator = row.column("notify_email_operator_name")?.string
+                        let notifyLevelEventlog = row.column("notify_level_eventlog")?.int ?? 0
 
                         let lastRunDate = self.convertSqlDateTime(date: lastRunDateInt, time: lastRunTimeInt) ?? frozenLastRunByJob[jobId]
                         let nextRunDate = self.convertSqlDateTime(date: nextRunDateInt, time: nextRunTimeInt) ?? frozenNextRunByJob[jobId]
 
-                        return SQLServerAgentJobDetail(jobId: jobId, name: name, description: description, enabled: enabled, ownerLoginName: ownerLoginName, categoryName: categoryName, startStepId: startStepId, lastRunOutcome: lastRunOutcome, lastRunDate: lastRunDate, nextRunDate: nextRunDate, hasSchedule: hasSchedule)
+                        return SQLServerAgentJobDetail(jobId: jobId, name: name, description: description, enabled: enabled, ownerLoginName: ownerLoginName, categoryName: categoryName, startStepId: startStepId, lastRunOutcome: lastRunOutcome, lastRunDate: lastRunDate, nextRunDate: nextRunDate, hasSchedule: hasSchedule, notifyLevelEmail: notifyLevelEmail, notifyEmailOperatorName: notifyEmailOperator, notifyLevelEventlog: notifyLevelEventlog)
                     }
                 }
             }

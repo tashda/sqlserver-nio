@@ -69,6 +69,33 @@ extension SQLServerAgentOperations {
         return poll(attempts: 40)
     }
 
+    /// Returns the currently executing step for a specific running job, or `nil` if the job is not running.
+    internal func getActiveJobStep(jobName: String) -> EventLoopFuture<SQLServerAgentActiveStep?> {
+        let sql = """
+        SELECT
+            j.name AS job_name,
+            a.last_executed_step_id,
+            s.step_name,
+            a.start_execution_date
+        FROM msdb.dbo.sysjobactivity AS a
+        INNER JOIN msdb.dbo.sysjobs AS j ON j.job_id = a.job_id
+        LEFT JOIN msdb.dbo.sysjobsteps AS s ON s.job_id = a.job_id AND s.step_id = a.last_executed_step_id
+        WHERE j.name = N'\(Self.escapeLiteral(jobName))'
+          AND a.start_execution_date IS NOT NULL
+          AND a.stop_execution_date IS NULL
+          AND a.session_id = (SELECT MAX(session_id) FROM msdb.dbo.syssessions)
+        ORDER BY a.start_execution_date DESC;
+        """
+        return run(sql).map { rows in
+            guard let row = rows.first else { return nil }
+            let name = row.column("job_name")?.string ?? jobName
+            let stepId = row.column("last_executed_step_id")?.int ?? 0
+            let stepName = row.column("step_name")?.string
+            let startDate = row.column("start_execution_date")?.date
+            return SQLServerAgentActiveStep(jobName: name, lastExecutedStepId: stepId, stepName: stepName, startExecutionDate: startDate)
+        }
+    }
+
     internal func listErrorLogs() -> EventLoopFuture<[SQLServerAgentErrorLog]> {
         run("EXEC xp_enumerrorlogs 2;").map { rows in
             rows.compactMap { row in
