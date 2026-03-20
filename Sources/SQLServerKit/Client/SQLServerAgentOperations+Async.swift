@@ -176,6 +176,11 @@ extension SQLServerAgentOperations {
     }
 
     @available(macOS 12.0, *)
+    public func getActiveJobStep(jobName: String) async throws -> SQLServerAgentActiveStep? {
+        try await getActiveJobStep(jobName: jobName).get()
+    }
+
+    @available(macOS 12.0, *)
     public func listErrorLogs() async throws -> [SQLServerAgentErrorLog] {
         try await listErrorLogs().get()
     }
