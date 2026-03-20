@@ -19,6 +19,7 @@ public struct SQLServerSchemaStructure: Sendable {
     public let functions: [RoutineMetadata]
     public let procedures: [RoutineMetadata]
     public let triggers: [TriggerMetadata]
+    public let synonyms: [SynonymMetadata]
 
     public init(
         name: String,
@@ -26,7 +27,8 @@ public struct SQLServerSchemaStructure: Sendable {
         views: [SQLServerTableStructure],
         functions: [RoutineMetadata],
         procedures: [RoutineMetadata],
-        triggers: [TriggerMetadata]
+        triggers: [TriggerMetadata],
+        synonyms: [SynonymMetadata] = []
     ) {
         self.name = name
         self.tables = tables
@@ -34,6 +36,7 @@ public struct SQLServerSchemaStructure: Sendable {
         self.functions = functions
         self.procedures = procedures
         self.triggers = triggers
+        self.synonyms = synonyms
     }
 }
 

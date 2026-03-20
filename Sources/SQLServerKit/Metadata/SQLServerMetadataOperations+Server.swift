@@ -50,7 +50,7 @@ extension SQLServerMetadataOperations {
     ) -> EventLoopFuture<SQLServerSchemaStructure> {
         let resolvedDatabase = effectiveDatabase(database)
 
-        // Launch all 6 queries in parallel — tables aren't needed until the
+        // Launch all 7 queries in parallel — tables aren't needed until the
         // grouping step at the end, so there's no reason to wait for them first.
         let tablesF = listTables(database: resolvedDatabase, schema: schema, includeComments: includeComments)
         let columnsF = listColumnsForSchema(database: resolvedDatabase, schema: schema, includeComments: includeComments)
@@ -58,9 +58,10 @@ extension SQLServerMetadataOperations {
         let funcF = listFunctions(database: resolvedDatabase, schema: schema, includeComments: includeComments)
         let procF = listProcedures(database: resolvedDatabase, schema: schema, includeComments: includeComments)
         let trigF = listTriggers(database: resolvedDatabase, schema: schema, table: nil, includeComments: includeComments)
+        let synF = listSynonyms(database: resolvedDatabase, schema: schema, includeComments: includeComments)
 
-        return tablesF.and(columnsF).and(pkF).and(funcF).and(procF).and(trigF).map { data in
-            let (((((tables, columns), primaryKeys), functions), procedures), triggers) = data
+        return tablesF.and(columnsF).and(pkF).and(funcF).and(procF).and(trigF).and(synF).map { data in
+            let ((((((tables, columns), primaryKeys), functions), procedures), triggers), synonyms) = data
             let tableCandidates = tables.filter { $0.kind == .table || $0.kind == .view }
 
             var columnsByTable: [String: [ColumnMetadata]] = [:]
@@ -76,7 +77,7 @@ extension SQLServerMetadataOperations {
                 let structure = SQLServerTableStructure(table: table, columns: cols, primaryKey: pkByTable[key])
                 if table.isView { viewStructures.append(structure) } else { tableStructures.append(structure) }
             }
-            return SQLServerSchemaStructure(name: schema, tables: tableStructures, views: viewStructures, functions: functions, procedures: procedures, triggers: triggers)
+            return SQLServerSchemaStructure(name: schema, tables: tableStructures, views: viewStructures, functions: functions, procedures: procedures, triggers: triggers, synonyms: synonyms)
         }
     }
 
@@ -116,10 +117,12 @@ extension SQLServerMetadataOperations {
                 .flatMapError { _ in self.eventLoop.makeSucceededFuture([RoutineMetadata]()) }
             let trigF = self.listTriggers(database: resolvedDatabase, schema: nil, table: nil, includeComments: includeComments)
                 .flatMapError { _ in self.eventLoop.makeSucceededFuture([TriggerMetadata]()) }
+            let synF = self.listSynonyms(database: resolvedDatabase, schema: nil, includeComments: includeComments)
+                .flatMapError { _ in self.eventLoop.makeSucceededFuture([SynonymMetadata]()) }
 
             // Wait for all parallel queries, then group results by schema.
-            return columnsF.and(pkF).and(funcF).and(procF).and(trigF).map { data in
-                let ((((columns, primaryKeys), functions), procedures), triggers) = data
+            return columnsF.and(pkF).and(funcF).and(procF).and(trigF).and(synF).map { data in
+                let (((((columns, primaryKeys), functions), procedures), triggers), synonyms) = data
 
                 func objectKey(schema: String, table: String) -> String {
                     "\(schema.lowercased())|\(table.lowercased())"
@@ -151,6 +154,8 @@ extension SQLServerMetadataOperations {
                 for p in procedures { procsBySchema[p.schema.lowercased(), default: []].append(p) }
                 var trigsBySchema: [String: [TriggerMetadata]] = [:]
                 for t in triggers { trigsBySchema[t.schema.lowercased(), default: []].append(t) }
+                var synsBySchema: [String: [SynonymMetadata]] = [:]
+                for syn in synonyms { synsBySchema[syn.schema.lowercased(), default: []].append(syn) }
 
                 // Assemble per-schema structures.
                 let schemaStructures: [SQLServerSchemaStructure] = schemas.map { schema in
@@ -172,7 +177,8 @@ extension SQLServerMetadataOperations {
                         views: viewStructures,
                         functions: funcsBySchema[key] ?? [],
                         procedures: procsBySchema[key] ?? [],
-                        triggers: trigsBySchema[key] ?? []
+                        triggers: trigsBySchema[key] ?? [],
+                        synonyms: synsBySchema[key] ?? []
                     )
                 }
 
