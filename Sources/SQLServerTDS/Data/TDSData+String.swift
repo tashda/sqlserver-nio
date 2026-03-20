@@ -68,7 +68,14 @@ extension TDSData {
             if bytes.isEmpty {
                 return ""
             }
-            if let utf8 = String(bytes: bytes, encoding: .utf8) {
+            // Decode using the collation's code page (e.g. Windows-1252 for Danish/Western European).
+            // UTF-8 collations (SQL Server 2019+) will correctly resolve to .utf8 encoding.
+            let encoding = TDSCollation.encoding(from: self.metadata.collation)
+            if let decoded = String(bytes: bytes, encoding: encoding) {
+                return decoded
+            }
+            // Fallback: try UTF-8, then lossy UTF-8
+            if encoding != .utf8, let utf8 = String(bytes: bytes, encoding: .utf8) {
                 return utf8
             }
             return String(decoding: bytes, as: UTF8.self)
