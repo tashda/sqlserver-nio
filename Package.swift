@@ -63,6 +63,14 @@ let package = Package(
             ],
             path: "Sources/SQLServerKitTesting"
         ),
+        .target(
+            name: "SQLServerKitXCTestSupport",
+            dependencies: [
+                "SQLServerKit",
+                "SQLServerKitTesting",
+            ],
+            path: "Sources/SQLServerKitXCTestSupport"
+        ),
         .executableTarget(
             name: "SQLServerFixtureTool",
             dependencies: ["SQLServerKitTesting"],
@@ -73,6 +81,7 @@ let package = Package(
             dependencies: [
                 "SQLServerKit",
                 "SQLServerKitTesting",
+                "SQLServerKitXCTestSupport",
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
                 .product(name: "NIOTestUtils", package: "swift-nio"),
@@ -100,6 +109,7 @@ let package = Package(
             dependencies: [
                 "SQLServerTDS",
                 "SQLServerKitTesting",
+                "SQLServerKitXCTestSupport",
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
                 .product(name: "NIOTestUtils", package: "swift-nio"),
