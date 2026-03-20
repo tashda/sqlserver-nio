@@ -37,12 +37,22 @@ jobs:
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.base_ref != 'main')
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      DOCKER_CONFIG: ${{ runner.temp }}/docker-config
     steps:
       - uses: actions/checkout@v5
       - uses: swift-actions/setup-swift@v3
         with:
           swift-version: "6.2.4"
           skip-verify-signature: true
+      - name: Docker Preflight
+        env:
+          TDS_VERSION: "2022-latest"
+        run: |
+          mkdir -p "$DOCKER_CONFIG"
+          printf '{}\n' > "$DOCKER_CONFIG/config.json"
+          docker info
+          docker pull "mcr.microsoft.com/mssql/server:${TDS_VERSION}"
       - name: Bootstrap validated SQL Server fixture
         env:
           USE_DOCKER: "1"
@@ -75,6 +85,8 @@ jobs:
     if: github.event_name == 'pull_request' && github.base_ref == 'main'
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      DOCKER_CONFIG: ${{ runner.temp }}/docker-config
     strategy:
       fail-fast: false
       matrix:
@@ -101,6 +113,22 @@ jobs:
         with:
           swift-version: "6.2.4"
           skip-verify-signature: true
+      - name: Docker Preflight
+        env:
+          TDS_VERSION: ${{ matrix.version }}
+        run: |
+          mkdir -p "$DOCKER_CONFIG"
+          printf '{}\n' > "$DOCKER_CONFIG/config.json"
+          docker info
+          case "$TDS_VERSION" in
+            2008*|2012*|2014*|2016*)
+              IMAGE="mcr.microsoft.com/mssql/server:2017-latest"
+              ;;
+            *)
+              IMAGE="mcr.microsoft.com/mssql/server:${TDS_VERSION}"
+              ;;
+          esac
+          docker pull "$IMAGE"
       - name: Bootstrap validated SQL Server fixture
         env:
           USE_DOCKER: "1"
