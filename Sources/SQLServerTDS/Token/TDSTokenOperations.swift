@@ -21,8 +21,13 @@ public class TDSTokenOperations: @unchecked Sendable {
         .colInfo,
         .offset,
         .dataClassification,
+        .sqlResultColumnSources,
+        .unknown0x61,
+        .unknown0x74,
+        .unknown0xc1,
         .returnStatus,
-        .returnValue
+        .returnValue,
+        .columnStatus
     ]
 
     internal enum State {
@@ -50,7 +55,7 @@ public class TDSTokenOperations: @unchecked Sendable {
                 continue
             }
 
-            if nextByte == 0x04 {
+            if nextByte == TDSTokens.TokenType.unknown0x04.rawValue {
                 logger.debug("Skipping unknown token 0x04 at position \(streamParser.position)")
                 _ = streamParser.readUInt8()
                 continue
@@ -180,12 +185,32 @@ public class TDSTokenOperations: @unchecked Sendable {
                 let bytes = data.readBytes(length: data.readableBytes) ?? []
                 token = TDSTokens.ColInfoToken(data: bytes)
             case .offset:
-                var data = try TDSTokenOperations.readLengthPrefixedPayload(from: &payload, lengthFieldBytes: 2)
-                let bytes = data.readBytes(length: data.readableBytes) ?? []
-                token = TDSTokens.OffsetToken(data: bytes)
+                guard let identifier = payload.readInteger(endianness: .little, as: UInt16.self),
+                      let offset = payload.readInteger(endianness: .little, as: UInt16.self) else {
+                    throw TDSError.needMoreData
+                }
+                token = TDSTokens.OffsetToken(identifier: identifier, offset: offset)
             case .dataClassification:
                 let data = try TDSTokenOperations.readLengthPrefixedPayload(from: &payload, lengthFieldBytes: 2)
                 token = TDSTokens.DataClassificationToken(payload: data)
+            case .sqlResultColumnSources:
+                let data = try TDSTokenOperations.readLengthPrefixedPayload(from: &payload, lengthFieldBytes: 4)
+                token = TDSTokens.SQLResultColumnSourcesToken(payload: data)
+            case .unknown0x61:
+                let data = try TDSTokenOperations.readLengthPrefixedPayload(from: &payload, lengthFieldBytes: 2)
+                token = TDSTokens.Unknown0x61Token(payload: data)
+            case .unknown0x74:
+                let data = try TDSTokenOperations.readLengthPrefixedPayload(from: &payload, lengthFieldBytes: 2)
+                token = TDSTokens.Unknown0x74Token(payload: data)
+            case .unknown0xc1:
+                let data = try TDSTokenOperations.readLengthPrefixedPayload(from: &payload, lengthFieldBytes: 2)
+                token = TDSTokens.Unknown0xC1Token(payload: data)
+            case .columnStatus:
+                var data = try TDSTokenOperations.readLengthPrefixedPayload(from: &payload, lengthFieldBytes: 2)
+                let bytes = data.readBytes(length: data.readableBytes) ?? []
+                let status = bytes.count >= 2 ? UInt16(bytes[0]) | UInt16(bytes[1]) << 8 : 0
+                let statusBytes = bytes.count >= 4 ? Array(bytes.dropFirst(2)) : []
+                token = TDSTokens.ColumnStatusToken(status: status, data: statusBytes)
             case .returnStatus:
                 guard let value = payload.readInteger(endianness: .little, as: Int32.self) else {
                     throw TDSError.needMoreData
