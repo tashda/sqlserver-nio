@@ -25,6 +25,7 @@ jobs:
           patch=$((patch + 1))
           NEXT_TAG="v${major}.${minor}.${patch}"
           echo "Next tag: $NEXT_TAG"
+          echo "previous_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
           echo "tag=$NEXT_TAG" >> $GITHUB_OUTPUT
 
       - name: Create Git Tag
@@ -34,9 +35,18 @@ jobs:
           git tag ${{ steps.version.outputs.tag }}
           git push origin ${{ steps.version.outputs.tag }}
 
+      - name: Generate Release Notes
+        run: |
+          python3 scripts/generate_release_notes.py \
+            --repo-key sqlserver-nio \
+            --repo-name sqlserver-nio \
+            --new-tag "${{ steps.version.outputs.tag }}" \
+            --previous-tag "${{ steps.version.outputs.previous_tag }}" \
+            --output release-notes.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: Release ${{ steps.version.outputs.tag }}
-          generate_release_notes: true
+          body_path: release-notes.md
