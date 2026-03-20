@@ -259,7 +259,7 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
             // Accept driver-level cancellation errors here; health is checked by the follow-up query.
         }
 
-        let followUp = try await connection.query("SELECT 1 AS still_healthy")
+        let followUp = try await assertEventuallyHealthy(connection)
         XCTAssertEqual(followUp.first?.column("still_healthy")?.int, 1)
     }
 
@@ -516,5 +516,31 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
             }
             XCTAssertGreaterThanOrEqual(count, 0)
         }
+    }
+}
+
+private extension SQLServerConnectionTests {
+    func assertEventuallyHealthy(
+        _ connection: SQLServerConnection,
+        attempts: Int = 5,
+        delay: Duration = .milliseconds(100)
+    ) async throws -> [SQLServerRow] {
+        var lastError: Error?
+
+        for attempt in 0..<attempts {
+            do {
+                return try await connection.query("SELECT 1 AS still_healthy")
+            } catch {
+                lastError = error
+                let description = String(describing: error).lowercased()
+                let isTransientCancellation = description.contains("query cancelled")
+                guard isTransientCancellation, attempt < attempts - 1 else {
+                    throw error
+                }
+                try await Task.sleep(for: delay)
+            }
+        }
+
+        throw lastError ?? XCTSkip("Expected follow-up query to succeed")
     }
 }

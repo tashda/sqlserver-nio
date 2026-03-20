@@ -38,10 +38,12 @@ final class SQLServerAppMetadataLoadingTests: XCTestCase, @unchecked Sendable {
 
     @available(macOS 12.0, *)
     func testAppMetadataLoadForAdventureWorks2022() async throws {
-        guard env("TDS_AW_DATABASE") != nil else {
-            throw XCTSkip("Skipping: TDS_AW_DATABASE not set")
+        let dbName: String
+        do {
+            dbName = try await requireDatabaseNamedInEnvironment("TDS_AW_DATABASE", using: client)
+        } catch let error as SQLServerFixtureUnavailable {
+            throw XCTSkip(error.message)
         }
-        let dbName = env("TDS_AW_DATABASE")!
 
         try await withTimeout(operationTimeout) {
             try await self.client.withConnection { connection in
