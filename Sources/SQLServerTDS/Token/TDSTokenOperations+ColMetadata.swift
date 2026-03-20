@@ -58,9 +58,11 @@ extension TDSTokenOperations {
                 length = len
             }
 
-            // Skip collation, precision, scale if present for length calculation, but here we just need to advance
+            // Capture collation bytes for string types (5 bytes: LCID + ColFlags + SortId)
+            var collation: [UInt8] = []
             if dataType == .varchar || dataType == .char || dataType == .nvarchar || dataType == .nchar || dataType == .text || dataType == .nText {
-                _ = buffer.readBytes(length: 5) // collation
+                guard let bytes = buffer.readBytes(length: 5) else { throw TDSError.needMoreData }
+                collation = bytes
             }
             
             var precision: UInt8 = 0
@@ -101,6 +103,7 @@ extension TDSTokenOperations {
                     length: length,
                     precision: precision,
                     scale: scale,
+                    collation: collation,
                     colName: colName,
                     udtInfo: udtInfo
                 )
