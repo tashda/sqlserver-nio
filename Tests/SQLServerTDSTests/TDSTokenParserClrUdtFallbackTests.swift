@@ -84,4 +84,52 @@ final class TDSTokenOperationsClrUdtFallbackTests: XCTestCase, @unchecked Sendab
         }
         XCTAssertNil(row.colData[0].data)
     }
+
+    func testColMetadataClrUdtConsumesFullTypeInfo() throws {
+        var buffer = ByteBufferAllocator().buffer(capacity: 256)
+        buffer.writeInteger(TDSTokens.TokenType.colMetadata.rawValue)
+        buffer.writeInteger(UInt16(2), endianness: .little)
+
+        // Column 1: hierarchyid CLR UDT
+        buffer.writeInteger(UInt32(0), endianness: .little) // userType
+        buffer.writeInteger(UInt16(0), endianness: .little) // flags
+        buffer.writeInteger(TDSDataType.clrUdt.rawValue)
+        buffer.writeInteger(UInt16(128), endianness: .little) // max length
+        writeBUsVar("sys", to: &buffer)
+        writeBUsVar("dbo", to: &buffer)
+        writeBUsVar("hierarchyid", to: &buffer)
+        writeUSVar("Microsoft.SqlServer.Types", to: &buffer)
+        writeBUsVar("OrganizationNode", to: &buffer)
+
+        // Column 2: regular INT column that previously got desynchronized
+        buffer.writeInteger(UInt32(0), endianness: .little)
+        buffer.writeInteger(UInt16(0), endianness: .little)
+        buffer.writeInteger(TDSDataType.int.rawValue)
+        writeBUsVar("BusinessEntityID", to: &buffer)
+
+        var copy = buffer
+        let token = try TDSTokenOperations.parseColMetadataToken(from: &copy)
+
+        XCTAssertEqual(token.colData.count, 2)
+        XCTAssertEqual(token.colData[0].dataType, .clrUdt)
+        XCTAssertEqual(token.colData[0].colName, "OrganizationNode")
+        XCTAssertEqual(token.colData[1].dataType, .int)
+        XCTAssertEqual(token.colData[1].colName, "BusinessEntityID")
+    }
+
+    private func writeBUsVar(_ value: String, to buffer: inout ByteBuffer) {
+        buffer.writeInteger(UInt8(value.utf16.count))
+        buffer.writeBytes(utf16leBytes(for: value))
+    }
+
+    private func writeUSVar(_ value: String, to buffer: inout ByteBuffer) {
+        buffer.writeInteger(UInt16(value.utf16.count), endianness: .little)
+        buffer.writeBytes(utf16leBytes(for: value))
+    }
+
+    private func utf16leBytes(for value: String) -> [UInt8] {
+        value.utf16.flatMap { codeUnit in
+            [UInt8(codeUnit & 0x00ff), UInt8((codeUnit & 0xff00) >> 8)]
+        }
+    }
 }

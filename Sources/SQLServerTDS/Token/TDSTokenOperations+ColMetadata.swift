@@ -85,6 +85,8 @@ extension TDSTokenOperations {
                         throw TDSError.needMoreData
                     }
                 }
+            } else if dataType == .clrUdt {
+                try consumeUDTTypeInfo(from: &buffer)
             }
 
             guard let colNameLen: UInt8 = buffer.readInteger() else { throw TDSError.needMoreData }
@@ -94,5 +96,35 @@ extension TDSTokenOperations {
         }
 
         return TDSTokens.ColMetadataToken(colData: colData)
+    }
+
+    private static func consumeUDTTypeInfo(from buffer: inout ByteBuffer) throws {
+        guard let databaseNameLength: UInt8 = buffer.readInteger() else {
+            throw TDSError.needMoreData
+        }
+        guard buffer.readUTF16String(length: Int(databaseNameLength) * 2) != nil else {
+            throw TDSError.needMoreData
+        }
+
+        guard let schemaNameLength: UInt8 = buffer.readInteger() else {
+            throw TDSError.needMoreData
+        }
+        guard buffer.readUTF16String(length: Int(schemaNameLength) * 2) != nil else {
+            throw TDSError.needMoreData
+        }
+
+        guard let typeNameLength: UInt8 = buffer.readInteger() else {
+            throw TDSError.needMoreData
+        }
+        guard buffer.readUTF16String(length: Int(typeNameLength) * 2) != nil else {
+            throw TDSError.needMoreData
+        }
+
+        guard let assemblyNameLength: UInt16 = buffer.readInteger(endianness: .little) else {
+            throw TDSError.needMoreData
+        }
+        guard buffer.readUTF16String(length: Int(assemblyNameLength) * 2) != nil else {
+            throw TDSError.needMoreData
+        }
     }
 }
