@@ -1,6 +1,6 @@
-#if canImport(XCTest)
 import XCTest
 import SQLServerKit
+import SQLServerKitTesting
 
 /// Base class for SQL Server integration tests.
 /// Handles boilerplate setUp and tearDown for a live server-backed client.
@@ -31,4 +31,3 @@ open class SQLServerIntegrationTestCase: XCTestCase {
         client = nil
     }
 }
-#endif

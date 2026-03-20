@@ -4,9 +4,6 @@ import Darwin
 #elseif canImport(Glibc)
 import Glibc
 #endif
-#if canImport(XCTest)
-import XCTest
-#endif
 
 /// A utility to manage a SQL Server instance via Docker for integration testing.
 public class SQLServerDockerManager: @unchecked Sendable {
