@@ -47,6 +47,10 @@ public class SQLServerDockerManager: @unchecked Sendable {
     private var adventureWorksMarkerPath: String {
         (NSTemporaryDirectory() as NSString).appendingPathComponent("\(containerName)-AdventureWorks.ready")
     }
+
+    private var adventureWorksDatabaseName: String {
+        environmentValue("TDS_AW_DATABASE") ?? "AdventureWorks"
+    }
     
     private init() {}
 
@@ -115,14 +119,11 @@ public class SQLServerDockerManager: @unchecked Sendable {
                 try setCompatibilityLevel(compatibilityLevel, database: "master", dockerPath: dockerPath)
             }
 
-            if envFlagEnabled("TDS_LOAD_ADVENTUREWORKS"),
-               !FileManager.default.fileExists(atPath: adventureWorksMarkerPath) {
-                if reusedExistingContainer {
-                    print("♻️ Assuming AdventureWorks is already present in reused container \(containerName).")
-                } else {
-                    try loadAdventureWorks(dockerPath: dockerPath)
-                }
-                _ = FileManager.default.createFile(atPath: adventureWorksMarkerPath, contents: Data(), attributes: nil)
+            if envFlagEnabled("TDS_LOAD_ADVENTUREWORKS") {
+                try ensureAdventureWorksAvailable(
+                    dockerPath: dockerPath,
+                    reusedExistingContainer: reusedExistingContainer
+                )
             }
 
             exportEnvironment()
@@ -381,6 +382,73 @@ public class SQLServerDockerManager: @unchecked Sendable {
             try setCompatibilityLevel(compatibilityLevel, database: "AdventureWorks", dockerPath: dockerPath)
         }
         print("✅ AdventureWorks restored.")
+    }
+
+    private func ensureAdventureWorksAvailable(dockerPath: String, reusedExistingContainer: Bool) throws {
+        let markerExists = FileManager.default.fileExists(atPath: adventureWorksMarkerPath)
+        let databaseExists = try adventureWorksExists(dockerPath: dockerPath)
+
+        if databaseExists {
+            if reusedExistingContainer {
+                print("✅ Verified \(adventureWorksDatabaseName) is already present in reused container \(containerName).")
+            }
+            if !markerExists {
+                _ = FileManager.default.createFile(atPath: adventureWorksMarkerPath, contents: Data(), attributes: nil)
+            }
+            return
+        }
+
+        if markerExists {
+            print("⚠️ AdventureWorks marker exists but database is missing. Re-restoring fixture.")
+            try? FileManager.default.removeItem(atPath: adventureWorksMarkerPath)
+        } else if reusedExistingContainer {
+            print("♻️ Reused container is missing \(adventureWorksDatabaseName). Restoring fixture now.")
+        }
+
+        try loadAdventureWorks(dockerPath: dockerPath)
+
+        guard try adventureWorksExists(dockerPath: dockerPath) else {
+            throw NSError(
+                domain: "SQLServerDockerManager",
+                code: 12,
+                userInfo: [NSLocalizedDescriptionKey: "AdventureWorks restore completed but database '\(adventureWorksDatabaseName)' is still unavailable."]
+            )
+        }
+
+        _ = FileManager.default.createFile(atPath: adventureWorksMarkerPath, contents: Data(), attributes: nil)
+    }
+
+    private func adventureWorksExists(dockerPath: String) throws -> Bool {
+        let sqlcmdPath = self.sqlcmdPath ?? "/opt/mssql-tools/bin/sqlcmd"
+        let escapedDatabaseName = adventureWorksDatabaseName.replacingOccurrences(of: "'", with: "''")
+        let query = "SET NOCOUNT ON; SELECT CASE WHEN DB_ID(N'\(escapedDatabaseName)') IS NULL THEN 0 ELSE 1 END;"
+
+        var arguments = ["exec", containerId!, sqlcmdPath, "-S", "localhost", "-U", username, "-P", password, "-h", "-1", "-W"]
+        if sqlcmdPath.contains("mssql-tools18") {
+            arguments.append("-C")
+        }
+        arguments += ["-d", "master", "-Q", query]
+
+        let process = createDockerProcess(executable: dockerPath, arguments: arguments)
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
+        try process.run()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else {
+            let errOutput = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            throw NSError(
+                domain: "SQLServerDockerManager",
+                code: 13,
+                userInfo: [NSLocalizedDescriptionKey: "Failed to verify AdventureWorks fixture availability: \(errOutput)"]
+            )
+        }
+
+        let output = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return output == "1"
     }
     
     public func runSQL(_ sql: String, dockerPath: String) throws {

@@ -119,8 +119,20 @@ final class SQLServerTransactionClientTests: XCTestCase, @unchecked Sendable {
 
     @available(macOS 12.0, *)
     func testExecuteInSavepoint() async throws {
-        let txClient = SQLServerTransactionClient(client: dbClient)
-        let adminClient = SQLServerAdministrationClient(client: dbClient)
+        var configuration = makeSQLServerClientConfiguration()
+        configuration.connection.sessionOptions.xactAbort = false
+        let savepointClient = try await SQLServerClient.connect(
+            configuration: configuration,
+            numberOfThreads: 1
+        )
+        defer {
+            Task {
+                try? await savepointClient.shutdownGracefully()
+            }
+        }
+
+        let txClient = SQLServerTransactionClient(client: savepointClient)
+        let adminClient = SQLServerAdministrationClient(client: savepointClient)
 
         let tableName = "tx_sp_exec_test_\(UUID().uuidString.prefix(8))"
         let columns = [
@@ -130,9 +142,8 @@ final class SQLServerTransactionClientTests: XCTestCase, @unchecked Sendable {
         try await adminClient.createTable(name: tableName, columns: columns)
 
         // Use pinned connection for the outer transaction
-        try await dbClient.withConnection { connection in
+        try await savepointClient.withConnection { connection in
             try await ClientScopedConnection.$current.withValue(connection) {
-                let txClient = SQLServerTransactionClient(client: self.dbClient)
                 try await txClient.beginTransaction()
                 try await connection.insertRow(into: tableName, values: ["id": .int(1), "operation": .nString("Initial")])
 
@@ -146,7 +157,7 @@ final class SQLServerTransactionClientTests: XCTestCase, @unchecked Sendable {
                 do {
                     _ = try await txClient.executeInSavepoint(named: "sp2") {
                         try await connection.insertRow(into: tableName, values: ["id": .int(3), "operation": .nString("Before Error")])
-                        _ = try await self.dbClient.execute("INVALID SQL")
+                        _ = try await savepointClient.execute("INVALID SQL")
                         return "Should not reach here"
                     }
                 } catch {
@@ -154,7 +165,7 @@ final class SQLServerTransactionClientTests: XCTestCase, @unchecked Sendable {
                 }
                 XCTAssertTrue(errorThrown)
 
-                let result = try await self.dbClient.query("SELECT COUNT(*) as count FROM [\(tableName)]")
+                let result = try await savepointClient.query("SELECT COUNT(*) as count FROM [\(tableName)]")
                 XCTAssertEqual(result.first?.column("count")?.int, 2)
 
                 try await txClient.commitTransaction()

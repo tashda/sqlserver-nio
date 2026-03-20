@@ -19,11 +19,12 @@ final class SQLServerAdventureWorksRoutineTests: XCTestCase, @unchecked Sendable
 
     @available(macOS 12.0, *)
     func testAdventureWorksUfnGetAccountingEndDateParameters() async throws {
-        // Only run when AdventureWorks is available
-        guard env("TDS_AW_DATABASE") != nil else {
-            throw XCTSkip("Skipping: TDS_AW_DATABASE not set")
+        let dbName: String
+        do {
+            dbName = try await requireDatabaseNamedInEnvironment("TDS_AW_DATABASE", using: client)
+        } catch let error as SQLServerFixtureUnavailable {
+            throw XCTSkip(error.message)
         }
-        let dbName = env("TDS_AW_DATABASE")!
         try await client.withConnection { connection in
             _ = try await connection.changeDatabase(dbName).get()
             let parameters = try await connection.listParameters(schema: "dbo", object: "ufnGetAccountingEndDate")
@@ -35,10 +36,12 @@ final class SQLServerAdventureWorksRoutineTests: XCTestCase, @unchecked Sendable
     func testAdventureWorks2022ComprehensiveMetadataLoading() async throws {
         // Comprehensive test that validates all TDS protocol fixes by loading all metadata
         // that App would need when working with AdventureWorks2022 database
-        guard env("TDS_AW_DATABASE") != nil else {
-            throw XCTSkip("Skipping: TDS_AW_DATABASE not set")
+        let dbName: String
+        do {
+            dbName = try await requireDatabaseNamedInEnvironment("TDS_AW_DATABASE", using: client)
+        } catch let error as SQLServerFixtureUnavailable {
+            throw XCTSkip(error.message)
         }
-        let dbName = env("TDS_AW_DATABASE")!
 
         try await client.withConnection { connection in
             _ = try await connection.changeDatabase(dbName).get()

@@ -76,8 +76,12 @@ final class SQLServerMetadataViewColumnsTests: XCTestCase, @unchecked Sendable {
 
     @available(macOS 12.0, *)
     func testListColumnsAdventureWorksVEEmployeeLikeViews() async throws {
-        guard env("TDS_AW_DATABASE") != nil else { throw XCTSkip("Skipping: TDS_AW_DATABASE not set") }
-        let db = env("TDS_AW_DATABASE")!
+        let db: String
+        do {
+            db = try await requireDatabaseNamedInEnvironment("TDS_AW_DATABASE", using: client)
+        } catch let error as SQLServerFixtureUnavailable {
+            throw XCTSkip(error.message)
+        }
         try await withDbConnection(client: self.client, database: db) { connection in
             let viewNames = [
                 (schema: "HumanResources", name: "vEmployee"),
@@ -93,8 +97,12 @@ final class SQLServerMetadataViewColumnsTests: XCTestCase, @unchecked Sendable {
 
     @available(macOS 12.0, *)
     func testListColumnsAdventureWorksVJobCandidateDoesNotExecuteViewBody() async throws {
-        guard env("TDS_AW_DATABASE") != nil else { throw XCTSkip("Skipping: TDS_AW_DATABASE not set") }
-        let db = env("TDS_AW_DATABASE")!
+        let db: String
+        do {
+            db = try await requireDatabaseNamedInEnvironment("TDS_AW_DATABASE", using: client)
+        } catch let error as SQLServerFixtureUnavailable {
+            throw XCTSkip(error.message)
+        }
         let start = DispatchTime.now()
         try await withDbConnection(client: self.client, database: db) { connection in
             let columns = try await connection.listColumns(database: db, schema: "HumanResources", table: "vJobCandidate")
@@ -106,8 +114,12 @@ final class SQLServerMetadataViewColumnsTests: XCTestCase, @unchecked Sendable {
 
     @available(macOS 12.0, *)
     func testListColumnsAdventureWorksProductionCatalogView() async throws {
-        guard env("TDS_AW_DATABASE") != nil else { throw XCTSkip("Skipping: TDS_AW_DATABASE not set") }
-        let db = env("TDS_AW_DATABASE")!
+        let db: String
+        do {
+            db = try await requireDatabaseNamedInEnvironment("TDS_AW_DATABASE", using: client)
+        } catch let error as SQLServerFixtureUnavailable {
+            throw XCTSkip(error.message)
+        }
         let start = DispatchTime.now()
         try await withDbConnection(client: self.client, database: db) { connection in
             let columns = try await connection.listColumns(

@@ -3,6 +3,14 @@ import NIO
 import SQLServerKit
 import SQLServerTDS
 
+public struct SQLServerFixtureUnavailable: Error, Sendable {
+    public let message: String
+
+    public init(_ message: String) {
+        self.message = message
+    }
+}
+
 // MARK: - Database Lifecycle
 
 @available(macOS 12.0, *)
@@ -296,4 +304,22 @@ internal func waitForDatabaseConnectable(name: String, attempts: Int = 20) async
 
         try await Task.sleep(nanoseconds: 250_000_000)
     }
+}
+
+@available(macOS 12.0, *)
+public func requireDatabaseNamedInEnvironment(
+    _ environmentKey: String,
+    using client: SQLServerClient,
+    defaultName: String = "AdventureWorks"
+) async throws -> String {
+    guard let configured = env(environmentKey), !configured.isEmpty else {
+        throw SQLServerFixtureUnavailable("Skipping: \(environmentKey) not set")
+    }
+
+    let target = configured.isEmpty ? defaultName : configured
+    guard try await databaseExists(client: client, name: target) else {
+        throw SQLServerFixtureUnavailable("Skipping: database '\(target)' is not available on this server")
+    }
+
+    return target
 }
