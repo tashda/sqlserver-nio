@@ -73,7 +73,16 @@ public enum TDSTokens {
         case tabName = 0xA4
         /// DATA_CLASSIFICATION
         case dataClassification = 0xA3
+        /// SQL_RESULT_COLUMN_SOURCES
+        case sqlResultColumnSources = 0xAF
         case tvpRow = 0xD4 // Placeholder for TVP rows
+
+        // Extended/Unknown types from tracing
+        case unknown0x04 = 0x04
+        case unknown0x61 = 0x61
+        case unknown0x74 = 0x74
+        case unknown0xc1 = 0xC1
+        case columnStatus = 0x12
     }
 
     public struct DoneToken: TDSToken {
@@ -312,14 +321,50 @@ public enum TDSTokens {
 
     public struct OffsetToken: TDSToken {
         public var type: TokenType = .offset
-        public var data: [Byte]
-        public init(data: [Byte]) { self.data = data }
+        public var identifier: UInt16
+        public var offset: UInt16
+
+        public init(identifier: UInt16, offset: UInt16) {
+            self.identifier = identifier
+            self.offset = offset
+        }
     }
 
     public struct DataClassificationToken: TDSToken {
         public var type: TokenType = .dataClassification
         public var payload: ByteBuffer
         public init(payload: ByteBuffer) { self.payload = payload }
+    }
+
+    public struct SQLResultColumnSourcesToken: TDSToken {
+        public var type: TokenType = .sqlResultColumnSources
+        public var payload: ByteBuffer
+        public init(payload: ByteBuffer) { self.payload = payload }
+    }
+
+    public struct Unknown0x61Token: TDSToken {
+        public var type: TokenType = .unknown0x61
+        public var payload: ByteBuffer
+        public init(payload: ByteBuffer) { self.payload = payload }
+    }
+
+    public struct Unknown0x74Token: TDSToken {
+        public var type: TokenType = .unknown0x74
+        public var payload: ByteBuffer
+        public init(payload: ByteBuffer) { self.payload = payload }
+    }
+
+    public struct Unknown0xC1Token: TDSToken {
+        public var type: TokenType = .unknown0xc1
+        public var payload: ByteBuffer
+        public init(payload: ByteBuffer) { self.payload = payload }
+    }
+
+    public struct ColumnStatusToken: TDSToken {
+        public var type: TokenType = .columnStatus
+        public var status: UInt16
+        public var data: [Byte]
+        public init(status: UInt16, data: [Byte]) { self.status = status; self.data = data }
     }
 
     public struct ReturnStatusToken: TDSToken {
