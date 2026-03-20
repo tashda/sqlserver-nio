@@ -113,6 +113,8 @@ final class TDSTokenOperationsClrUdtFallbackTests: XCTestCase, @unchecked Sendab
         XCTAssertEqual(token.colData.count, 2)
         XCTAssertEqual(token.colData[0].dataType, .clrUdt)
         XCTAssertEqual(token.colData[0].colName, "OrganizationNode")
+        XCTAssertEqual(token.colData[0].udtInfo?.typeName, "hierarchyid")
+        XCTAssertEqual(token.colData[0].udtInfo?.schemaName, "dbo")
         XCTAssertEqual(token.colData[1].dataType, .int)
         XCTAssertEqual(token.colData[1].colName, "BusinessEntityID")
     }
