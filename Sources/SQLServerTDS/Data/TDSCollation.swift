@@ -188,7 +188,7 @@ public enum TDSCollation {
         // UTF-8 shortcut
         if codePage == 65001 { return .utf8 }
 
-        #if canImport(CoreFoundation)
+        #if os(macOS) || os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
         // Use CoreFoundation to convert Windows code page → NSStringEncoding
         let cfEncoding = CFStringConvertWindowsCodepageToEncoding(codePage)
         if cfEncoding == kCFStringEncodingInvalidId {
@@ -197,7 +197,7 @@ public enum TDSCollation {
         let nsEncoding = CFStringConvertEncodingToNSStringEncoding(cfEncoding)
         return String.Encoding(rawValue: nsEncoding)
         #else
-        // Linux fallback: map common Windows code pages manually
+        // Linux/non-Apple fallback: map common Windows code pages manually
         switch codePage {
         case 1250: return .windowsCP1250
         case 1251: return .windowsCP1251
