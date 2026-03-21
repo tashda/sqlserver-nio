@@ -41,34 +41,44 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
         
         logger.debug("Activity Monitor: Starting snapshot")
 
-        var permDeniedInSnapshot = 0
+        let permissionDeniedInSnapshot = NIOLockedValueBox(0)
 
         let overviewFut = fetchOverview(on: loop).recover { [weak self] error in
-            if Self.isPermissionDenied(error) { permDeniedInSnapshot += 1 }
+            if Self.isPermissionDenied(error) {
+                permissionDeniedInSnapshot.withLockedValue { $0 += 1 }
+            }
             self?.logger.error("Activity Monitor: Failed to fetch overview: \(error)")
             return nil
         }
 
         let processesFut = fetchProcesses(options: options, on: loop).recover { [weak self] error in
-            if Self.isPermissionDenied(error) { permDeniedInSnapshot += 1 }
+            if Self.isPermissionDenied(error) {
+                permissionDeniedInSnapshot.withLockedValue { $0 += 1 }
+            }
             self?.logger.error("Activity Monitor: Failed to fetch processes: \(error)")
             return []
         }
 
         let waitsFut = fetchWaits(on: loop).recover { [weak self] error in
-            if Self.isPermissionDenied(error) { permDeniedInSnapshot += 1 }
+            if Self.isPermissionDenied(error) {
+                permissionDeniedInSnapshot.withLockedValue { $0 += 1 }
+            }
             self?.logger.error("Activity Monitor: Failed to fetch waits: \(error)")
             return []
         }
 
         let fileIoFut = fetchFileIO(on: loop).recover { [weak self] error in
-            if Self.isPermissionDenied(error) { permDeniedInSnapshot += 1 }
+            if Self.isPermissionDenied(error) {
+                permissionDeniedInSnapshot.withLockedValue { $0 += 1 }
+            }
             self?.logger.error("Activity Monitor: Failed to fetch file IO: \(error)")
             return []
         }
 
         let expensiveFut = fetchExpensiveQueries(options: options, on: loop).recover { [weak self] error in
-            if Self.isPermissionDenied(error) { permDeniedInSnapshot += 1 }
+            if Self.isPermissionDenied(error) {
+                permissionDeniedInSnapshot.withLockedValue { $0 += 1 }
+            }
             self?.logger.error("Activity Monitor: Failed to fetch expensive queries: \(error)")
             return []
         }
@@ -77,7 +87,7 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
             return waitsFut.and(fileIoFut).flatMap { waits, fileIO in
                 return expensiveFut.map { expensive in
                     // Track permission-denied errors across snapshots
-                    if permDeniedInSnapshot >= 4 {
+                    if permissionDeniedInSnapshot.withLockedValue({ $0 }) >= 4 {
                         self.baselineLock.withLock { self.permissionDeniedCount += 1 }
                         self.logger.warning("Activity Monitor: All DMV queries denied — user lacks VIEW SERVER STATE. Snapshot \(self.permissionDeniedCount) of 2 before stopping.")
                     } else {
@@ -87,7 +97,7 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
                     let waitsDelta = self.computeWaitDeltas(current: waits)
                     let fileDelta = self.computeFileIODeltas(current: fileIO)
 
-                    let totalIoBytes = (fileDelta ?? []).reduce(Int64(0)) { $0 + $1.bytesReadDelta + $1.bytesWrittenDelta }
+                    let totalIoBytes = fileDelta.reduce(Int64(0)) { $0 + $1.bytesReadDelta + $1.bytesWrittenDelta }
                     let ioMB = Double(totalIoBytes) / (1024 * 1024)
 
                     let finalOverview: SQLServerActivityOverview?
