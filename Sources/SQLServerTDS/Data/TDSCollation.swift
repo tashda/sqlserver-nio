@@ -183,11 +183,12 @@ public enum TDSCollation {
 
     // MARK: - Code Page → String.Encoding
 
-    /// Converts a Windows code page number to `String.Encoding` using CoreFoundation.
+    /// Converts a Windows code page number to `String.Encoding`.
     private static func encoding(forCodePage codePage: UInt32) -> String.Encoding {
         // UTF-8 shortcut
         if codePage == 65001 { return .utf8 }
 
+        #if canImport(CoreFoundation)
         // Use CoreFoundation to convert Windows code page → NSStringEncoding
         let cfEncoding = CFStringConvertWindowsCodepageToEncoding(codePage)
         if cfEncoding == kCFStringEncodingInvalidId {
@@ -195,5 +196,19 @@ public enum TDSCollation {
         }
         let nsEncoding = CFStringConvertEncodingToNSStringEncoding(cfEncoding)
         return String.Encoding(rawValue: nsEncoding)
+        #else
+        // Linux fallback: map common Windows code pages manually
+        switch codePage {
+        case 1250: return .windowsCP1250
+        case 1251: return .windowsCP1251
+        case 1252: return .windowsCP1252
+        case 1253: return .windowsCP1253
+        case 1254: return .windowsCP1254
+        case 28591: return .isoLatin1
+        case 28592: return .isoLatin2
+        case 20127: return .ascii
+        default: return .windowsCP1252
+        }
+        #endif
     }
 }
