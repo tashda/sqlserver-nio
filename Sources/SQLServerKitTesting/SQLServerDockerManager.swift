@@ -100,6 +100,7 @@ public class SQLServerDockerManager: @unchecked Sendable {
             sanitizedConfig = object
             sanitizedConfig.removeValue(forKey: "credsStore")
             sanitizedConfig.removeValue(forKey: "credHelpers")
+            sanitizedConfig.removeValue(forKey: "currentContext")
         }
 
         if let encoded = try? JSONSerialization.data(withJSONObject: sanitizedConfig, options: [.prettyPrinted, .sortedKeys]) {

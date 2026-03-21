@@ -2,9 +2,15 @@ import Foundation
 import NIOCore
 
 extension EventLoopFuture {
-    /// Test-timeout wrapper disabled by default to avoid event-loop shutdown edge cases in CI.
-    /// Per-call timeouts should use `withTimeout(on:seconds:reason:)` which callers control.
-    func withTestTimeoutIfEnabled(on loop: EventLoop) -> EventLoopFuture<Value> { self }
+    /// Applies a default operation timeout to prevent indefinite hangs.
+    /// The timeout defaults to 45 seconds but can be overridden via the
+    /// `TDS_OPERATION_TIMEOUT` environment variable (in seconds).
+    func withTestTimeoutIfEnabled(on loop: EventLoop) -> EventLoopFuture<Value> where Value: Sendable {
+        let envTimeout = ProcessInfo.processInfo.environment["TDS_OPERATION_TIMEOUT"]
+            .flatMap(TimeInterval.init)
+        let seconds = envTimeout ?? 45
+        return withTimeout(on: loop, seconds: seconds, reason: "operation timed out after \(seconds)s")
+    }
 }
 
 extension EventLoopFuture {
