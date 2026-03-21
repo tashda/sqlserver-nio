@@ -47,9 +47,30 @@ extension TDSTokenOperations {
                 // TDS 7.3+ encodes TIME/DATETIME2/DATETIMEOFFSET TYPE_INFO as SCALE only.
                 // There is no preceding TYPE_VARLEN byte; payload length is derived from SCALE.
                 length = 0
-            case .char, .varchar, .binary, .varbinary, .nchar, .nvarchar, .clrUdt, .xml, .json, .vector:
+            case .char, .varchar, .binary, .varbinary, .nchar, .nvarchar, .clrUdt, .json, .vector:
                 guard let len: UInt16 = buffer.readInteger(endianness: .little) else { throw TDSError.needMoreData }
                 length = Int32(len)
+            case .xml:
+                // XML TYPE_INFO: no TYPE_VARLEN prefix — read SchemaPresent and optional schema.
+                guard let schemaPresent: UInt8 = buffer.readInteger() else { throw TDSError.needMoreData }
+                if schemaPresent != 0 {
+                    // Consume DB name (B_VARCHAR: 1-byte char count + UTF16 chars)
+                    guard let dbLen: UInt8 = buffer.readInteger() else { throw TDSError.needMoreData }
+                    if dbLen > 0 {
+                        guard buffer.readUTF16String(length: Int(dbLen) * 2) != nil else { throw TDSError.needMoreData }
+                    }
+                    // Consume owning schema name
+                    guard let schLen: UInt8 = buffer.readInteger() else { throw TDSError.needMoreData }
+                    if schLen > 0 {
+                        guard buffer.readUTF16String(length: Int(schLen) * 2) != nil else { throw TDSError.needMoreData }
+                    }
+                    // Consume type/collection name (US_VARCHAR: 2-byte char count + UTF16 chars)
+                    guard let typeLen: UInt16 = buffer.readInteger(endianness: .little) else { throw TDSError.needMoreData }
+                    if typeLen > 0 {
+                        guard buffer.readUTF16String(length: Int(typeLen) * 2) != nil else { throw TDSError.needMoreData }
+                    }
+                }
+                length = -1 // PLP — no fixed length
             case .text, .nText, .image:
                 guard let len: Int32 = buffer.readInteger(endianness: .little) else { throw TDSError.needMoreData }
                 length = len
