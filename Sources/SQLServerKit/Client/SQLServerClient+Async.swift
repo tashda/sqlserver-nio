@@ -290,10 +290,10 @@ extension SQLServerClient {
         }
     }
 
-    /// Streams query results row by row via an AsyncThrowingStream.
+    /// Streams query results row by row via a back-pressure-aware async sequence.
     /// The connection is held for the duration of the stream and returned to the pool on completion.
     @available(macOS 12.0, *)
-    public func streamQuery(_ sql: String) async throws -> (connection: SQLServerConnection, stream: AsyncThrowingStream<SQLServerStreamEvent, Error>) {
+    public func streamQuery(_ sql: String) async throws -> (connection: SQLServerConnection, stream: SQLServerStreamSequence) {
         let connection = try await self.connection()
         let stream = connection.streamQuery(sql)
         return (connection: connection, stream: stream)
