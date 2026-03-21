@@ -191,42 +191,56 @@ extension SQLServerConnection {
     }
 
     @available(macOS 12.0, *)
-    public func streamQuery(_ sql: String) -> AsyncThrowingStream<SQLServerStreamEvent, Error> {
-        AsyncThrowingStream(SQLServerStreamEvent.self) { continuation in
-            let request = RawSqlRequest(
-                sql: sql,
-                onRow: { row in _ = continuation.yield(.row(SQLServerRow(base: row))) },
-                onMetadata: { metadata in
-                    let columns = metadata.map { column in
-                        SQLServerColumnDescription(
-                            name: column.colName,
-                            type: SQLServerDataType(base: column.dataType),
-                            typeName: column.udtInfo?.typeName ?? SQLServerDataType(base: column.dataType).name,
-                            length: Int(column.length),
-                            precision: Int(column.precision),
-                            scale: Int(column.scale),
-                            flags: column.flags
-                        )
-                    }
-                    _ = continuation.yield(.metadata(columns))
-                },
-                onDone: { done in _ = continuation.yield(.done(SQLServerStreamDone(status: done.status, rowCount: done.doneRowCount))) },
-                onMessage: { token, isError in
-                    _ = continuation.yield(.message(SQLServerStreamMessage(kind: isError ? .error : .info, number: Int32(token.number), message: token.messageText, state: token.state, severity: token.classValue)))
+    public func streamQuery(_ sql: String) -> SQLServerStreamSequence {
+        let delegate = SQLServerStreamDelegate(connection: base)
+        let produced = NIOThrowingAsyncSequenceProducer.makeSequence(
+            elementType: SQLServerStreamEvent.self,
+            failureType: (any Error).self,
+            backPressureStrategy: AdaptiveRowBuffer(),
+            finishOnDeinit: false,
+            delegate: delegate
+        )
+        let source = produced.source
+
+        // Disable auto-read so data is only read on demand from the delegate.
+        base.suspendAutoRead()
+
+        let request = RawSqlRequest(
+            sql: sql,
+            onRow: { row in _ = source.yield(.row(SQLServerRow(base: row))) },
+            onMetadata: { metadata in
+                let columns = metadata.map { column in
+                    SQLServerColumnDescription(
+                        name: column.colName,
+                        type: SQLServerDataType(base: column.dataType),
+                        typeName: column.udtInfo?.typeName ?? SQLServerDataType(base: column.dataType).name,
+                        length: Int(column.length),
+                        precision: Int(column.precision),
+                        scale: Int(column.scale),
+                        flags: column.flags
+                    )
                 }
-            )
-            let future = self.base.send(request, logger: self.logger)
-            future.whenComplete { result in
-                switch result {
-                case .success: continuation.finish()
-                case .failure(let error): continuation.finish(throwing: error)
-                }
+                _ = source.yield(.metadata(columns))
+            },
+            onDone: { done in _ = source.yield(.done(SQLServerStreamDone(status: done.status, rowCount: done.doneRowCount))) },
+            onMessage: { token, isError in
+                _ = source.yield(.message(SQLServerStreamMessage(kind: isError ? .error : .info, number: Int32(token.number), message: token.messageText, state: token.state, severity: token.classValue)))
             }
-            continuation.onTermination = { termination in
-                guard case .cancelled = termination else { return }
-                self.base.sendAttention()
+        )
+        let future = self.base.send(request, logger: self.logger)
+        future.whenComplete { [base] result in
+            switch result {
+            case .success: source.finish()
+            case .failure(let error): source.finish(error)
             }
+            // Restore auto-read for subsequent non-streaming requests.
+            base.resumeAutoRead()
         }
+
+        // Trigger the first read to start receiving the response.
+        base.requestRead()
+
+        return SQLServerStreamSequence(produced.sequence)
     }
 
     // MARK: - Explicit transaction helpers (SSMS parity)

@@ -19,7 +19,7 @@ extension SQLServerConnection {
     public func streamQuery(
         _ sql: String,
         options: SqlServerExecutionOptions
-    ) -> AsyncThrowingStream<SQLServerStreamEvent, Error> {
+    ) -> SQLServerStreamSequence {
         let _ = options
         return streamQuery(sql)
     }
