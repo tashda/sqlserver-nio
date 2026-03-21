@@ -493,7 +493,11 @@ public final class SQLServerBackupRestoreClient: @unchecked Sendable {
 
     @available(macOS 12.0, *)
     private func executeLongRunning(_ sql: String) async throws -> [SQLServerStreamMessage] {
-        let result = try await client.execute(sql)
+        // Use a fresh connection to master to avoid pool connections that might
+        // be connected to the target database (which would block RESTORE/BACKUP).
+        let result: SQLServerExecutionResult = try await client.withFreshConnection(on: nil) { connection in
+            connection.execute(sql)
+        }.get()
         return result.messages
     }
 
