@@ -352,17 +352,17 @@ public final class SQLServerBackupRestoreClient: @unchecked Sendable {
         let db = SQLServerAdministrationClient.escapeIdentifier(options.database)
         let path = options.diskPath.replacingOccurrences(of: "'", with: "''")
 
-        var parts: [String] = []
-
+        var header: String
         switch options.backupType {
         case .full, .differential:
-            parts.append("BACKUP DATABASE \(db)")
+            header = "BACKUP DATABASE \(db)"
         case .log:
-            parts.append("BACKUP LOG \(db)")
+            header = "BACKUP LOG \(db)"
         }
+        header += " TO DISK = N'\(path)'"
 
-        parts.append("TO DISK = N'\(path)'")
-        parts.append(options.formatMedia ? "WITH FORMAT" : "WITH NOFORMAT")
+        var parts: [String] = []
+        parts.append(options.formatMedia ? "FORMAT" : "NOFORMAT")
         parts.append(options.initMedia ? "INIT" : "NOINIT")
 
         if let mediaName = options.mediaName, !mediaName.isEmpty {
@@ -423,17 +423,16 @@ public final class SQLServerBackupRestoreClient: @unchecked Sendable {
         parts.append("SKIP, NOREWIND, NOUNLOAD")
         parts.append("STATS = \(max(1, min(100, options.statsPercentage)))")
 
-        return parts.joined(separator: ", ") + ";"
+        return header + " WITH " + parts.joined(separator: ", ") + ";"
     }
 
     private func buildRestoreSQL(_ options: SQLServerRestoreOptions) -> String {
         let db = SQLServerAdministrationClient.escapeIdentifier(options.database)
         let path = options.diskPath.replacingOccurrences(of: "'", with: "''")
 
+        let header = "RESTORE DATABASE \(db) FROM DISK = N'\(path)'"
         var parts: [String] = []
-        parts.append("RESTORE DATABASE \(db)")
-        parts.append("FROM DISK = N'\(path)'")
-        parts.append("WITH FILE = \(max(1, options.fileNumber))")
+        parts.append("FILE = \(max(1, options.fileNumber))")
 
         switch options.recoveryMode {
         case .recovery:
@@ -486,7 +485,7 @@ public final class SQLServerBackupRestoreClient: @unchecked Sendable {
         parts.append("NOUNLOAD")
         parts.append("STATS = \(max(1, min(100, options.statsPercentage)))")
 
-        return parts.joined(separator: ", ") + ";"
+        return header + " WITH " + parts.joined(separator: ", ") + ";"
     }
 
     // MARK: - Execution
