@@ -363,7 +363,8 @@ public final class SQLServerBackupRestoreClient: @unchecked Sendable {
 
         var parts: [String] = []
         parts.append(options.formatMedia ? "FORMAT" : "NOFORMAT")
-        parts.append(options.initMedia ? "INIT" : "NOINIT")
+        // FORMAT implies INIT — always use INIT when FORMAT is specified
+        parts.append((options.formatMedia || options.initMedia) ? "INIT" : "NOINIT")
 
         if let mediaName = options.mediaName, !mediaName.isEmpty {
             let escaped = mediaName.replacingOccurrences(of: "'", with: "''")
