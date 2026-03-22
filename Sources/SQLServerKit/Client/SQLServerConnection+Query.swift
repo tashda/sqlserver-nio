@@ -229,6 +229,7 @@ extension SQLServerConnection {
         )
         let future = self.base.send(request, logger: self.logger)
         future.whenComplete { [base] result in
+            delegate.markFinished()
             switch result {
             case .success: source.finish()
             case .failure(let error): source.finish(error)
