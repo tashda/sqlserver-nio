@@ -2,15 +2,11 @@ import Foundation
 import NIOCore
 
 extension EventLoopFuture {
-    /// Applies a default operation timeout to prevent indefinite hangs.
-    /// The timeout defaults to 45 seconds but can be overridden via the
-    /// `TDS_OPERATION_TIMEOUT` environment variable (in seconds).
-    func withTestTimeoutIfEnabled(on loop: EventLoop) -> EventLoopFuture<Value> where Value: Sendable {
-        let envTimeout = ProcessInfo.processInfo.environment["TDS_OPERATION_TIMEOUT"]
-            .flatMap(TimeInterval.init)
-        let seconds = envTimeout ?? 45
-        return withTimeout(on: loop, seconds: seconds, reason: "operation timed out after \(seconds)s")
-    }
+    /// Operation timeout is disabled by default because it corrupts the NIO channel state.
+    /// When a timeout fires, the underlying channel still has an in-flight operation waiting
+    /// for a TDS response. Subsequent operations on that channel get corrupted responses.
+    /// Use XCTest executionTimeAllowance (per-test timeout) instead.
+    func withTestTimeoutIfEnabled(on loop: EventLoop) -> EventLoopFuture<Value> { self }
 }
 
 extension EventLoopFuture {
