@@ -1,4 +1,5 @@
 import NIO
+import NIOConcurrencyHelpers
 import SQLServerTDS
 
 // MARK: - Back-pressure strategy
@@ -46,12 +47,21 @@ struct AdaptiveRowBuffer: NIOAsyncSequenceProducerBackPressureStrategy, Sendable
 
 /// Bridges NIO back-pressure demand signals to TDSConnection's read control.
 /// When the consumer needs more data, `produceMore()` triggers a channel read.
-/// When the stream terminates, `didTerminate()` restores auto-read.
+/// When the stream terminates early (consumer cancelled), sends ATTENTION to
+/// cancel the server-side query and restores auto-read.
 final class SQLServerStreamDelegate: NIOAsyncSequenceProducerDelegate, @unchecked Sendable {
     private let connection: TDSConnection
+    /// Set to true when `source.finish()` is called (normal completion).
+    /// If still false when `didTerminate()` fires, the consumer cancelled early.
+    private let finished: NIOLockedValueBox<Bool>
 
     init(connection: TDSConnection) {
         self.connection = connection
+        self.finished = NIOLockedValueBox(false)
+    }
+
+    func markFinished() {
+        finished.withLockedValue { $0 = true }
     }
 
     func produceMore() {
@@ -61,6 +71,12 @@ final class SQLServerStreamDelegate: NIOAsyncSequenceProducerDelegate, @unchecke
     }
 
     func didTerminate() {
+        let wasFinished = finished.withLockedValue { $0 }
+        if !wasFinished {
+            // Consumer cancelled before the query completed — send ATTENTION
+            // to abort the server-side operation.
+            connection.sendAttention()
+        }
         connection.eventLoop.execute {
             self.connection.resumeAutoRead()
         }
