@@ -94,6 +94,12 @@ public final class SQLServerMetadataOperations: @unchecked Sendable {
 
     internal func qualified(_ database: String?, object: String) -> String {
         if let resolved = effectiveDatabase(database), !resolved.isEmpty {
+            // Skip cross-database prefix when the target matches the connection's
+            // current database — avoids unnecessary three-part naming for sys.* views.
+            let currentDB = defaultDatabaseLock.withLock { defaultDatabase }
+            if let currentDB, resolved.caseInsensitiveCompare(currentDB) == .orderedSame {
+                return object
+            }
             return "[\(Self.escapeIdentifier(resolved))].\(object)"
         } else {
             return object
