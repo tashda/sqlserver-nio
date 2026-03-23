@@ -63,7 +63,7 @@ public struct SQLServerRow: Sendable {
                 if let v = tdsData.double { result.append(String(v)) } else { result.append(nil) }
 
             // Date/time types — use cached formatter
-            case .datetime, .datetime2, .datetimen, .date, .smallDatetime:
+            case .datetime, .datetime2, .datetimen, .date, .smallDateTime:
                 if let d = tdsData.date { result.append(_sharedISO8601Formatter.string(from: d)) }
                 else { result.append(nil) }
             case .time:
@@ -94,17 +94,7 @@ public struct SQLServerRow: Sendable {
                     result.append("0x\(hex)")
                 } else { result.append(nil) }
 
-            // UDT (hierarchyid, geometry, etc.)
-            case .udt:
-                if let udtInfo = (metadata as? TDSTokens.ColMetadataToken.ColumnData)?.udtInfo,
-                   udtInfo.typeName.caseInsensitiveCompare("hierarchyid") == .orderedSame,
-                   let bytes = tdsData.bytes,
-                   let hid = SQLServerHierarchyID.string(from: bytes) {
-                    result.append(hid)
-                } else if let s = tdsData.string { result.append(s) }
-                else { result.append(nil) }
-
-            // SQL Variant and other types — fallback
+            // SQL Variant
             case .sqlVariant:
                 if let s = tdsData.string { result.append(s) }
                 else if let v = tdsData.int64 { result.append(String(v)) }
@@ -112,7 +102,13 @@ public struct SQLServerRow: Sendable {
                 else { result.append(nil) }
 
             default:
-                // Unknown type — try string fallback
+                // Unknown type / UDT — check hierarchyid, then string fallback
+                if let udtInfo = (metadata as? TDSTokens.ColMetadataToken.ColumnData)?.udtInfo,
+                   udtInfo.typeName.caseInsensitiveCompare("hierarchyid") == .orderedSame,
+                   let bytes = tdsData.bytes,
+                   let hid = SQLServerHierarchyID.string(from: bytes) {
+                    result.append(hid)
+                } else if let s = tdsData.string { result.append(s) }
                 if let s = tdsData.string { result.append(s) }
                 else { result.append(nil) }
             }
