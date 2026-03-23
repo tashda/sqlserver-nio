@@ -231,7 +231,26 @@ extension SQLServerSecurityClient {
     
     // MARK: - Application roles
 
-    internal func listApplicationRoles() -> EventLoopFuture<[ApplicationRoleInfo]> {
+    @available(macOS 12.0, *)
+    public func listApplicationRoles() async throws -> [ApplicationRoleInfo] {
+        let sql = """
+        SELECT name, default_schema_name, create_date, modify_date
+        FROM sys.database_principals
+        WHERE type = 'A'
+        ORDER BY name
+        """
+        let rows = try await query(sql)
+        return rows.map { r in
+            ApplicationRoleInfo(
+                name: r.column("name")?.string ?? "",
+                defaultSchema: r.column("default_schema_name")?.string,
+                createDate: r.column("create_date")?.string,
+                modifyDate: r.column("modify_date")?.string
+            )
+        }
+    }
+
+    internal func listApplicationRolesELF() -> EventLoopFuture<[ApplicationRoleInfo]> {
         let sql = """
         SELECT name, default_schema_name, create_date, modify_date
         FROM sys.database_principals
