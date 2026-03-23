@@ -1,5 +1,6 @@
 import Foundation
 import NIO
+import Logging
 import SQLServerTDS
 
 extension SQLServerClient {
@@ -14,12 +15,20 @@ extension SQLServerClient {
             return loop.makeSucceededFuture(SQLServerExecutionResult(rows: [TDSRow](), done: [], messages: []))
         }
 
+        let start = Date()
+        let sqlSnippet = String(sql.prefix(80))
+        let queryLogger = self.logger
         let fut = withConnection(on: loop) { connection in
             var last: EventLoopFuture<SQLServerExecutionResult> = connection.eventLoop.makeSucceededFuture(SQLServerExecutionResult(rows: [TDSRow](), done: [], messages: []))
             for batchSql in batches {
                 last = last.flatMap { _ in connection.execute(batchSql) }
             }
             return last
+        }.map { result -> SQLServerExecutionResult in
+            let elapsed = Date().timeIntervalSince(start)
+            let elapsedMs = String(format: "%.1fms", elapsed * 1000)
+            queryLogger.debug("Query completed: \(result.rows.count) rows in \(elapsedMs) — \(sqlSnippet)")
+            return result
         }
         return fut.withTestTimeoutIfEnabled(on: loop)
     }
