@@ -29,4 +29,5 @@ extension SQLServerClient {
     public var maintenance: SQLServerMaintenanceClient { SQLServerMaintenanceClient(client: self) }
     public var replication: SQLServerReplicationClient { SQLServerReplicationClient(client: self) }
     public var cms: SQLServerCMSClient { SQLServerCMSClient(client: self) }
+    public var serverConfig: SQLServerServerConfigurationClient { SQLServerServerConfigurationClient(client: self) }
 }
