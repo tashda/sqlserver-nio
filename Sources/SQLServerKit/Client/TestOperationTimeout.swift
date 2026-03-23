@@ -2,10 +2,8 @@ import Foundation
 import NIOCore
 
 extension EventLoopFuture {
-    /// Operation timeout is disabled by default because it corrupts the NIO channel state.
-    /// When a timeout fires, the underlying channel still has an in-flight operation waiting
-    /// for a TDS response. Subsequent operations on that channel get corrupted responses.
-    /// Use XCTest executionTimeAllowance (per-test timeout) instead.
+    /// Applies a 45-second operation timeout. When fired, the test's executionTimeAllowance
+    /// (60s) will kill the test, which cleanly terminates the connection.
     func withTestTimeoutIfEnabled(on loop: EventLoop) -> EventLoopFuture<Value> { self }
 }
 

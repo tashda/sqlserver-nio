@@ -64,7 +64,8 @@ extension SQLServerConnection {
                         number: Int32(token.number),
                         message: token.messageText,
                         state: token.state,
-                        severity: token.classValue
+                        severity: token.classValue,
+                        lineNumber: token.lineNumber
                     ))
                 }
             }
