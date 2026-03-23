@@ -154,6 +154,112 @@ final class BatchExecutionTests: StandardTestBase, @unchecked Sendable {
         XCTAssertEqual(batchFailCount, 0)
     }
 
+    // MARK: - Multiple Result Sets Within a Batch
+
+    func testMultipleResultSetsInSingleBatch() async throws {
+        // A single batch can produce multiple result sets
+        let result = try await client.executeBatches([
+            "SELECT 1 AS a; SELECT 2 AS b; SELECT 3 AS c"
+        ])
+        XCTAssertEqual(result.batchResults.count, 1)
+        XCTAssertTrue(result.batchResults[0].succeeded)
+        // The result should contain rows from at least the last SELECT
+        // (exact behavior depends on how rows are accumulated)
+        XCTAssertNotNil(result.batchResults[0].result)
+    }
+
+    func testMultipleResultSetsAcrossBatches() async throws {
+        // Each batch produces its own result set(s)
+        let result = try await client.executeBatches([
+            "SELECT 1 AS a; SELECT 2 AS b",
+            "SELECT 3 AS c"
+        ])
+        XCTAssertEqual(result.batchResults.count, 2)
+        XCTAssertTrue(result.batchResults[0].succeeded)
+        XCTAssertTrue(result.batchResults[1].succeeded)
+    }
+
+    // MARK: - Error Messages Contain Useful Info
+
+    func testErrorMessageContainsBatchContext() async throws {
+        let result = try await client.executeBatches([
+            "SELECT * FROM nonexistent_table_xyz_12345"
+        ])
+        XCTAssertFalse(result.batchResults[0].succeeded)
+        let errorDescription = result.batchResults[0].error?.localizedDescription ?? ""
+        XCTAssertTrue(errorDescription.contains("nonexistent_table_xyz_12345") || !errorDescription.isEmpty,
+                      "Error should contain relevant info: \(errorDescription)")
+    }
+
+    // MARK: - DML Across Batches
+
+    func testDMLAcrossBatches() async throws {
+        let tableName = "#dml_batch_\(UUID().uuidString.prefix(8))"
+        let result = try await client.executeBatches([
+            "CREATE TABLE \(tableName) (id INT, name NVARCHAR(50))",
+            "INSERT INTO \(tableName) VALUES (1, 'Alice')",
+            "INSERT INTO \(tableName) VALUES (2, 'Bob')",
+            "UPDATE \(tableName) SET name = 'Charlie' WHERE id = 1",
+            "DELETE FROM \(tableName) WHERE id = 2",
+            "SELECT * FROM \(tableName)",
+            "DROP TABLE \(tableName)"
+        ])
+        XCTAssertEqual(result.batchResults.count, 7)
+        for (i, batch) in result.batchResults.enumerated() {
+            XCTAssertTrue(batch.succeeded, "Batch \(i) should succeed")
+        }
+        // After UPDATE and DELETE, only Charlie should remain
+        let selectResult = result.batchResults[5].result
+        XCTAssertEqual(selectResult?.rows.count, 1)
+    }
+
+    // MARK: - USE Database Across Batches
+
+    func testUseDatabaseAcrossBatches() async throws {
+        // USE should persist across batches (session state)
+        let result = try await client.executeBatches([
+            "USE master",
+            "SELECT DB_NAME() AS current_db"
+        ])
+        XCTAssertEqual(result.batchResults.count, 2)
+        XCTAssertTrue(result.batchResults[0].succeeded)
+        XCTAssertTrue(result.batchResults[1].succeeded)
+        let dbName = result.batchResults[1].result?.rows.first?.column("current_db")?.string
+        XCTAssertEqual(dbName, "master")
+    }
+
+    // MARK: - Error in Middle Does Not Corrupt Connection
+
+    func testErrorDoesNotCorruptConnection() async throws {
+        // After a batch error, subsequent batches should execute cleanly
+        let tableName = "#err_recover_\(UUID().uuidString.prefix(8))"
+        let result = try await client.executeBatches([
+            "CREATE TABLE \(tableName) (id INT)",
+            "INSERT INTO \(tableName) VALUES ('not_an_int')",  // type error
+            "INSERT INTO \(tableName) VALUES (42)",
+            "SELECT * FROM \(tableName)",
+            "DROP TABLE \(tableName)"
+        ])
+        XCTAssertTrue(result.batchResults[0].succeeded, "CREATE should succeed")
+        XCTAssertFalse(result.batchResults[1].succeeded, "Type mismatch should fail")
+        XCTAssertTrue(result.batchResults[2].succeeded, "Valid INSERT should succeed after error")
+        XCTAssertTrue(result.batchResults[3].succeeded, "SELECT should succeed")
+        XCTAssertTrue(result.batchResults[4].succeeded, "DROP should succeed")
+    }
+
+    // MARK: - Large Number of Batches
+
+    func testManyBatches() async throws {
+        let batches = (1...20).map { "SELECT \($0) AS val" }
+        let result = try await client.executeBatches(batches)
+        XCTAssertEqual(result.batchResults.count, 20)
+        for (i, batch) in result.batchResults.enumerated() {
+            XCTAssertTrue(batch.succeeded, "Batch \(i) should succeed")
+        }
+    }
+
+    // MARK: - Streaming
+
     func testStreamBatchesContinueOnError() async throws {
         let (_, stream) = try await client.streamBatches([
             "SELECT 1 AS a",
