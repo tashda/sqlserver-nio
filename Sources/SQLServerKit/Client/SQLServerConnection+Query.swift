@@ -202,8 +202,10 @@ extension SQLServerConnection {
         )
         let source = produced.source
 
-        // Disable auto-read so data is only read on demand from the delegate.
-        base.suspendAutoRead()
+        // Keep auto-read enabled so NIO reads data from the socket as it arrives.
+        // The NIO async sequence buffer handles producer/consumer flow internally.
+        // Disabling auto-read with manual requestRead() causes hangs for large
+        // result sets when the consumer runs on a different executor than NIO.
 
         let request = RawSqlRequest(
             sql: sql,
@@ -228,18 +230,13 @@ extension SQLServerConnection {
             }
         )
         let future = self.base.send(request, logger: self.logger)
-        future.whenComplete { [base] result in
+        future.whenComplete { result in
             delegate.markFinished()
             switch result {
             case .success: source.finish()
             case .failure(let error): source.finish(error)
             }
-            // Restore auto-read for subsequent non-streaming requests.
-            base.resumeAutoRead()
         }
-
-        // Trigger the first read to start receiving the response.
-        base.requestRead()
 
         return SQLServerStreamSequence(produced.sequence)
     }
