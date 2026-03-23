@@ -27,6 +27,7 @@ public struct SQLServerStreamMessage: Sendable {
     public let message: String
     public let state: UInt8
     public let severity: UInt8
+    public let lineNumber: Int32
 }
 
 public enum SQLServerStreamEvent: Sendable {

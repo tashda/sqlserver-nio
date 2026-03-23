@@ -163,7 +163,7 @@ extension SQLServerConnection {
             },
             onMessage: { token, isError in
                 accumulator.withLockedValue {
-                    $0.messages.append(SQLServerStreamMessage(kind: isError ? .error : .info, number: Int32(token.number), message: token.messageText, state: token.state, severity: token.classValue))
+                    $0.messages.append(SQLServerStreamMessage(kind: isError ? .error : .info, number: Int32(token.number), message: token.messageText, state: token.state, severity: token.classValue, lineNumber: token.lineNumber))
                 }
             },
             onReturnValue: { token in
@@ -230,7 +230,7 @@ extension SQLServerConnection {
             },
             onMessage: { token, isError in
                 batcher.flush()
-                _ = source.yield(.message(SQLServerStreamMessage(kind: isError ? .error : .info, number: Int32(token.number), message: token.messageText, state: token.state, severity: token.classValue)))
+                _ = source.yield(.message(SQLServerStreamMessage(kind: isError ? .error : .info, number: Int32(token.number), message: token.messageText, state: token.state, severity: token.classValue, lineNumber: token.lineNumber)))
             }
         )
         let future = self.base.send(request, logger: self.logger)
@@ -327,5 +327,93 @@ extension SQLServerConnection {
             return Self.escapeIdentifier(name)
         }
         return name
+    }
+
+    // MARK: - Multi-batch execution
+
+    /// Executes multiple pre-split batches sequentially on this connection.
+    ///
+    /// Continues on error by default — if a batch fails, the error is captured in
+    /// `SingleBatchResult.error` and execution proceeds to the next batch.
+    /// Only throws if the connection itself is broken.
+    @available(macOS 12.0, *)
+    public func executeBatches(_ batches: [String]) async throws -> BatchExecutionResult {
+        var results: [BatchExecutionResult.SingleBatchResult] = []
+        results.reserveCapacity(batches.count)
+
+        for (index, sql) in batches.enumerated() {
+            try Task.checkCancellation()
+            let trimmed = sql.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                results.append(.init(batchIndex: index, result: nil))
+                continue
+            }
+            do {
+                let result = try await execute(trimmed)
+                results.append(.init(batchIndex: index, result: result))
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let error as SQLServerError where isConnectionBroken(error) {
+                throw error
+            } catch {
+                results.append(.init(batchIndex: index, result: nil, error: error))
+            }
+        }
+
+        return BatchExecutionResult(batchResults: results)
+    }
+
+    /// Streams events from multiple pre-split batches executed sequentially.
+    ///
+    /// Emits `batchStarted`, per-batch stream events, then `batchCompleted` or `batchFailed`
+    /// for each batch. Continues to the next batch on error.
+    @available(macOS 12.0, *)
+    public func streamBatches(_ batches: [String]) -> AsyncThrowingStream<BatchStreamEvent, any Error> {
+        AsyncThrowingStream { continuation in
+            Task { [weak self] in
+                guard let self else {
+                    continuation.finish()
+                    return
+                }
+                for (index, sql) in batches.enumerated() {
+                    if Task.isCancelled {
+                        continuation.finish(throwing: CancellationError())
+                        return
+                    }
+                    let trimmed = sql.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else { continue }
+
+                    continuation.yield(.batchStarted(index: index))
+                    do {
+                        let stream = self.streamQuery(trimmed)
+                        var messages: [SQLServerStreamMessage] = []
+                        for try await event in stream {
+                            if case .message(let msg) = event {
+                                messages.append(msg)
+                            }
+                            continuation.yield(.batchEvent(index: index, event: event))
+                        }
+                        // Check for SQL errors in messages (the stream itself doesn't throw for SQL errors)
+                        if let errorMsg = messages.first(where: { $0.kind == .error }) {
+                            let error = SQLServerError.sqlExecutionError(message: errorMsg.message)
+                            continuation.yield(.batchFailed(index: index, error: error, messages: messages))
+                        } else {
+                            continuation.yield(.batchCompleted(index: index))
+                        }
+                    } catch is CancellationError {
+                        continuation.finish(throwing: CancellationError())
+                        return
+                    } catch {
+                        continuation.yield(.batchFailed(index: index, error: error, messages: []))
+                    }
+                }
+                continuation.finish()
+            }
+        }
+    }
+
+    private func isConnectionBroken(_ error: SQLServerError) -> Bool {
+        if case .connectionClosed = error { return true }
+        return false
     }
 }
