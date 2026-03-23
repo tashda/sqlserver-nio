@@ -547,6 +547,32 @@ extension SQLServerAdministrationClient {
             setClause = "SET NUMERIC_ROUNDABORT \(onOff(on))"
         case .dateCorrelationOptimization(let on):
             setClause = "SET DATE_CORRELATION_OPTIMIZATION \(onOff(on))"
+
+        // Cursor
+        case .cursorCloseOnCommit(let on):
+            setClause = "SET CURSOR_CLOSE_ON_COMMIT \(onOff(on))"
+        case .cursorDefaultLocal(let local):
+            setClause = "SET CURSOR_DEFAULT \(local ? "LOCAL" : "GLOBAL")"
+
+        // Containment
+        case .containment(let option):
+            setClause = "SET CONTAINMENT = \(option.rawValue)"
+        case .defaultFulltextLanguage(let lcid):
+            setClause = "SET DEFAULT_FULLTEXT_LANGUAGE = \(lcid)"
+        case .defaultLanguage(let lcid):
+            setClause = "SET DEFAULT_LANGUAGE = \(lcid)"
+        case .nestedTriggers(let on):
+            setClause = "SET NESTED_TRIGGERS = \(onOff(on))"
+        case .transformNoiseWords(let on):
+            setClause = "SET TRANSFORM_NOISE_WORDS = \(onOff(on))"
+        case .twoDigitYearCutoff(let year):
+            setClause = "SET TWO_DIGIT_YEAR_CUTOFF = \(year)"
+
+        // State
+        case .restrictAccess(let access):
+            setClause = "SET \(access.rawValue) WITH ROLLBACK IMMEDIATE"
+        case .databaseState(let state):
+            setClause = "SET \(state.rawValue)"
         }
 
         let result = try await client.execute("ALTER DATABASE \(escaped) \(setClause)")
