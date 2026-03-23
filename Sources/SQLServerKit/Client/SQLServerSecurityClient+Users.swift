@@ -13,7 +13,11 @@ extension SQLServerSecurityClient {
         let promise = loop.makePromise(of: Void.self)
         if #available(macOS 12.0, *) {
             promise.completeWithTask {
-                try await self.createUser(name: name, login: login, options: options)
+                if let login {
+                    try await self.createUser(name: name, type: .mappedToLogin(login), options: options)
+                } else {
+                    try await self.createUser(name: name, type: .withoutLogin, options: options)
+                }
             }
         } else {
             promise.fail(SQLServerError.unsupportedPlatform)
@@ -27,30 +31,69 @@ extension SQLServerSecurityClient {
         login: String? = nil,
         options: UserOptions = UserOptions()
     ) async throws {
-        let escapedUserName = Self.escapeIdentifier(name)
-        
-        var sql = "CREATE USER \(escapedUserName)"
-        
-        if let login = login {
-            let escapedLogin = Self.escapeIdentifier(login)
-            sql += " FOR LOGIN \(escapedLogin)"
+        if let login {
+            try await createUser(name: name, type: .mappedToLogin(login), options: options)
         } else {
+            try await createUser(name: name, type: .withoutLogin, options: options)
+        }
+    }
+
+    /// Creates a database user with a specific user type.
+    ///
+    /// Supports all six SQL Server database user types:
+    /// - `mappedToLogin`: `CREATE USER ... FOR LOGIN [login]`
+    /// - `withPassword`: `CREATE USER ... WITH PASSWORD = '...'` (contained databases)
+    /// - `withoutLogin`: `CREATE USER ... WITHOUT LOGIN`
+    /// - `windowsUser`: `CREATE USER ... FOR LOGIN [DOMAIN\user]`
+    /// - `mappedToCertificate`: `CREATE USER ... FOR CERTIFICATE [cert]`
+    /// - `mappedToAsymmetricKey`: `CREATE USER ... FOR ASYMMETRIC KEY [key]`
+    @available(macOS 12.0, *)
+    public func createUser(
+        name: String,
+        type: DatabaseUserType,
+        options: UserOptions = UserOptions()
+    ) async throws {
+        let escapedUserName = Self.escapeIdentifier(name)
+        var sql = "CREATE USER \(escapedUserName)"
+
+        switch type {
+        case .mappedToLogin(let login), .windowsUser(let login):
+            sql += " FOR LOGIN \(Self.escapeIdentifier(login))"
+        case .withPassword(let password):
+            let escapedPassword = password.replacingOccurrences(of: "'", with: "''")
+            sql += " WITH PASSWORD = N'\(escapedPassword)'"
+        case .withoutLogin:
             sql += " WITHOUT LOGIN"
+        case .mappedToCertificate(let certName):
+            sql += " FOR CERTIFICATE \(Self.escapeIdentifier(certName))"
+        case .mappedToAsymmetricKey(let keyName):
+            sql += " FOR ASYMMETRIC KEY \(Self.escapeIdentifier(keyName))"
         }
-        
+
+        var withClauses: [String] = []
+
         if let defaultSchema = options.defaultSchema {
-            let escapedSchema = Self.escapeIdentifier(defaultSchema)
-            sql += " WITH DEFAULT_SCHEMA = \(escapedSchema)"
+            withClauses.append("DEFAULT_SCHEMA = \(Self.escapeIdentifier(defaultSchema))")
         }
-        
+
         if let defaultLanguage = options.defaultLanguage {
-            sql += ", DEFAULT_LANGUAGE = '\(defaultLanguage.replacingOccurrences(of: "'", with: "''"))'"
+            let escaped = defaultLanguage.replacingOccurrences(of: "'", with: "''")
+            withClauses.append("DEFAULT_LANGUAGE = '\(escaped)'")
         }
-        
+
         if options.allowEncryptedValueModifications {
-            sql += ", ALLOW_ENCRYPTED_VALUE_MODIFICATIONS = ON"
+            withClauses.append("ALLOW_ENCRYPTED_VALUE_MODIFICATIONS = ON")
         }
-        
+
+        if !withClauses.isEmpty {
+            // For withPassword, WITH is already present; append with comma
+            if case .withPassword = type {
+                sql += ", " + withClauses.joined(separator: ", ")
+            } else {
+                sql += " WITH " + withClauses.joined(separator: ", ")
+            }
+        }
+
         _ = try await exec(sql)
     }
     
@@ -137,7 +180,7 @@ extension SQLServerSecurityClient {
         SELECT COUNT(*) as count
         FROM sys.database_principals
         WHERE name = '\(name.replacingOccurrences(of: "'", with: "''"))'
-        AND type IN ('S', 'U', 'G')
+        AND type IN ('S', 'U', 'G', 'C', 'K', 'E')
         """
         let result = try await queryScalar(sql, as: Int.self)
         return (result ?? 0) > 0
@@ -146,30 +189,37 @@ extension SQLServerSecurityClient {
     @available(macOS 12.0, *)
     public func listUsers() async throws -> [UserInfo] {
         let sql = """
-        SELECT 
-            name,
-            principal_id,
-            type_desc as type,
-            default_schema_name,
-            create_date,
-            modify_date,
-            0 as is_disabled
-        FROM sys.database_principals
-        WHERE type IN ('S', 'U', 'G')
-        AND name NOT IN ('guest', 'INFORMATION_SCHEMA', 'sys')
-        ORDER BY name
+        SELECT
+            dp.name,
+            dp.principal_id,
+            dp.type_desc AS type,
+            dp.default_schema_name,
+            dp.create_date,
+            dp.modify_date,
+            0 AS is_disabled,
+            sp.name AS login_name,
+            dp.authentication_type_desc
+        FROM sys.database_principals dp
+        LEFT JOIN sys.server_principals sp ON dp.sid = sp.sid
+        WHERE dp.type IN ('S', 'U', 'G', 'C', 'K', 'E')
+        AND dp.name NOT IN ('guest', 'INFORMATION_SCHEMA', 'sys')
+        ORDER BY dp.name
         """
-        
+
         let rows = try await query(sql)
         return rows.map { row in
-            UserInfo(
+            let authTypeStr = row.column("authentication_type_desc")?.string
+            let authType = authTypeStr.flatMap { DatabaseUserAuthenticationType(rawValue: $0) }
+            return UserInfo(
                 name: row.column("name")?.string ?? "",
                 principalId: row.column("principal_id")?.int ?? 0,
                 type: row.column("type")?.string ?? "",
                 defaultSchema: row.column("default_schema_name")?.string,
                 createDate: row.column("create_date")?.string,
                 modifyDate: row.column("modify_date")?.string,
-                isDisabled: (row.column("is_disabled")?.int ?? 0) != 0
+                isDisabled: (row.column("is_disabled")?.int ?? 0) != 0,
+                loginName: row.column("login_name")?.string,
+                authenticationType: authType
             )
         }
     }

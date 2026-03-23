@@ -70,7 +70,9 @@ public struct UserInfo: Sendable {
     public let createDate: String?
     public let modifyDate: String?
     public let isDisabled: Bool
-    
+    public let loginName: String?
+    public let authenticationType: DatabaseUserAuthenticationType?
+
     public init(
         name: String,
         principalId: Int,
@@ -78,7 +80,9 @@ public struct UserInfo: Sendable {
         defaultSchema: String? = nil,
         createDate: String? = nil,
         modifyDate: String? = nil,
-        isDisabled: Bool = false
+        isDisabled: Bool = false,
+        loginName: String? = nil,
+        authenticationType: DatabaseUserAuthenticationType? = nil
     ) {
         self.name = name
         self.principalId = principalId
@@ -87,6 +91,8 @@ public struct UserInfo: Sendable {
         self.createDate = createDate
         self.modifyDate = modifyDate
         self.isDisabled = isDisabled
+        self.loginName = loginName
+        self.authenticationType = authenticationType
     }
 }
 
