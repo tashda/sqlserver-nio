@@ -1,4 +1,5 @@
 import Foundation
+import Logging
 import NIO
 
 public struct SQLServerAgentJobStep: Sendable {
@@ -96,6 +97,7 @@ public struct SQLServerAgentJobNotification: Sendable {
 /// steps, schedules and notifications with best-effort rollback on failure.
 public final class SQLServerAgentJobBuilder: @unchecked Sendable {
     private let agent: SQLServerAgentOperations
+    private let logger: Logger
 
     // Core job fields
     private let jobName: String
@@ -117,8 +119,10 @@ public final class SQLServerAgentJobBuilder: @unchecked Sendable {
                 enabled: Bool = true,
                 ownerLoginName: String? = nil,
                 categoryName: String? = nil,
-                autoAttachServer: Bool = true) {
+                autoAttachServer: Bool = true,
+                logger: Logger = Logger(label: "tds.sqlserver.agent-job-builder")) {
         self.agent = agent
+        self.logger = logger
         self.jobName = jobName
         self.description = description
         self.enabled = enabled
@@ -143,11 +147,19 @@ public final class SQLServerAgentJobBuilder: @unchecked Sendable {
             try await agent.createJob(named: jobName, description: description, enabled: enabled, ownerLoginName: ownerLoginName)
             if let category = categoryName, !category.isEmpty {
                 // Ensure category exists then set
-                _ = try? await agent.createCategory(name: category)
+                do {
+                    try await agent.createCategory(name: category)
+                } catch {
+                    logger.debug("Agent job builder: skipping createCategory: \(error)")
+                }
                 try await agent.setJobCategory(named: jobName, categoryName: category)
             }
             if autoAttachServer {
-                _ = try? await agent.addJobServer(jobName: jobName)
+                do {
+                    try await agent.addJobServer(jobName: jobName)
+                } catch {
+                    logger.debug("Agent job builder: skipping addJobServer: \(error)")
+                }
             }
 
             // Steps
@@ -234,10 +246,18 @@ public final class SQLServerAgentJobBuilder: @unchecked Sendable {
                 let present = try await agent.listOperators()
                 if let op = present.first(where: { $0.name.caseInsensitiveCompare(n.operatorName) == .orderedSame }) {
                     if let email = n.operatorEmail, (op.emailAddress ?? "") != email {
-                        _ = try? await agent.updateOperator(name: n.operatorName, emailAddress: email, enabled: nil)
+                        do {
+                            try await agent.updateOperator(name: n.operatorName, emailAddress: email, enabled: nil)
+                        } catch {
+                            logger.debug("Agent job builder: skipping updateOperator: \(error)")
+                        }
                     }
                 } else {
-                    _ = try? await agent.createOperator(name: n.operatorName, emailAddress: n.operatorEmail, enabled: true)
+                    do {
+                        try await agent.createOperator(name: n.operatorName, emailAddress: n.operatorEmail, enabled: true)
+                    } catch {
+                        logger.debug("Agent job builder: skipping createOperator: \(error)")
+                    }
                 }
                 try await agent.setJobEmailNotification(jobName: jobName, operatorName: n.operatorName, notifyLevel: n.level.rawValue)
             }
@@ -247,8 +267,18 @@ public final class SQLServerAgentJobBuilder: @unchecked Sendable {
             return (name: jobName, jobId: jobId)
         } catch {
             // Rollback: delete job and any schedules we created
-            _ = try? await agent.deleteJob(named: jobName)
-            for sch in schedules { _ = try? await agent.deleteSchedule(named: sch.name) }
+            do {
+                try await agent.deleteJob(named: jobName)
+            } catch {
+                logger.debug("Agent job builder: skipping deleteJob rollback: \(error)")
+            }
+            for sch in schedules {
+                do {
+                    try await agent.deleteSchedule(named: sch.name)
+                } catch {
+                    logger.debug("Agent job builder: skipping deleteSchedule rollback: \(error)")
+                }
+            }
             throw error
         }
     }

@@ -1,4 +1,5 @@
 import Foundation
+import Logging
 import NIO
 
 // MARK: - Maintenance Types
@@ -52,6 +53,7 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
                 succeeded: true
             )
         } catch {
+            client.logger.warning("Maintenance operation 'Rebuild Indexes' failed: \(error)")
             return SQLServerMaintenanceResult(
                 operation: "Rebuild Indexes",
                 messages: [error.localizedDescription],
@@ -75,6 +77,7 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
                 succeeded: true
             )
         } catch {
+            client.logger.warning("Maintenance operation 'Rebuild Index' failed: \(error)")
             return SQLServerMaintenanceResult(
                 operation: "Rebuild Index",
                 messages: [error.localizedDescription],
@@ -99,6 +102,7 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
                 succeeded: true
             )
         } catch {
+            client.logger.warning("Maintenance operation 'Update Statistics' failed: \(error)")
             return SQLServerMaintenanceResult(
                 operation: "Update Statistics",
                 messages: [error.localizedDescription],
@@ -122,6 +126,7 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
                 succeeded: true
             )
         } catch {
+            client.logger.warning("Maintenance operation 'Update Index Statistics' failed: \(error)")
             return SQLServerMaintenanceResult(
                 operation: "Update Statistics",
                 messages: [error.localizedDescription],
@@ -145,6 +150,7 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
                 succeeded: true
             )
         } catch {
+            client.logger.warning("Maintenance operation 'Check Database' failed: \(error)")
             return SQLServerMaintenanceResult(
                 operation: "Check Database",
                 messages: [error.localizedDescription],
@@ -168,6 +174,7 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
                 succeeded: true
             )
         } catch {
+            client.logger.warning("Maintenance operation 'Shrink Database' failed: \(error)")
             return SQLServerMaintenanceResult(
                 operation: "Shrink Database",
                 messages: [error.localizedDescription],
@@ -193,6 +200,7 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
                 succeeded: true
             )
         } catch {
+            client.logger.warning("Maintenance operation 'Reorganize Index' failed: \(error)")
             return SQLServerMaintenanceResult(
                 operation: "Reorganize Index",
                 messages: [error.localizedDescription],
@@ -215,6 +223,7 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
                 succeeded: true
             )
         } catch {
+            client.logger.warning("Maintenance operation 'Reorganize Indexes' failed: \(error)")
             return SQLServerMaintenanceResult(
                 operation: "Reorganize Indexes",
                 messages: [error.localizedDescription],

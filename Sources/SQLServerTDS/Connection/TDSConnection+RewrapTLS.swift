@@ -1,3 +1,4 @@
+import Foundation
 import NIO
 import NIOSSL
 import NIOTLS
@@ -40,6 +41,7 @@ public final class PipelineOrganizationHandler: ChannelDuplexHandler, RemovableC
     }
 
     var state = State.start
+    private var tlsHandshakeStart: Date?
 
     public init(
         logger: Logger,
@@ -74,6 +76,8 @@ public final class PipelineOrganizationHandler: ChannelDuplexHandler, RemovableC
     private func _write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) throws {
         switch self.state {
         case .start:
+            tlsHandshakeStart = Date()
+            logger.debug("TLS handshake started")
             let sslHandshakeState = SSLHandshakeState(
                 inputBuffer: context.channel.allocator.buffer(capacity: 1024),
                 outputBuffer: context.channel.allocator.buffer(capacity: 1024),
@@ -134,6 +138,11 @@ public final class PipelineOrganizationHandler: ChannelDuplexHandler, RemovableC
             break
         }
         self.state = .allDone
+        if let start = tlsHandshakeStart {
+            let elapsed = Date().timeIntervalSince(start)
+            let elapsedMs = String(format: "%.1fms", elapsed * 1000)
+            logger.debug("TLS handshake completed in \(elapsedMs)")
+        }
         context.leavePipeline(removalToken: removalToken)
     }
 
