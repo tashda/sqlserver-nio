@@ -1,10 +1,64 @@
+import Foundation
 import SQLServerTDS
+
+/// Shared date formatter — ISO8601DateFormatter is expensive to create and should be reused.
+private let _sharedISO8601Formatter = ISO8601DateFormatter()
 
 public struct SQLServerRow: Sendable {
     internal let base: TDSRow
 
     internal init(base: TDSRow) {
         self.base = base
+    }
+
+    /// Converts all column values to strings in a single pass without intermediate
+    /// `[TDSData]` or `[SQLServerValue]` array allocations. Uses a cached date
+    /// formatter instead of allocating one per cell.
+    public func toStringArray() -> [String?] {
+        let columnCount = base.columnMetadata.count
+        var result: [String?] = []
+        result.reserveCapacity(columnCount)
+
+        for i in 0..<columnCount {
+            guard i < base.columnData.count, let buffer = base.columnData[i].data else {
+                result.append(nil)
+                continue
+            }
+
+            let tdsData = TDSData(metadata: base.columnMetadata[i], value: buffer)
+
+            // Check hierarchyid UDT before generic string conversion
+            if let udtInfo = (base.columnMetadata[i] as? TDSTokens.ColMetadataToken.ColumnData)?.udtInfo,
+               udtInfo.typeName.caseInsensitiveCompare("hierarchyid") == .orderedSame,
+               let bytes = tdsData.bytes,
+               let hid = SQLServerHierarchyID.string(from: bytes) {
+                result.append(hid)
+                continue
+            }
+
+            // Fast type-specific conversion — ordered by frequency for typical queries
+            if let string = tdsData.string { result.append(string); continue }
+            if let int = tdsData.int { result.append(String(int)); continue }
+            if let int64 = tdsData.int64 { result.append(String(int64)); continue }
+            if let double = tdsData.double { result.append(String(double)); continue }
+            if let bool = tdsData.bool { result.append(String(bool)); continue }
+            if let date = tdsData.date {
+                result.append(_sharedISO8601Formatter.string(from: date))
+                continue
+            }
+            if let decimal = tdsData.decimal {
+                result.append(NSDecimalNumber(decimal: decimal).stringValue)
+                continue
+            }
+            if let uuid = tdsData.uuid { result.append(uuid.uuidString); continue }
+            if let bytes = tdsData.bytes {
+                let hex = bytes.map { String(format: "%02X", $0) }.joined()
+                result.append("0x\(hex)")
+                continue
+            }
+            result.append(nil)
+        }
+        return result
     }
 
     public func column(_ name: String) -> SQLServerValue? {
