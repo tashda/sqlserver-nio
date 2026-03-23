@@ -17,6 +17,16 @@ public struct SQLServerQueryStoreOptions: Sendable, Equatable {
     public let sizeBasedCleanupMode: String
     public let waitStatsCaptureMode: String
 
+    // CUSTOM capture policy (SQL Server 2019+, only relevant when queryCaptureMode == "CUSTOM")
+    /// Execution count threshold for custom capture. Default 30.
+    public let captureExecutionCount: Int
+    /// Total compile CPU time threshold in ms. Default 1000.
+    public let captureCompileCpuTimeMs: Int
+    /// Total execution CPU time threshold in ms. Default 100.
+    public let captureExecutionCpuTimeMs: Int
+    /// Stale capture policy threshold in hours. Default 24.
+    public let captureStalePolicyThresholdHours: Int
+
     public init(
         actualState: String,
         desiredState: String,
@@ -28,7 +38,11 @@ public struct SQLServerQueryStoreOptions: Sendable, Equatable {
         maxPlansPerQuery: Int = 200,
         queryCaptureMode: String = "ALL",
         sizeBasedCleanupMode: String = "AUTO",
-        waitStatsCaptureMode: String = "ON"
+        waitStatsCaptureMode: String = "ON",
+        captureExecutionCount: Int = 30,
+        captureCompileCpuTimeMs: Int = 1000,
+        captureExecutionCpuTimeMs: Int = 100,
+        captureStalePolicyThresholdHours: Int = 24
     ) {
         self.actualState = actualState
         self.desiredState = desiredState
@@ -41,6 +55,10 @@ public struct SQLServerQueryStoreOptions: Sendable, Equatable {
         self.queryCaptureMode = queryCaptureMode
         self.sizeBasedCleanupMode = sizeBasedCleanupMode
         self.waitStatsCaptureMode = waitStatsCaptureMode
+        self.captureExecutionCount = captureExecutionCount
+        self.captureCompileCpuTimeMs = captureCompileCpuTimeMs
+        self.captureExecutionCpuTimeMs = captureExecutionCpuTimeMs
+        self.captureStalePolicyThresholdHours = captureStalePolicyThresholdHours
     }
 
     /// Whether Query Store is currently active and collecting data.
@@ -70,6 +88,7 @@ public enum SQLServerQueryStoreOption: Sendable {
     case queryCaptureMode(QueryStoreCaptureMode)
     case sizeBasedCleanupMode(QueryStoreCleanupMode)
     case waitStatsCaptureMode(QueryStoreWaitStatsMode)
+    case customCapturePolicy(executionCount: Int, compileCpuTimeMs: Int, executionCpuTimeMs: Int, stalePolicyThresholdHours: Int)
 }
 
 /// Desired operational state for Query Store.
@@ -243,7 +262,11 @@ public final class SQLServerQueryStoreClient: @unchecked Sendable {
             CAST(max_plans_per_query AS INT) AS max_plans_per_query,
             query_capture_mode_desc,
             size_based_cleanup_mode_desc,
-            wait_stats_capture_mode_desc
+            wait_stats_capture_mode_desc,
+            CAST(ISNULL(capture_policy_execution_count, 30) AS INT) AS capture_policy_execution_count,
+            CAST(ISNULL(capture_policy_total_compile_cpu_time_ms, 1000) AS INT) AS capture_policy_total_compile_cpu_time_ms,
+            CAST(ISNULL(capture_policy_total_execution_cpu_time_ms, 100) AS INT) AS capture_policy_total_execution_cpu_time_ms,
+            CAST(ISNULL(capture_policy_stale_threshold_hours, 24) AS INT) AS capture_policy_stale_threshold_hours
         FROM sys.database_query_store_options
         """
         let rows = try await client.withDatabase(database) { connection in
@@ -263,7 +286,11 @@ public final class SQLServerQueryStoreClient: @unchecked Sendable {
             maxPlansPerQuery: row.column("max_plans_per_query")?.int ?? 200,
             queryCaptureMode: row.column("query_capture_mode_desc")?.string ?? "ALL",
             sizeBasedCleanupMode: row.column("size_based_cleanup_mode_desc")?.string ?? "AUTO",
-            waitStatsCaptureMode: row.column("wait_stats_capture_mode_desc")?.string ?? "ON"
+            waitStatsCaptureMode: row.column("wait_stats_capture_mode_desc")?.string ?? "ON",
+            captureExecutionCount: row.column("capture_policy_execution_count")?.int ?? 30,
+            captureCompileCpuTimeMs: row.column("capture_policy_total_compile_cpu_time_ms")?.int ?? 1000,
+            captureExecutionCpuTimeMs: row.column("capture_policy_total_execution_cpu_time_ms")?.int ?? 100,
+            captureStalePolicyThresholdHours: row.column("capture_policy_stale_threshold_hours")?.int ?? 24
         )
     }
 
@@ -293,6 +320,14 @@ public final class SQLServerQueryStoreClient: @unchecked Sendable {
             setting = "SIZE_BASED_CLEANUP_MODE = \(mode.rawValue)"
         case .waitStatsCaptureMode(let mode):
             setting = "WAIT_STATS_CAPTURE_MODE = \(mode.rawValue)"
+        case .customCapturePolicy(let execCount, let compileCpu, let execCpu, let staleHours):
+            setting = """
+            QUERY_CAPTURE_MODE = CUSTOM, \
+            QUERY_CAPTURE_POLICY = (STALE_CAPTURE_POLICY_THRESHOLD = \(staleHours) HOURS, \
+            EXECUTION_COUNT = \(execCount), \
+            TOTAL_COMPILE_CPU_TIME_MS = \(compileCpu), \
+            TOTAL_EXECUTION_CPU_TIME_MS = \(execCpu))
+            """
         }
         let sql = "ALTER DATABASE [\(escapedDB)] SET QUERY_STORE (\(setting))"
         _ = try await client.execute(sql)
