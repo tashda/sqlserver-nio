@@ -313,20 +313,39 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
     }
 
     // MARK: - Server permissions
+
+    /// Lists all available server-level permissions from the system catalog.
+    internal func listAllServerPermissions() -> EventLoopFuture<[String]> {
+        let sql = "SELECT permission_name FROM sys.fn_builtin_permissions('SERVER') ORDER BY permission_name"
+        return run(sql: sql).map { rows in
+            rows.compactMap { $0.column("permission_name")?.string }
+        }
+    }
+
     internal func grant(permission: ServerPermissionName, to principal: String, withGrantOption: Bool = false) -> EventLoopFuture<Void> {
-        var sql = "GRANT \(permission.rawValue) TO [\(escapeIdentifier(principal))]"
+        grantRaw(permission: permission.rawValue, to: principal, withGrantOption: withGrantOption)
+    }
+    internal func revoke(permission: ServerPermissionName, from principal: String, cascade: Bool = false) -> EventLoopFuture<Void> {
+        revokeRaw(permission: permission.rawValue, from: principal, cascade: cascade)
+    }
+    internal func deny(permission: ServerPermissionName, to principal: String) -> EventLoopFuture<Void> {
+        denyRaw(permission: permission.rawValue, to: principal)
+    }
+
+    internal func grantRaw(permission: String, to principal: String, withGrantOption: Bool = false) -> EventLoopFuture<Void> {
+        var sql = "GRANT \(permission) TO [\(escapeIdentifier(principal))]"
         if withGrantOption { sql += " WITH GRANT OPTION" }
         sql += ";"
         return exec(sql: sql).map { _ in () }
     }
-    internal func revoke(permission: ServerPermissionName, from principal: String, cascade: Bool = false) -> EventLoopFuture<Void> {
-        var sql = "REVOKE \(permission.rawValue) FROM [\(escapeIdentifier(principal))]"
+    internal func revokeRaw(permission: String, from principal: String, cascade: Bool = false) -> EventLoopFuture<Void> {
+        var sql = "REVOKE \(permission) FROM [\(escapeIdentifier(principal))]"
         if cascade { sql += " CASCADE" }
         sql += ";"
         return exec(sql: sql).map { _ in () }
     }
-    internal func deny(permission: ServerPermissionName, to principal: String) -> EventLoopFuture<Void> {
-        let sql = "DENY \(permission.rawValue) TO [\(escapeIdentifier(principal))];"
+    internal func denyRaw(permission: String, to principal: String) -> EventLoopFuture<Void> {
+        let sql = "DENY \(permission) TO [\(escapeIdentifier(principal))];"
         return exec(sql: sql).map { _ in () }
     }
     public struct ServerPermissionInfo: Sendable {
@@ -462,11 +481,19 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
     @available(macOS 12.0, *)
     public func listServerRolesForPrincipal(principal: String) async throws -> [String] { try await listServerRolesForPrincipal(principal: principal).get() }
     @available(macOS 12.0, *)
+    public func listAllServerPermissions() async throws -> [String] { try await listAllServerPermissions().get() }
+    @available(macOS 12.0, *)
     public func grant(permission: ServerPermissionName, to principal: String, withGrantOption: Bool = false) async throws { _ = try await grant(permission: permission, to: principal, withGrantOption: withGrantOption).get() }
     @available(macOS 12.0, *)
     public func revoke(permission: ServerPermissionName, from principal: String, cascade: Bool = false) async throws { _ = try await revoke(permission: permission, from: principal, cascade: cascade).get() }
     @available(macOS 12.0, *)
     public func deny(permission: ServerPermissionName, to principal: String) async throws { _ = try await deny(permission: permission, to: principal).get() }
+    @available(macOS 12.0, *)
+    public func grantRaw(permission: String, to principal: String, withGrantOption: Bool = false) async throws { _ = try await grantRaw(permission: permission, to: principal, withGrantOption: withGrantOption).get() }
+    @available(macOS 12.0, *)
+    public func revokeRaw(permission: String, from principal: String, cascade: Bool = false) async throws { _ = try await revokeRaw(permission: permission, from: principal, cascade: cascade).get() }
+    @available(macOS 12.0, *)
+    public func denyRaw(permission: String, to principal: String) async throws { _ = try await denyRaw(permission: permission, to: principal).get() }
     @available(macOS 12.0, *)
     public func listPermissions(principal: String? = nil) async throws -> [ServerPermissionInfo] { try await listPermissions(principal: principal).get() }
     @available(macOS 12.0, *)
