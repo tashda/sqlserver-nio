@@ -23,21 +23,60 @@ public final class SQLServerMetadataNamespace: @unchecked Sendable {
         }
     }
 
-    /// Checks the current login's server-level permissions relevant to monitoring and maintenance.
+    /// Checks the current login's server-level permissions, roles, and msdb role membership.
+    ///
+    /// Fetches everything in two queries (server-level checks + msdb roles) so the result
+    /// can be cached and reused without per-operation round-trips.
+    /// All SQL functions used work on SQL Server 2016+.
     @available(macOS 12.0, *)
     public func checkServerPermissions() async throws -> ServerPermissions {
-        let sql = """
+        let serverSQL = """
         SELECT
+            IS_SRVROLEMEMBER('sysadmin') AS is_sysadmin,
+            IS_SRVROLEMEMBER('serveradmin') AS is_server_admin,
+            IS_SRVROLEMEMBER('securityadmin') AS is_security_admin,
+            IS_SRVROLEMEMBER('dbcreator') AS is_db_creator,
             HAS_PERMS_BY_NAME(NULL, NULL, 'VIEW SERVER STATE') AS has_view_server_state,
+            HAS_PERMS_BY_NAME(NULL, NULL, 'ALTER ANY LOGIN') AS has_alter_any_login,
+            HAS_PERMS_BY_NAME(NULL, NULL, 'ALTER ANY DATABASE') AS has_alter_any_database,
+            HAS_PERMS_BY_NAME(NULL, NULL, 'ALTER ANY CREDENTIAL') AS has_alter_any_credential,
             HAS_DBACCESS('master') AS has_master_access,
             HAS_DBACCESS('msdb') AS has_msdb_access
         """
-        let rows = try await client.query(sql)
+        let rows = try await client.query(serverSQL)
         let row = rows.first
+
+        let hasMsdbAccess = (row?.column("has_msdb_access")?.int ?? 0) == 1
+        var msdbRoles: Set<String> = []
+
+        if hasMsdbAccess {
+            let msdbSQL = """
+            SELECT r.name AS role_name
+            FROM msdb.sys.database_role_members drm
+            JOIN msdb.sys.database_principals r ON r.principal_id = drm.role_principal_id
+            JOIN msdb.sys.database_principals u ON u.principal_id = drm.member_principal_id
+            WHERE u.sid = SUSER_SID()
+              AND r.name IN (
+                  N'SQLAgentUserRole', N'SQLAgentReaderRole', N'SQLAgentOperatorRole',
+                  N'DatabaseMailUserRole', N'db_owner'
+              )
+            """
+            let roleRows = try await client.query(msdbSQL)
+            msdbRoles = Set(roleRows.compactMap { $0.column("role_name")?.string })
+        }
+
         return ServerPermissions(
+            isSysadmin: (row?.column("is_sysadmin")?.int ?? 0) == 1,
+            isServerAdmin: (row?.column("is_server_admin")?.int ?? 0) == 1,
+            isSecurityAdmin: (row?.column("is_security_admin")?.int ?? 0) == 1,
+            isDBCreator: (row?.column("is_db_creator")?.int ?? 0) == 1,
             hasViewServerState: (row?.column("has_view_server_state")?.int ?? 0) == 1,
+            hasAlterAnyLogin: (row?.column("has_alter_any_login")?.int ?? 0) == 1,
+            hasAlterAnyDatabase: (row?.column("has_alter_any_database")?.int ?? 0) == 1,
+            hasAlterAnyCredential: (row?.column("has_alter_any_credential")?.int ?? 0) == 1,
             hasMasterAccess: (row?.column("has_master_access")?.int ?? 0) == 1,
-            hasMsdbAccess: (row?.column("has_msdb_access")?.int ?? 0) == 1
+            hasMsdbAccess: hasMsdbAccess,
+            msdbRoles: msdbRoles
         )
     }
 
