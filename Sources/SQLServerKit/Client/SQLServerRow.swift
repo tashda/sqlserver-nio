@@ -2,7 +2,8 @@ import Foundation
 import SQLServerTDS
 
 /// Shared date formatter — ISO8601DateFormatter is expensive to create and should be reused.
-private let _sharedISO8601Formatter = ISO8601DateFormatter()
+/// Thread-safe: ISO8601DateFormatter is stateless after initialization.
+nonisolated(unsafe) private let _sharedISO8601Formatter = ISO8601DateFormatter()
 
 public struct SQLServerRow: Sendable {
     internal let base: TDSRow
