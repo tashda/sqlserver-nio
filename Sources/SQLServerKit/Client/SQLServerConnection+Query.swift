@@ -202,15 +202,15 @@ extension SQLServerConnection {
         )
         let source = produced.source
 
-        // Keep auto-read enabled so NIO reads data from the socket as it arrives.
-        // The NIO async sequence buffer handles producer/consumer flow internally.
-        // Disabling auto-read with manual requestRead() causes hangs for large
-        // result sets when the consumer runs on a different executor than NIO.
+        // Row batching accumulator — all callbacks fire on the NIO event loop
+        // so this is single-threaded and safe without locks.
+        let batcher = StreamRowBatcher(source: source, capacity: 256)
 
         let request = RawSqlRequest(
             sql: sql,
-            onRow: { row in _ = source.yield(.row(SQLServerRow(base: row))) },
+            onRow: { row in batcher.addRow(SQLServerRow(base: row)) },
             onMetadata: { metadata in
+                batcher.flush()
                 let columns = metadata.map { column in
                     SQLServerColumnDescription(
                         name: column.colName,
@@ -224,13 +224,18 @@ extension SQLServerConnection {
                 }
                 _ = source.yield(.metadata(columns))
             },
-            onDone: { done in _ = source.yield(.done(SQLServerStreamDone(status: done.status, rowCount: done.doneRowCount))) },
+            onDone: { done in
+                batcher.flush()
+                _ = source.yield(.done(SQLServerStreamDone(status: done.status, rowCount: done.doneRowCount)))
+            },
             onMessage: { token, isError in
+                batcher.flush()
                 _ = source.yield(.message(SQLServerStreamMessage(kind: isError ? .error : .info, number: Int32(token.number), message: token.messageText, state: token.state, severity: token.classValue)))
             }
         )
         let future = self.base.send(request, logger: self.logger)
         future.whenComplete { result in
+            batcher.flush()
             delegate.markFinished()
             switch result {
             case .success: source.finish()
