@@ -92,22 +92,40 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
     /// List databases a login is mapped to (has a user in).
     internal func listLoginDatabaseMappings(login: String) -> EventLoopFuture<[LoginDatabaseMapping]> {
         let loginLit = escapeLiteral(login)
+        // Use a table variable + cursor to iterate online databases.
+        // The key fix: declare the cursor and table variable in a single batch,
+        // and use SET NOCOUNT ON to prevent row-count messages from interfering
+        // with the final SELECT result set.
         let sql = """
+        SET NOCOUNT ON;
         DECLARE @results TABLE (db_name sysname, user_name sysname, default_schema sysname NULL);
+        DECLARE @sid varbinary(85) = SUSER_SID(N'\(loginLit)');
         DECLARE @db sysname;
-        DECLARE cur CURSOR FAST_FORWARD FOR
-        SELECT name FROM sys.databases WHERE state = 0;
-        OPEN cur; FETCH NEXT FROM cur INTO @db;
-        WHILE @@FETCH_STATUS = 0 BEGIN
-            DECLARE @sql nvarchar(max) = N'USE ' + QUOTENAME(@db) + N';
-                INSERT INTO @results
-                SELECT DB_NAME(), dp.name, dp.default_schema_name
-                FROM sys.database_principals dp
-                WHERE dp.sid = SUSER_SID(N''\(loginLit)'')
-                AND dp.type IN (''S'',''U'',''G'');';
-            BEGIN TRY EXEC sp_executesql @sql; END TRY BEGIN CATCH END CATCH;
-            FETCH NEXT FROM cur INTO @db;
-        END; CLOSE cur; DEALLOCATE cur;
+        DECLARE db_cur CURSOR LOCAL FAST_FORWARD FOR
+            SELECT name FROM sys.databases WHERE state = 0 AND database_id > 0;
+        OPEN db_cur;
+        FETCH NEXT FROM db_cur INTO @db;
+        WHILE @@FETCH_STATUS = 0
+        BEGIN
+            BEGIN TRY
+                DECLARE @sql nvarchar(max) = N'SELECT @oName = dp.name, @oSchema = dp.default_schema_name
+                    FROM ' + QUOTENAME(@db) + N'.sys.database_principals dp
+                    WHERE dp.sid = @pSid AND dp.type IN (''S'',''U'',''G'')';
+                DECLARE @oName sysname, @oSchema sysname;
+                SET @oName = NULL; SET @oSchema = NULL;
+                EXEC sp_executesql @sql,
+                    N'@pSid varbinary(85), @oName sysname OUTPUT, @oSchema sysname OUTPUT',
+                    @pSid = @sid, @oName = @oName OUTPUT, @oSchema = @oSchema OUTPUT;
+                IF @oName IS NOT NULL
+                    INSERT INTO @results VALUES (@db, @oName, @oSchema);
+            END TRY
+            BEGIN CATCH
+            END CATCH;
+            FETCH NEXT FROM db_cur INTO @db;
+        END;
+        CLOSE db_cur;
+        DEALLOCATE db_cur;
+        SET NOCOUNT OFF;
         SELECT db_name, user_name, default_schema FROM @results ORDER BY db_name;
         """
         return run(sql: sql).map { rows in
