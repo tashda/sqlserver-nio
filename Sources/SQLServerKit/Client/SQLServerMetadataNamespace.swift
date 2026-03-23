@@ -96,6 +96,19 @@ public final class SQLServerMetadataNamespace: @unchecked Sendable {
         }
     }
 
+    /// Checks whether a database has containment enabled (PARTIAL or FULL).
+    @available(macOS 12.0, *)
+    public func isDatabaseContained(database: String) async throws -> Bool {
+        let escaped = database.replacingOccurrences(of: "'", with: "''")
+        let sql = "SELECT containment FROM sys.databases WHERE name = N'\(escaped)'"
+        let rows = try await client.query(sql)
+        guard let row = rows.first, let containment = row.column("containment")?.int else {
+            return false
+        }
+        // 0 = NONE, 1 = PARTIAL
+        return containment != 0
+    }
+
     // MARK: - Schemas
 
     @available(macOS 12.0, *)

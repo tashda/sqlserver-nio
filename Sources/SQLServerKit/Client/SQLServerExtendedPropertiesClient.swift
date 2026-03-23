@@ -205,6 +205,73 @@ public final class SQLServerExtendedPropertiesClient: @unchecked Sendable {
         }
     }
 
+    // MARK: - User-Level Extended Properties
+
+    /// Lists extended properties for a database user (class = 4, database principal).
+    @available(macOS 12.0, *)
+    public func listForUser(name: String) async throws -> [SQLServerExtendedProperty] {
+        let escaped = Self.escapeLiteral(name)
+        let sql = """
+        SELECT ep.name, CAST(ep.value AS NVARCHAR(MAX)) AS value
+        FROM sys.extended_properties ep
+        WHERE ep.class = 4
+        AND ep.major_id = USER_ID(N'\(escaped)')
+        ORDER BY ep.name
+        """
+        let rows = try await client.query(sql)
+        return rows.compactMap { row in
+            guard let propName = row.column("name")?.string else { return nil }
+            let value = row.column("value")?.string ?? ""
+            return SQLServerExtendedProperty(name: propName, value: value)
+        }
+    }
+
+    /// Adds an extended property to a database user.
+    @available(macOS 12.0, *)
+    public func addForUser(userName: String, name: String, value: String) async throws {
+        let sql = """
+        EXEC sp_addextendedproperty
+            @name = N'\(Self.escapeLiteral(name))',
+            @value = N'\(Self.escapeLiteral(value))',
+            @level0type = N'USER', @level0name = N'\(Self.escapeLiteral(userName))'
+        """
+        _ = try await client.execute(sql)
+    }
+
+    /// Updates an extended property on a database user.
+    @available(macOS 12.0, *)
+    public func updateForUser(userName: String, name: String, value: String) async throws {
+        let sql = """
+        EXEC sp_updateextendedproperty
+            @name = N'\(Self.escapeLiteral(name))',
+            @value = N'\(Self.escapeLiteral(value))',
+            @level0type = N'USER', @level0name = N'\(Self.escapeLiteral(userName))'
+        """
+        _ = try await client.execute(sql)
+    }
+
+    /// Removes an extended property from a database user.
+    @available(macOS 12.0, *)
+    public func dropForUser(userName: String, name: String) async throws {
+        let sql = """
+        EXEC sp_dropextendedproperty
+            @name = N'\(Self.escapeLiteral(name))',
+            @level0type = N'USER', @level0name = N'\(Self.escapeLiteral(userName))'
+        """
+        _ = try await client.execute(sql)
+    }
+
+    /// Adds or updates an extended property on a database user.
+    @available(macOS 12.0, *)
+    public func upsertForUser(userName: String, name: String, value: String) async throws {
+        let existing = try await listForUser(name: userName)
+        if existing.contains(where: { $0.name == name }) {
+            try await updateForUser(userName: userName, name: name, value: value)
+        } else {
+            try await addForUser(userName: userName, name: name, value: value)
+        }
+    }
+
     // MARK: - Helpers
 
     private static func escapeLiteral(_ value: String) -> String {
