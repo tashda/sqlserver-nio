@@ -97,12 +97,41 @@ public enum Securable: Sendable {
     case column(ObjectIdentifier, [String])
 }
 
-public enum ServerPermissionName: String, Sendable {
-    case viewServerState = "VIEW SERVER STATE"
-    case alterAnyLogin = "ALTER ANY LOGIN"
-    case controlServer = "CONTROL SERVER"
+public enum ServerPermissionName: String, Sendable, CaseIterable, Hashable {
+    case administerBulkOperations = "ADMINISTER BULK OPERATIONS"
+    case alterAnyAvailabilityGroup = "ALTER ANY AVAILABILITY GROUP"
+    case alterAnyConnection = "ALTER ANY CONNECTION"
     case alterAnyCredential = "ALTER ANY CREDENTIAL"
+    case alterAnyDatabase = "ALTER ANY DATABASE"
+    case alterAnyEndpoint = "ALTER ANY ENDPOINT"
+    case alterAnyEventNotification = "ALTER ANY EVENT NOTIFICATION"
+    case alterAnyEventSession = "ALTER ANY EVENT SESSION"
+    case alterAnyLinkedServer = "ALTER ANY LINKED SERVER"
+    case alterAnyLogin = "ALTER ANY LOGIN"
+    case alterAnyServerAudit = "ALTER ANY SERVER AUDIT"
+    case alterAnyServerRole = "ALTER ANY SERVER ROLE"
+    case alterResources = "ALTER RESOURCES"
+    case alterServerState = "ALTER SERVER STATE"
+    case alterSettings = "ALTER SETTINGS"
+    case alterTrace = "ALTER TRACE"
+    case authenticateServer = "AUTHENTICATE SERVER"
+    case connectAnyDatabase = "CONNECT ANY DATABASE"
+    case connectSql = "CONNECT SQL"
+    case controlServer = "CONTROL SERVER"
     case createAnyDatabase = "CREATE ANY DATABASE"
+    case createAvailabilityGroup = "CREATE AVAILABILITY GROUP"
+    case createDdlEventNotification = "CREATE DDL EVENT NOTIFICATION"
+    case createEndpoint = "CREATE ENDPOINT"
+    case createServerRole = "CREATE SERVER ROLE"
+    case createTraceEventNotification = "CREATE TRACE EVENT NOTIFICATION"
+    case externalAccessAssembly = "EXTERNAL ACCESS ASSEMBLY"
+    case impersonateAnyLogin = "IMPERSONATE ANY LOGIN"
+    case selectAllUserSecurables = "SELECT ALL USER SECURABLES"
+    case shutdown = "SHUTDOWN"
+    case unsafeAssembly = "UNSAFE ASSEMBLY"
+    case viewAnyDatabase = "VIEW ANY DATABASE"
+    case viewAnyDefinition = "VIEW ANY DEFINITION"
+    case viewServerState = "VIEW SERVER STATE"
 }
 
 public enum DatabasePermissionName: String, Sendable {
