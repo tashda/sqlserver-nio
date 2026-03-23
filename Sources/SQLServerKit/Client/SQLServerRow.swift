@@ -13,8 +13,8 @@ public struct SQLServerRow: Sendable {
     }
 
     /// Converts all column values to strings in a single pass without intermediate
-    /// `[TDSData]` or `[SQLServerValue]` array allocations. Uses a cached date
-    /// formatter instead of allocating one per cell.
+    /// `[TDSData]` or `[SQLServerValue]` array allocations. Uses type-dispatched
+    /// decoding (no cascade of failed type checks) and a cached date formatter.
     public func toStringArray() -> [String?] {
         let columnCount = base.columnMetadata.count
         var result: [String?] = []
@@ -26,40 +26,125 @@ public struct SQLServerRow: Sendable {
                 continue
             }
 
-            let tdsData = TDSData(metadata: base.columnMetadata[i], value: buffer)
+            let metadata = base.columnMetadata[i]
+            let tdsData = TDSData(metadata: metadata, value: buffer)
 
-            // Check hierarchyid UDT before generic string conversion
-            if let udtInfo = (base.columnMetadata[i] as? TDSTokens.ColMetadataToken.ColumnData)?.udtInfo,
-               udtInfo.typeName.caseInsensitiveCompare("hierarchyid") == .orderedSame,
-               let bytes = tdsData.bytes,
-               let hid = SQLServerHierarchyID.string(from: bytes) {
-                result.append(hid)
-                continue
-            }
+            // Direct type dispatch — avoids the cascade of failed type checks
+            // that made the old approach (try .string, try .int, try .date...)
+            // do 6+ failed property accesses per datetime cell.
+            switch metadata.dataType {
+            // String types — direct decode
+            case .nvarchar, .nchar, .nText, .xml:
+                result.append(tdsData.string)
+            case .varchar, .varcharLegacy, .char, .text:
+                result.append(tdsData.string)
 
-            // Fast type-specific conversion — ordered by frequency for typical queries
-            if let string = tdsData.string { result.append(string); continue }
-            if let int = tdsData.int { result.append(String(int)); continue }
-            if let int64 = tdsData.int64 { result.append(String(int64)); continue }
-            if let double = tdsData.double { result.append(String(double)); continue }
-            if let bool = tdsData.bool { result.append(String(bool)); continue }
-            if let date = tdsData.date {
-                result.append(_sharedISO8601Formatter.string(from: date))
-                continue
+            // Integer types — direct decode
+            case .int:
+                if let v = tdsData.int { result.append(String(v)) } else { result.append(nil) }
+            case .bigInt:
+                if let v = tdsData.int64 { result.append(String(v)) } else { result.append(nil) }
+            case .smallInt:
+                if let v = tdsData.int16 { result.append(String(v)) } else { result.append(nil) }
+            case .tinyInt:
+                if let v = tdsData.uint8 { result.append(String(v)) } else { result.append(nil) }
+            case .intn:
+                // Nullable integer — size determines width
+                if let v = tdsData.int64 { result.append(String(v)) }
+                else if let v = tdsData.int { result.append(String(v)) }
+                else { result.append(nil) }
+
+            // Bit
+            case .bit, .bitn:
+                if let v = tdsData.bool { result.append(v ? "1" : "0") } else { result.append(nil) }
+
+            // Float types
+            case .float, .real, .floatn:
+                if let v = tdsData.double { result.append(String(v)) } else { result.append(nil) }
+
+            // Date/time types — use cached formatter
+            case .datetime, .datetime2, .datetimen, .date, .smallDatetime:
+                if let d = tdsData.date { result.append(_sharedISO8601Formatter.string(from: d)) }
+                else { result.append(nil) }
+            case .time:
+                if let d = tdsData.date { result.append(_sharedISO8601Formatter.string(from: d)) }
+                else if let s = tdsData.string { result.append(s) }
+                else { result.append(nil) }
+            case .datetimeOffset:
+                if let d = tdsData.date { result.append(_sharedISO8601Formatter.string(from: d)) }
+                else { result.append(nil) }
+
+            // Decimal/money
+            case .decimal, .numeric, .decimalLegacy, .numericLegacy:
+                if let d = tdsData.decimal { result.append(NSDecimalNumber(decimal: d).stringValue) }
+                else { result.append(nil) }
+            case .money, .smallMoney, .moneyn:
+                if let d = tdsData.decimal { result.append(NSDecimalNumber(decimal: d).stringValue) }
+                else if let v = tdsData.double { result.append(String(v)) }
+                else { result.append(nil) }
+
+            // UUID
+            case .guid:
+                if let u = tdsData.uuid { result.append(u.uuidString) } else { result.append(nil) }
+
+            // Binary
+            case .varbinary, .varbinaryLegacy, .binary, .image:
+                if let bytes = tdsData.bytes {
+                    let hex = bytes.map { String(format: "%02X", $0) }.joined()
+                    result.append("0x\(hex)")
+                } else { result.append(nil) }
+
+            // UDT (hierarchyid, geometry, etc.)
+            case .udt:
+                if let udtInfo = (metadata as? TDSTokens.ColMetadataToken.ColumnData)?.udtInfo,
+                   udtInfo.typeName.caseInsensitiveCompare("hierarchyid") == .orderedSame,
+                   let bytes = tdsData.bytes,
+                   let hid = SQLServerHierarchyID.string(from: bytes) {
+                    result.append(hid)
+                } else if let s = tdsData.string { result.append(s) }
+                else { result.append(nil) }
+
+            // SQL Variant and other types — fallback
+            case .sqlVariant:
+                if let s = tdsData.string { result.append(s) }
+                else if let v = tdsData.int64 { result.append(String(v)) }
+                else if let v = tdsData.double { result.append(String(v)) }
+                else { result.append(nil) }
+
+            default:
+                // Unknown type — try string fallback
+                if let s = tdsData.string { result.append(s) }
+                else { result.append(nil) }
             }
-            if let decimal = tdsData.decimal {
-                result.append(NSDecimalNumber(decimal: decimal).stringValue)
-                continue
-            }
-            if let uuid = tdsData.uuid { result.append(uuid.uuidString); continue }
-            if let bytes = tdsData.bytes {
-                let hex = bytes.map { String(format: "%02X", $0) }.joined()
-                result.append("0x\(hex)")
-                continue
-            }
-            result.append(nil)
         }
         return result
+    }
+
+    /// Returns raw column ByteBuffers for zero-copy streaming. The caller stores
+    /// these as binary row data and decodes to strings lazily at display time.
+    /// This matches postgres-wire's approach of capturing ByteBuffer references
+    /// in the streaming loop instead of converting to strings.
+    public func rawColumnBuffers() -> (buffers: [ByteBuffer?], lengths: [Int], totalLength: Int) {
+        let columnCount = base.columnMetadata.count
+        var buffers: [ByteBuffer?] = []
+        var lengths: [Int] = []
+        var totalLength = 0
+        buffers.reserveCapacity(columnCount)
+        lengths.reserveCapacity(columnCount)
+
+        for i in 0..<columnCount {
+            if i < base.columnData.count, let buffer = base.columnData[i].data {
+                let byteCount = buffer.readableBytes
+                buffers.append(buffer)
+                lengths.append(byteCount)
+                totalLength += 5 + byteCount
+            } else {
+                buffers.append(nil)
+                lengths.append(-1)
+                totalLength += 1
+            }
+        }
+        return (buffers, lengths, totalLength)
     }
 
     public func column(_ name: String) -> SQLServerValue? {
