@@ -7,7 +7,7 @@ SQLServerNIO is a non-blocking Swift client for Microsoft SQL Server built on Sw
 - **Connection Management**: `SQLServerClient` for pooled connections with automatic retries, `SQLServerConnection` for direct connection control
 - **Modern Swift APIs**: Full async/await support with EventLoopFuture fallbacks for compatibility
 - **Transaction Support**: Proper transaction descriptor management with savepoints and isolation levels
-- **Batch Processing**: SQL Server batch separation with GO delimiter support via `SQLServerQuerySplitter`
+- **Batch Processing**: Execute pre-split batches sequentially on a single connection via `executeBatches(_:)` with continue-on-error support
 - **Metadata APIs**: Comprehensive database introspection (tables, columns, indexes, procedures, etc.)
 - **Administrative Tools**: Server management via `SQLServerAdministrationClient` and SQL Agent via `SQLServerAgentClient`
 - **Activity Monitor**: SSMS-like activity snapshots and streaming via `SQLServerActivityMonitor` (2008+)

@@ -9,21 +9,11 @@ extension SQLServerClient {
         on eventLoop: EventLoop? = nil
     ) -> EventLoopFuture<SQLServerExecutionResult> {
         let loop = eventLoop ?? eventLoopGroup.next()
-        let batches = sql.components(separatedBy: "\nGO\n").filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-
-        guard !batches.isEmpty else {
-            return loop.makeSucceededFuture(SQLServerExecutionResult(rows: [TDSRow](), done: [], messages: []))
-        }
-
         let start = Date()
         let sqlSnippet = String(sql.prefix(80))
         let queryLogger = self.logger
         let fut = withConnection(on: loop) { connection in
-            var last: EventLoopFuture<SQLServerExecutionResult> = connection.eventLoop.makeSucceededFuture(SQLServerExecutionResult(rows: [TDSRow](), done: [], messages: []))
-            for batchSql in batches {
-                last = last.flatMap { _ in connection.execute(batchSql) }
-            }
-            return last
+            connection.execute(sql)
         }.map { result -> SQLServerExecutionResult in
             let elapsed = Date().timeIntervalSince(start)
             let elapsedMs = String(format: "%.1fms", elapsed * 1000)
@@ -106,14 +96,4 @@ extension SQLServerClient {
         return promise.futureResult
     }
 
-    internal func isCommentOnlyBatch(_ text: String) -> Bool {
-        let lines = text.components(separatedBy: .newlines)
-        for line in lines {
-            let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmedLine.isEmpty && !trimmedLine.hasPrefix("--") {
-                return false
-            }
-        }
-        return true
-    }
 }
