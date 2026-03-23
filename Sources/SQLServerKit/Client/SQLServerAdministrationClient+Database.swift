@@ -481,4 +481,130 @@ extension SQLServerAdministrationClient {
         return result.messages
     }
 
+    // MARK: - Detach / Attach
+
+    /// Detach a database, releasing its files.
+    @available(macOS 12.0, *)
+    @discardableResult
+    public func detachDatabase(
+        name: String,
+        skipChecks: Bool = false,
+        keepFullTextIndexFiles: Bool = true
+    ) async throws -> [SQLServerStreamMessage] {
+        let escapedName = name.replacingOccurrences(of: "'", with: "''")
+        let skipStr = skipChecks ? "true" : "false"
+        let keepFTStr = keepFullTextIndexFiles ? "true" : "false"
+        let sql = "EXEC sp_detach_db @dbname = N'\(escapedName)', @skipchecks = N'\(skipStr)', @keepfulltextindexfile = N'\(keepFTStr)'"
+        let result = try await client.execute(sql)
+        return result.messages
+    }
+
+    /// Attach a database from existing MDF/NDF/LDF files.
+    @available(macOS 12.0, *)
+    @discardableResult
+    public func attachDatabase(
+        name: String,
+        files: [String]
+    ) async throws -> [SQLServerStreamMessage] {
+        let escaped = Self.escapeIdentifier(name)
+        let fileSpecs = files.map { path in
+            let escapedPath = path.replacingOccurrences(of: "'", with: "''")
+            return "    (FILENAME = N'\(escapedPath)')"
+        }.joined(separator: ",\n")
+        let sql = """
+        CREATE DATABASE \(escaped)
+        ON \(fileSpecs)
+        FOR ATTACH
+        """
+        let result = try await client.execute(sql)
+        return result.messages
+    }
+
+    /// Attach a database and rebuild the transaction log if missing.
+    @available(macOS 12.0, *)
+    @discardableResult
+    public func attachDatabaseRebuildLog(
+        name: String,
+        files: [String]
+    ) async throws -> [SQLServerStreamMessage] {
+        let escaped = Self.escapeIdentifier(name)
+        let fileSpecs = files.map { path in
+            let escapedPath = path.replacingOccurrences(of: "'", with: "''")
+            return "    (FILENAME = N'\(escapedPath)')"
+        }.joined(separator: ",\n")
+        let sql = """
+        CREATE DATABASE \(escaped)
+        ON \(fileSpecs)
+        FOR ATTACH_REBUILD_LOG
+        """
+        let result = try await client.execute(sql)
+        return result.messages
+    }
+
+    /// Get active connections to a database.
+    @available(macOS 12.0, *)
+    public func getActiveConnections(database: String) async throws -> [SQLServerActiveConnection] {
+        let escapedName = database.replacingOccurrences(of: "'", with: "''")
+        let sql = """
+        SELECT
+            s.session_id,
+            COALESCE(s.login_name, '') AS login_name,
+            COALESCE(s.host_name, '') AS host_name,
+            COALESCE(s.program_name, '') AS program_name,
+            COALESCE(s.status, '') AS status
+        FROM sys.dm_exec_sessions s
+        WHERE s.database_id = DB_ID(N'\(escapedName)')
+            AND s.session_id <> @@SPID
+        ORDER BY s.session_id
+        """
+        let rows = try await client.query(sql)
+        return rows.compactMap { row in
+            guard let sessionId = row.column("session_id")?.int else { return nil }
+            return SQLServerActiveConnection(
+                sessionId: sessionId,
+                loginName: row.column("login_name")?.string ?? "",
+                hostName: row.column("host_name")?.string ?? "",
+                programName: row.column("program_name")?.string ?? "",
+                status: row.column("status")?.string ?? ""
+            )
+        }
+    }
+
+    /// Set database to single-user mode.
+    @available(macOS 12.0, *)
+    @discardableResult
+    public func setDatabaseSingleUser(name: String, rollbackImmediate: Bool = true) async throws -> [SQLServerStreamMessage] {
+        let escaped = Self.escapeIdentifier(name)
+        let rollback = rollbackImmediate ? " WITH ROLLBACK IMMEDIATE" : ""
+        let result = try await client.execute("ALTER DATABASE \(escaped) SET SINGLE_USER\(rollback)")
+        return result.messages
+    }
+
+    /// Set database back to multi-user mode.
+    @available(macOS 12.0, *)
+    @discardableResult
+    public func setDatabaseMultiUser(name: String) async throws -> [SQLServerStreamMessage] {
+        let escaped = Self.escapeIdentifier(name)
+        let result = try await client.execute("ALTER DATABASE \(escaped) SET MULTI_USER")
+        return result.messages
+    }
+
+}
+
+/// An active connection to a database.
+public struct SQLServerActiveConnection: Sendable, Identifiable {
+    public var id: Int { sessionId }
+    public let sessionId: Int
+    public let loginName: String
+    public let hostName: String
+    public let programName: String
+    public let status: String
+
+    public init(sessionId: Int, loginName: String, hostName: String, programName: String, status: String) {
+        self.sessionId = sessionId
+        self.loginName = loginName
+        self.hostName = hostName
+        self.programName = programName
+        self.status = status
+    }
 }

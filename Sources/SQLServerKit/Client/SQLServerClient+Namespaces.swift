@@ -30,4 +30,5 @@ extension SQLServerClient {
     public var replication: SQLServerReplicationClient { SQLServerReplicationClient(client: self) }
     public var cms: SQLServerCMSClient { SQLServerCMSClient(client: self) }
     public var serverConfig: SQLServerServerConfigurationClient { SQLServerServerConfigurationClient(client: self) }
+    public var errorLog: SQLServerErrorLogClient { SQLServerErrorLogClient(client: self) }
 }
