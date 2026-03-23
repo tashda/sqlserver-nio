@@ -83,6 +83,40 @@ final class SQLServerStreamDelegate: NIOAsyncSequenceProducerDelegate, @unchecke
     }
 }
 
+// MARK: - Row Batcher
+
+/// Accumulates row events and yields them in batches to reduce async sequence
+/// overhead. All methods are called from the NIO event loop (single-threaded).
+final class StreamRowBatcher: @unchecked Sendable {
+    private let source: NIOThrowingAsyncSequenceProducer<
+        SQLServerStreamEvent, any Error, AdaptiveRowBuffer, SQLServerStreamDelegate
+    >.Source
+    private let capacity: Int
+    private var buffer: [SQLServerStreamEvent]
+
+    init(source: NIOThrowingAsyncSequenceProducer<
+        SQLServerStreamEvent, any Error, AdaptiveRowBuffer, SQLServerStreamDelegate
+    >.Source, capacity: Int) {
+        self.source = source
+        self.capacity = capacity
+        self.buffer = []
+        self.buffer.reserveCapacity(capacity)
+    }
+
+    func addRow(_ row: SQLServerRow) {
+        buffer.append(.row(row))
+        if buffer.count >= capacity {
+            flush()
+        }
+    }
+
+    func flush() {
+        guard !buffer.isEmpty else { return }
+        _ = source.yield(contentsOf: buffer)
+        buffer.removeAll(keepingCapacity: true)
+    }
+}
+
 // MARK: - Public sequence type
 
 /// A back-pressure-aware async sequence of `SQLServerStreamEvent` values.
