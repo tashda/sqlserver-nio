@@ -144,11 +144,13 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
         let timeoutNanos = Int64(timeout * 1_000_000_000)
         let timeoutTask = targetLoop.scheduleTask(deadline: .now() + .nanoseconds(timeoutNanos)) { [weak self] in
             // Remove the timed-out waiter from the queue
-            self?.lock.withLock {
+            let waiterCount: Int = self?.lock.withLock {
                 if let index = self?.waiters.firstIndex(where: { $0.id == requestID }) {
                     self?.waiters.remove(at: index)
                 }
-            }
+                return self?.waiters.count ?? 0
+            } ?? 0
+            self?.logger.warning("Connection pool checkout timed out after \(timeout)s, waiters=\(waiterCount)")
             promise.fail(SQLServerError.timeout(
                 description: "connection pool checkout timed out after \(timeout)s (pool may be exhausted or a connection is stuck)",
                 underlying: nil
@@ -454,6 +456,10 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
         self.lock.withLock {
             self.leased[Swift.ObjectIdentifier(connection)] = connection
         }
+        let poolStats = self.lock.withLock {
+            (active: self.activeConnections, idle: self.idle.count, waiters: self.waiters.count)
+        }
+        logger.debug("Pool checkout: active=\(poolStats.active) idle=\(poolStats.idle) waiters=\(poolStats.waiters)")
         if let validationQuery = configuration.validationQuery {
             connection.rawSql(validationQuery).whenComplete { result in
                 switch result {
