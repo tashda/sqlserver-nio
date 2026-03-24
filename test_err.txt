@@ -1,0 +1,355 @@
+[0/1] Planning build
+[1/1] Compiling plugin Swift-DocC Preview
+[2/2] Compiling plugin Swift-DocC
+Building for debugging...
+[2/7] Write swift-version--58304C5D6DBC2206.txt
+[4/41] Compiling SQLServerKitTests AdvancedScriptingAndBITests.swift
+/Users/k/Development/sqlserver-nio/Tests/AdvancedTests/AdvancedScriptingAndBITests.swift:43:15: error: initializer for conditional binding must have Optional type, not 'SQLServerBulkCopyClient'
+41 |         logger.info("🔧 Testing Bulk Copy Schema Inference...")
+42 |         
+43 |         guard let bulkClient = client.bulkCopy else {
+   |               `- error: initializer for conditional binding must have Optional type, not 'SQLServerBulkCopyClient'
+44 |             XCTFail("Bulk copy client should be available")
+45 |             return
+[5/41] Compiling SQLServerKitTests ManagementGovernanceTests.swift
+/Users/k/Development/sqlserver-nio/Tests/AdvancedTests/AdvancedScriptingAndBITests.swift:43:15: error: initializer for conditional binding must have Optional type, not 'SQLServerBulkCopyClient'
+41 |         logger.info("🔧 Testing Bulk Copy Schema Inference...")
+42 |         
+43 |         guard let bulkClient = client.bulkCopy else {
+   |               `- error: initializer for conditional binding must have Optional type, not 'SQLServerBulkCopyClient'
+44 |             XCTFail("Bulk copy client should be available")
+45 |             return
+[6/41] Compiling SQLServerKitTests PartitionSchemeMatrixTests.swift
+/Users/k/Development/sqlserver-nio/Tests/AdvancedTests/AdvancedScriptingAndBITests.swift:43:15: error: initializer for conditional binding must have Optional type, not 'SQLServerBulkCopyClient'
+41 |         logger.info("🔧 Testing Bulk Copy Schema Inference...")
+42 |         
+43 |         guard let bulkClient = client.bulkCopy else {
+   |               `- error: initializer for conditional binding must have Optional type, not 'SQLServerBulkCopyClient'
+44 |             XCTFail("Bulk copy client should be available")
+45 |             return
+[7/41] Compiling SQLServerKitTests PolyBaseClientTests.swift
+/Users/k/Development/sqlserver-nio/Tests/AdvancedTests/AdvancedScriptingAndBITests.swift:43:15: error: initializer for conditional binding must have Optional type, not 'SQLServerBulkCopyClient'
+41 |         logger.info("🔧 Testing Bulk Copy Schema Inference...")
+42 |         
+43 |         guard let bulkClient = client.bulkCopy else {
+   |               `- error: initializer for conditional binding must have Optional type, not 'SQLServerBulkCopyClient'
+44 |             XCTFail("Bulk copy client should be available")
+45 |             return
+[8/44] Compiling SQLServerKitTests SecurityLifecycleTests.swift
+/Users/k/Development/sqlserver-nio/Tests/SecurityTests/SecurityParityTests.swift:60:60: error: value of type '[ApplicationRoleInfo]' has no member 'get'
+58 |         let dbSec = SQLServerSecurityClient(client: client)
+59 |         _ = try await dbSec.createApplicationRole(name: "AppRoleNIO", password: "Pass!123", defaultSchema: "dbo").get()
+60 |         let roles = try await dbSec.listApplicationRoles().get()
+   |                                                            `- error: value of type '[ApplicationRoleInfo]' has no member 'get'
+61 |         XCTAssertTrue(roles.contains(where: { $0.name.caseInsensitiveCompare("AppRoleNIO") == .orderedSame }))
+62 |         _ = try? await dbSec.alterApplicationRole(name: "AppRoleNIO", newName: "AppRoleNIO2").get()
+[9/44] Compiling SQLServerKitTests SecurityParityTests.swift
+/Users/k/Development/sqlserver-nio/Tests/SecurityTests/SecurityParityTests.swift:60:60: error: value of type '[ApplicationRoleInfo]' has no member 'get'
+58 |         let dbSec = SQLServerSecurityClient(client: client)
+59 |         _ = try await dbSec.createApplicationRole(name: "AppRoleNIO", password: "Pass!123", defaultSchema: "dbo").get()
+60 |         let roles = try await dbSec.listApplicationRoles().get()
+   |                                                            `- error: value of type '[ApplicationRoleInfo]' has no member 'get'
+61 |         XCTAssertTrue(roles.contains(where: { $0.name.caseInsensitiveCompare("AppRoleNIO") == .orderedSame }))
+62 |         _ = try? await dbSec.alterApplicationRole(name: "AppRoleNIO", newName: "AppRoleNIO2").get()
+[10/44] Compiling SQLServerKitTests SecurityPermissionTests.swift
+/Users/k/Development/sqlserver-nio/Tests/SecurityTests/SecurityParityTests.swift:60:60: error: value of type '[ApplicationRoleInfo]' has no member 'get'
+58 |         let dbSec = SQLServerSecurityClient(client: client)
+59 |         _ = try await dbSec.createApplicationRole(name: "AppRoleNIO", password: "Pass!123", defaultSchema: "dbo").get()
+60 |         let roles = try await dbSec.listApplicationRoles().get()
+   |                                                            `- error: value of type '[ApplicationRoleInfo]' has no member 'get'
+61 |         XCTAssertTrue(roles.contains(where: { $0.name.caseInsensitiveCompare("AppRoleNIO") == .orderedSame }))
+62 |         _ = try? await dbSec.alterApplicationRole(name: "AppRoleNIO", newName: "AppRoleNIO2").get()
+[11/44] Compiling SQLServerKitTests EffectivePermissionTests.swift
+[12/44] Compiling SQLServerKitTests RowLevelSecurityTests.swift
+[13/44] Compiling SQLServerKitTests SecurityComplexTests.swift
+[14/44] Compiling SQLServerKitTests SecurityErrorTests.swift
+[15/44] Compiling SQLServerKitTests SecurityRoleTests.swift
+[16/44] Compiling SQLServerKitTests SecurityTestBase.swift
+[17/44] Compiling SQLServerKitTests SecurityUserTests.swift
+[18/45] Compiling SQLServerKitTests AlwaysEncryptedTests.swift
+[19/45] Compiling SQLServerKitTests ServerTriggerClientTests.swift
+[20/45] Compiling SQLServerKitTests ServiceBrokerClientTests.swift
+[21/45] Compiling SQLServerKitTests TemporalClientTests.swift
+[22/45] Compiling SQLServerKitTests TemporalMatrixTests.swift
+[23/45] Compiling SQLServerKitTests AgentTestBase.swift
+[24/45] Compiling SQLServerKitTests LargeResultSetTests.swift
+[25/45] Compiling SQLServerKitTests MultiResultSetTests.swift
+[26/45] Compiling SQLServerKitTests QueryTests.swift
+[27/45] Compiling SQLServerKitTests TemporalPartitionedTests.swift
+[28/45] Compiling SQLServerKitTests AgentEnhancedAPITests.swift
+[29/45] Compiling SQLServerKitTests AgentIntegrationTests.swift
+[30/45] Compiling SQLServerKitTests AgentJobBuilderTests.swift
+[31/45] Compiling SQLServerKitTests PLPChunkingTests.swift
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/PLPChunkingTests.swift:42:44: warning: result of call to 'withConnection' is unused [#no-usage]
+40 |                         let nv = String(repeating: "ユ", count: s/2)
+41 |                         let vb = Array((0..<s).map { UInt8($0 & 0xFF) })
+42 |                         try await dbClient.withConnection { connection in
+   |                                            `- warning: result of call to 'withConnection' is unused [#no-usage]
+43 |                             try await connection.insertRow(into: table, values: ["nv": .nString(nv), "vb": .bytes(vb)])
+44 |                         }
+
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/SQLServerSpatialTests.swift:18:16: error: value of type 'ByteBuffer' has no member 'writeDouble'
+16 |         buffer.writeInteger(UInt8(1))
+17 |         buffer.writeInteger(UInt8(0x08))
+18 |         buffer.writeDouble(10.0, endianness: .little)
+   |                `- error: value of type 'ByteBuffer' has no member 'writeDouble'
+19 |         buffer.writeDouble(20.0, endianness: .little)
+20 |         
+
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/SQLServerSpatialTests.swift:18:47: error: cannot infer contextual base in reference to member 'little'
+16 |         buffer.writeInteger(UInt8(1))
+17 |         buffer.writeInteger(UInt8(0x08))
+18 |         buffer.writeDouble(10.0, endianness: .little)
+   |                                               `- error: cannot infer contextual base in reference to member 'little'
+19 |         buffer.writeDouble(20.0, endianness: .little)
+20 |         
+
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/SQLServerSpatialTests.swift:19:16: error: value of type 'ByteBuffer' has no member 'writeDouble'
+17 |         buffer.writeInteger(UInt8(0x08))
+18 |         buffer.writeDouble(10.0, endianness: .little)
+19 |         buffer.writeDouble(20.0, endianness: .little)
+   |                `- error: value of type 'ByteBuffer' has no member 'writeDouble'
+20 |         
+21 |         let spatial = try XCTUnwrap(SQLServerSpatial.decode(from: &buffer))
+
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/SQLServerSpatialTests.swift:19:47: error: cannot infer contextual base in reference to member 'little'
+17 |         buffer.writeInteger(UInt8(0x08))
+18 |         buffer.writeDouble(10.0, endianness: .little)
+19 |         buffer.writeDouble(20.0, endianness: .little)
+   |                                               `- error: cannot infer contextual base in reference to member 'little'
+20 |         
+21 |         let spatial = try XCTUnwrap(SQLServerSpatial.decode(from: &buffer))
+[32/45] Compiling SQLServerKitTests SQLServerSpatialTests.swift
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/PLPChunkingTests.swift:42:44: warning: result of call to 'withConnection' is unused [#no-usage]
+40 |                         let nv = String(repeating: "ユ", count: s/2)
+41 |                         let vb = Array((0..<s).map { UInt8($0 & 0xFF) })
+42 |                         try await dbClient.withConnection { connection in
+   |                                            `- warning: result of call to 'withConnection' is unused [#no-usage]
+43 |                             try await connection.insertRow(into: table, values: ["nv": .nString(nv), "vb": .bytes(vb)])
+44 |                         }
+
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/SQLServerSpatialTests.swift:18:16: error: value of type 'ByteBuffer' has no member 'writeDouble'
+16 |         buffer.writeInteger(UInt8(1))
+17 |         buffer.writeInteger(UInt8(0x08))
+18 |         buffer.writeDouble(10.0, endianness: .little)
+   |                `- error: value of type 'ByteBuffer' has no member 'writeDouble'
+19 |         buffer.writeDouble(20.0, endianness: .little)
+20 |         
+
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/SQLServerSpatialTests.swift:18:47: error: cannot infer contextual base in reference to member 'little'
+16 |         buffer.writeInteger(UInt8(1))
+17 |         buffer.writeInteger(UInt8(0x08))
+18 |         buffer.writeDouble(10.0, endianness: .little)
+   |                                               `- error: cannot infer contextual base in reference to member 'little'
+19 |         buffer.writeDouble(20.0, endianness: .little)
+20 |         
+
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/SQLServerSpatialTests.swift:19:16: error: value of type 'ByteBuffer' has no member 'writeDouble'
+17 |         buffer.writeInteger(UInt8(0x08))
+18 |         buffer.writeDouble(10.0, endianness: .little)
+19 |         buffer.writeDouble(20.0, endianness: .little)
+   |                `- error: value of type 'ByteBuffer' has no member 'writeDouble'
+20 |         
+21 |         let spatial = try XCTUnwrap(SQLServerSpatial.decode(from: &buffer))
+
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/SQLServerSpatialTests.swift:19:47: error: cannot infer contextual base in reference to member 'little'
+17 |         buffer.writeInteger(UInt8(0x08))
+18 |         buffer.writeDouble(10.0, endianness: .little)
+19 |         buffer.writeDouble(20.0, endianness: .little)
+   |                                               `- error: cannot infer contextual base in reference to member 'little'
+20 |         
+21 |         let spatial = try XCTUnwrap(SQLServerSpatial.decode(from: &buffer))
+[33/45] Compiling SQLServerKitTests DatabaseFileTests.swift
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/PLPChunkingTests.swift:42:44: warning: result of call to 'withConnection' is unused [#no-usage]
+40 |                         let nv = String(repeating: "ユ", count: s/2)
+41 |                         let vb = Array((0..<s).map { UInt8($0 & 0xFF) })
+42 |                         try await dbClient.withConnection { connection in
+   |                                            `- warning: result of call to 'withConnection' is unused [#no-usage]
+43 |                             try await connection.insertRow(into: table, values: ["nv": .nString(nv), "vb": .bytes(vb)])
+44 |                         }
+
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/SQLServerSpatialTests.swift:18:16: error: value of type 'ByteBuffer' has no member 'writeDouble'
+16 |         buffer.writeInteger(UInt8(1))
+17 |         buffer.writeInteger(UInt8(0x08))
+18 |         buffer.writeDouble(10.0, endianness: .little)
+   |                `- error: value of type 'ByteBuffer' has no member 'writeDouble'
+19 |         buffer.writeDouble(20.0, endianness: .little)
+20 |         
+
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/SQLServerSpatialTests.swift:18:47: error: cannot infer contextual base in reference to member 'little'
+16 |         buffer.writeInteger(UInt8(1))
+17 |         buffer.writeInteger(UInt8(0x08))
+18 |         buffer.writeDouble(10.0, endianness: .little)
+   |                                               `- error: cannot infer contextual base in reference to member 'little'
+19 |         buffer.writeDouble(20.0, endianness: .little)
+20 |         
+
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/SQLServerSpatialTests.swift:19:16: error: value of type 'ByteBuffer' has no member 'writeDouble'
+17 |         buffer.writeInteger(UInt8(0x08))
+18 |         buffer.writeDouble(10.0, endianness: .little)
+19 |         buffer.writeDouble(20.0, endianness: .little)
+   |                `- error: value of type 'ByteBuffer' has no member 'writeDouble'
+20 |         
+21 |         let spatial = try XCTUnwrap(SQLServerSpatial.decode(from: &buffer))
+
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/SQLServerSpatialTests.swift:19:47: error: cannot infer contextual base in reference to member 'little'
+17 |         buffer.writeInteger(UInt8(0x08))
+18 |         buffer.writeDouble(10.0, endianness: .little)
+19 |         buffer.writeDouble(20.0, endianness: .little)
+   |                                               `- error: cannot infer contextual base in reference to member 'little'
+20 |         
+21 |         let spatial = try XCTUnwrap(SQLServerSpatial.decode(from: &buffer))
+[34/45] Compiling SQLServerKitTests DatabaseFileUnitTests.swift
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/PLPChunkingTests.swift:42:44: warning: result of call to 'withConnection' is unused [#no-usage]
+40 |                         let nv = String(repeating: "ユ", count: s/2)
+41 |                         let vb = Array((0..<s).map { UInt8($0 & 0xFF) })
+42 |                         try await dbClient.withConnection { connection in
+   |                                            `- warning: result of call to 'withConnection' is unused [#no-usage]
+43 |                             try await connection.insertRow(into: table, values: ["nv": .nString(nv), "vb": .bytes(vb)])
+44 |                         }
+
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/SQLServerSpatialTests.swift:18:16: error: value of type 'ByteBuffer' has no member 'writeDouble'
+16 |         buffer.writeInteger(UInt8(1))
+17 |         buffer.writeInteger(UInt8(0x08))
+18 |         buffer.writeDouble(10.0, endianness: .little)
+   |                `- error: value of type 'ByteBuffer' has no member 'writeDouble'
+19 |         buffer.writeDouble(20.0, endianness: .little)
+20 |         
+
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/SQLServerSpatialTests.swift:18:47: error: cannot infer contextual base in reference to member 'little'
+16 |         buffer.writeInteger(UInt8(1))
+17 |         buffer.writeInteger(UInt8(0x08))
+18 |         buffer.writeDouble(10.0, endianness: .little)
+   |                                               `- error: cannot infer contextual base in reference to member 'little'
+19 |         buffer.writeDouble(20.0, endianness: .little)
+20 |         
+
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/SQLServerSpatialTests.swift:19:16: error: value of type 'ByteBuffer' has no member 'writeDouble'
+17 |         buffer.writeInteger(UInt8(0x08))
+18 |         buffer.writeDouble(10.0, endianness: .little)
+19 |         buffer.writeDouble(20.0, endianness: .little)
+   |                `- error: value of type 'ByteBuffer' has no member 'writeDouble'
+20 |         
+21 |         let spatial = try XCTUnwrap(SQLServerSpatial.decode(from: &buffer))
+
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/SQLServerSpatialTests.swift:19:47: error: cannot infer contextual base in reference to member 'little'
+17 |         buffer.writeInteger(UInt8(0x08))
+18 |         buffer.writeDouble(10.0, endianness: .little)
+19 |         buffer.writeDouble(20.0, endianness: .little)
+   |                                               `- error: cannot infer contextual base in reference to member 'little'
+20 |         
+21 |         let spatial = try XCTUnwrap(SQLServerSpatial.decode(from: &buffer))
+[35/46] Emitting module SQLServerKitTests
+/Users/k/Development/sqlserver-nio/Tests/TableTests/TableScriptingTests.swift:108:48: warning: 'executeScript' is deprecated: Split batches client-side and use executeBatches(_:) instead [#DeprecatedDeclaration]
+106 |                     try await dbAdminClient.dropTable(name: String(table), schema: "dbo", database: db)
+107 |                     do {
+108 |                         _ = try await dbClient.executeScript(ddl)
+    |                                                `- warning: 'executeScript' is deprecated: Split batches client-side and use executeBatches(_:) instead [#DeprecatedDeclaration]
+109 |                     } catch {
+110 |                         XCTFail("Failed to recreate \(table) from scripted DDL: \(error)\nDDL=\n\(ddl)")
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[36/46] Compiling SQLServerKitTests DatabaseOptionsTests.swift
+[37/46] Compiling SQLServerKitTests DatabasePropertiesExtendedTests.swift
+[38/46] Compiling SQLServerKitTests AuditTests.swift
+[39/46] Compiling SQLServerKitTests DynamicDataMaskingTests.swift
+[40/46] Compiling SQLServerKitTests StandardTestBase.swift
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/DataTypeRoundTripTests.swift:63:36: warning: result of call to 'withConnection' is unused [#no-usage]
+ 61 |                 try await dbAdminClient.createTable(name: tableName, columns: columns)
+ 62 | 
+ 63 |                 try await dbClient.withConnection { connection in
+    |                                    `- warning: result of call to 'withConnection' is unused [#no-usage]
+ 64 |                     try await connection.insertRow(into: tableName, values: [
+ 65 |                         "bit_value": .bool(true),
+
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/LegacyLOBTests.swift:44:40: warning: result of call to 'withConnection' is unused [#no-usage]
+ 42 |                     let ntextPayload = String(repeating: "Ω", count: 4_096)
+ 43 |                     let imagePayload = Array((0..<8192).map { UInt8($0 & 0xFF) })
+ 44 |                     try await dbClient.withConnection { connection in
+    |                                        `- warning: result of call to 'withConnection' is unused [#no-usage]
+ 45 |                         try await connection.insertRow(into: table, values: [
+ 46 |                             "t": .string(textPayload),
+
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/LegacyLOBTests.swift:61:40: warning: result of call to 'withConnection' is unused [#no-usage]
+ 59 | 
+ 60 |                     // Also verify NBCROW behavior with nulls
+ 61 |                     try await dbClient.withConnection { connection in
+    |                                        `- warning: result of call to 'withConnection' is unused [#no-usage]
+ 62 |                         try await connection.insertRow(into: table, values: ["t": .null, "n": .null, "i": .null])
+ 63 |                     }
+[41/46] Compiling SQLServerKitTests DataTypeRoundTripTests.swift
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/DataTypeRoundTripTests.swift:63:36: warning: result of call to 'withConnection' is unused [#no-usage]
+ 61 |                 try await dbAdminClient.createTable(name: tableName, columns: columns)
+ 62 | 
+ 63 |                 try await dbClient.withConnection { connection in
+    |                                    `- warning: result of call to 'withConnection' is unused [#no-usage]
+ 64 |                     try await connection.insertRow(into: tableName, values: [
+ 65 |                         "bit_value": .bool(true),
+
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/LegacyLOBTests.swift:44:40: warning: result of call to 'withConnection' is unused [#no-usage]
+ 42 |                     let ntextPayload = String(repeating: "Ω", count: 4_096)
+ 43 |                     let imagePayload = Array((0..<8192).map { UInt8($0 & 0xFF) })
+ 44 |                     try await dbClient.withConnection { connection in
+    |                                        `- warning: result of call to 'withConnection' is unused [#no-usage]
+ 45 |                         try await connection.insertRow(into: table, values: [
+ 46 |                             "t": .string(textPayload),
+
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/LegacyLOBTests.swift:61:40: warning: result of call to 'withConnection' is unused [#no-usage]
+ 59 | 
+ 60 |                     // Also verify NBCROW behavior with nulls
+ 61 |                     try await dbClient.withConnection { connection in
+    |                                        `- warning: result of call to 'withConnection' is unused [#no-usage]
+ 62 |                         try await connection.insertRow(into: table, values: ["t": .null, "n": .null, "i": .null])
+ 63 |                     }
+[42/46] Compiling SQLServerKitTests LegacyLOBTests.swift
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/DataTypeRoundTripTests.swift:63:36: warning: result of call to 'withConnection' is unused [#no-usage]
+ 61 |                 try await dbAdminClient.createTable(name: tableName, columns: columns)
+ 62 | 
+ 63 |                 try await dbClient.withConnection { connection in
+    |                                    `- warning: result of call to 'withConnection' is unused [#no-usage]
+ 64 |                     try await connection.insertRow(into: tableName, values: [
+ 65 |                         "bit_value": .bool(true),
+
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/LegacyLOBTests.swift:44:40: warning: result of call to 'withConnection' is unused [#no-usage]
+ 42 |                     let ntextPayload = String(repeating: "Ω", count: 4_096)
+ 43 |                     let imagePayload = Array((0..<8192).map { UInt8($0 & 0xFF) })
+ 44 |                     try await dbClient.withConnection { connection in
+    |                                        `- warning: result of call to 'withConnection' is unused [#no-usage]
+ 45 |                         try await connection.insertRow(into: table, values: [
+ 46 |                             "t": .string(textPayload),
+
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/LegacyLOBTests.swift:61:40: warning: result of call to 'withConnection' is unused [#no-usage]
+ 59 | 
+ 60 |                     // Also verify NBCROW behavior with nulls
+ 61 |                     try await dbClient.withConnection { connection in
+    |                                        `- warning: result of call to 'withConnection' is unused [#no-usage]
+ 62 |                         try await connection.insertRow(into: table, values: ["t": .null, "n": .null, "i": .null])
+ 63 |                     }
+[43/46] Compiling SQLServerKitTests NBCRowBitmapTests.swift
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/DataTypeRoundTripTests.swift:63:36: warning: result of call to 'withConnection' is unused [#no-usage]
+ 61 |                 try await dbAdminClient.createTable(name: tableName, columns: columns)
+ 62 | 
+ 63 |                 try await dbClient.withConnection { connection in
+    |                                    `- warning: result of call to 'withConnection' is unused [#no-usage]
+ 64 |                     try await connection.insertRow(into: tableName, values: [
+ 65 |                         "bit_value": .bool(true),
+
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/LegacyLOBTests.swift:44:40: warning: result of call to 'withConnection' is unused [#no-usage]
+ 42 |                     let ntextPayload = String(repeating: "Ω", count: 4_096)
+ 43 |                     let imagePayload = Array((0..<8192).map { UInt8($0 & 0xFF) })
+ 44 |                     try await dbClient.withConnection { connection in
+    |                                        `- warning: result of call to 'withConnection' is unused [#no-usage]
+ 45 |                         try await connection.insertRow(into: table, values: [
+ 46 |                             "t": .string(textPayload),
+
+/Users/k/Development/sqlserver-nio/Tests/DataTypeTests/LegacyLOBTests.swift:61:40: warning: result of call to 'withConnection' is unused [#no-usage]
+ 59 | 
+ 60 |                     // Also verify NBCROW behavior with nulls
+ 61 |                     try await dbClient.withConnection { connection in
+    |                                        `- warning: result of call to 'withConnection' is unused [#no-usage]
+ 62 |                         try await connection.insertRow(into: table, values: ["t": .null, "n": .null, "i": .null])
+ 63 |                     }
+[44/48] Compiling SQLServerKitTests MinimalAgentTests.swift
+[45/48] Compiling SQLServerKitTests ConnectionTests.swift
+[46/48] Compiling SQLServerKitTests BatchExecutionTests.swift
+error: fatalError

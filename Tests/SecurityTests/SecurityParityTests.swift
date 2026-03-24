@@ -56,11 +56,11 @@ final class SQLServerSecurityParityTests: XCTestCase, @unchecked Sendable {
 
     func testApplicationRoleLifecycle() async throws {
         let dbSec = SQLServerSecurityClient(client: client)
-        _ = try await dbSec.createApplicationRole(name: "AppRoleNIO", password: "Pass!123", defaultSchema: "dbo").get()
-        let roles = try await dbSec.listApplicationRoles().get()
+        _ = try await dbSec.createApplicationRole(name: "AppRoleNIO", password: "Pass!123", defaultSchema: "dbo")
+        let roles = try await dbSec.listApplicationRoles()
         XCTAssertTrue(roles.contains(where: { $0.name.caseInsensitiveCompare("AppRoleNIO") == .orderedSame }))
-        _ = try? await dbSec.alterApplicationRole(name: "AppRoleNIO", newName: "AppRoleNIO2").get()
-        _ = try await dbSec.dropApplicationRole(name: "AppRoleNIO2").get()
+        _ = try? await dbSec.alterApplicationRole(name: "AppRoleNIO", newName: "AppRoleNIO2")
+        _ = try? await dbSec.dropApplicationRole(name: "AppRoleNIO2")
     }
 
     func testSchemaHelpers() async throws {

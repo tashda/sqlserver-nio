@@ -36,4 +36,13 @@ extension SQLServerClient {
     public var temporal: SQLServerTemporalClient { SQLServerTemporalClient(client: self) }
     public var serviceBroker: SQLServerServiceBrokerClient { SQLServerServiceBrokerClient(client: self) }
     public var polyBase: SQLServerPolyBaseClient { SQLServerPolyBaseClient(client: self) }
+    public var tuning: SQLServerTuningClient { SQLServerTuningClient(client: self) }
+    public var profiler: SQLServerProfilerClient { SQLServerProfilerClient(client: self) }
+    public var resourceGovernor: SQLServerResourceGovernorClient { SQLServerResourceGovernorClient(client: self) }
+    public var policy: SQLServerPolicyClient { SQLServerPolicyClient(client: self) }
+    public var dependencies: SQLServerDependencyClient { SQLServerDependencyClient(client: self) }
+    public var dac: SQLServerDACClient { SQLServerDACClient(client: self) }
+    public var ssis: SQLServerSSISClient { SQLServerSSISClient(client: self) }
+    public var ssas: SQLServerSSASClient { SQLServerSSASClient(client: self) }
+    public var ssrs: SQLServerSSRSClient { SQLServerSSRSClient(client: self) }
 }
