@@ -105,4 +105,63 @@ public final class SQLServerFullTextClient: @unchecked Sendable {
             )
         }
     }
+
+    // MARK: - Catalog Management
+
+    /// Creates a new full-text catalog.
+    @available(macOS 12.0, *)
+    public func createCatalog(name: String, isDefault: Bool = false, accentSensitive: Bool = true) async throws {
+        let escaped = name.replacingOccurrences(of: "]", with: "]]")
+        var sql = "CREATE FULLTEXT CATALOG [\(escaped)]"
+        if isDefault { sql += " AS DEFAULT" }
+        sql += " WITH ACCENT_SENSITIVITY = \(accentSensitive ? "ON" : "OFF");"
+        _ = try await client.execute(sql)
+    }
+
+    /// Drops a full-text catalog.
+    @available(macOS 12.0, *)
+    public func dropCatalog(name: String) async throws {
+        let escaped = name.replacingOccurrences(of: "]", with: "]]")
+        _ = try await client.execute("DROP FULLTEXT CATALOG [\(escaped)];")
+    }
+
+    /// Rebuilds a full-text catalog (repopulates all indexes).
+    @available(macOS 12.0, *)
+    public func rebuildCatalog(name: String) async throws {
+        let escaped = name.replacingOccurrences(of: "]", with: "]]")
+        _ = try await client.execute("ALTER FULLTEXT CATALOG [\(escaped)] REBUILD;")
+    }
+
+    // MARK: - Index Management
+
+    /// Drops a full-text index from a table.
+    @available(macOS 12.0, *)
+    public func dropIndex(schema: String, table: String) async throws {
+        let s = schema.replacingOccurrences(of: "]", with: "]]")
+        let t = table.replacingOccurrences(of: "]", with: "]]")
+        _ = try await client.execute("DROP FULLTEXT INDEX ON [\(s)].[\(t)];")
+    }
+
+    /// Starts a full-text index population.
+    @available(macOS 12.0, *)
+    public func startPopulation(schema: String, table: String, type: PopulationType = .full) async throws {
+        let s = schema.replacingOccurrences(of: "]", with: "]]")
+        let t = table.replacingOccurrences(of: "]", with: "]]")
+        _ = try await client.execute("ALTER FULLTEXT INDEX ON [\(s)].[\(t)] START \(type.rawValue) POPULATION;")
+    }
+
+    /// Stops a full-text index population.
+    @available(macOS 12.0, *)
+    public func stopPopulation(schema: String, table: String) async throws {
+        let s = schema.replacingOccurrences(of: "]", with: "]]")
+        let t = table.replacingOccurrences(of: "]", with: "]]")
+        _ = try await client.execute("ALTER FULLTEXT INDEX ON [\(s)].[\(t)] STOP POPULATION;")
+    }
+
+    /// Population type for full-text index rebuild.
+    public enum PopulationType: String, Sendable {
+        case full = "FULL"
+        case incremental = "INCREMENTAL"
+        case update = "UPDATE"
+    }
 }
