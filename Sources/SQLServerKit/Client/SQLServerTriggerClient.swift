@@ -619,6 +619,65 @@ public final class SQLServerTriggerClient: @unchecked Sendable {
         _ = try await client.execute(sql)
     }
 
+    // MARK: - Server Trigger Creation
+
+    /// Creates a server-level DDL trigger.
+    ///
+    /// - Parameters:
+    ///   - name: Trigger name.
+    ///   - events: DDL event types or groups (e.g. `["CREATE_TABLE", "ALTER_TABLE"]` or `["DDL_DATABASE_LEVEL_EVENTS"]`).
+    ///   - body: T-SQL body of the trigger.
+    ///   - options: Optional encryption, execute-as settings.
+    @available(macOS 12.0, *)
+    public func createServerTrigger(
+        name: String,
+        events: [String],
+        body: String,
+        options: TriggerOptions = TriggerOptions()
+    ) async throws {
+        guard !events.isEmpty else {
+            throw SQLServerError.invalidArgument("At least one DDL event is required")
+        }
+        var sql = "CREATE TRIGGER \(Self.escapeIdentifier(name))\nON ALL SERVER"
+        var optionParts: [String] = []
+        if options.withEncryption { optionParts.append("ENCRYPTION") }
+        if let executeAs = options.executeAs { optionParts.append("EXECUTE AS '\(Self.escapeLiteral(executeAs))'") }
+        if !optionParts.isEmpty { sql += "\nWITH \(optionParts.joined(separator: ", "))" }
+        sql += "\nAFTER \(events.joined(separator: ", "))"
+        sql += "\nAS\n\(body)"
+        _ = try await client.execute(sql)
+    }
+
+    /// Creates a database-level DDL trigger.
+    ///
+    /// - Parameters:
+    ///   - name: Trigger name.
+    ///   - database: Database to create the trigger in.
+    ///   - events: DDL event types or groups (e.g. `["CREATE_TABLE", "DROP_TABLE"]`).
+    ///   - body: T-SQL body of the trigger.
+    ///   - options: Optional encryption, execute-as settings.
+    @available(macOS 12.0, *)
+    public func createDatabaseDDLTrigger(
+        name: String,
+        database: String,
+        events: [String],
+        body: String,
+        options: TriggerOptions = TriggerOptions()
+    ) async throws {
+        guard !events.isEmpty else {
+            throw SQLServerError.invalidArgument("At least one DDL event is required")
+        }
+        let db = Self.escapeIdentifier(database)
+        var sql = "USE \(db); CREATE TRIGGER \(Self.escapeIdentifier(name))\nON DATABASE"
+        var optionParts: [String] = []
+        if options.withEncryption { optionParts.append("ENCRYPTION") }
+        if let executeAs = options.executeAs { optionParts.append("EXECUTE AS '\(Self.escapeLiteral(executeAs))'") }
+        if !optionParts.isEmpty { sql += "\nWITH \(optionParts.joined(separator: ", "))" }
+        sql += "\nAFTER \(events.joined(separator: ", "))"
+        sql += "\nAS\n\(body)"
+        _ = try await client.execute(sql)
+    }
+
     // MARK: - Helpers
 
     private static func escapeIdentifier(_ identifier: String) -> String {

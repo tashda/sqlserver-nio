@@ -140,4 +140,47 @@ final class SQLServerTemporalClientTests: XCTestCase, @unchecked Sendable {
             throw e
         }
     }
+
+    // MARK: - Add Period Columns + Enable Versioning
+
+    @available(macOS 12.0, *)
+    func testAddPeriodColumnsAndEnableVersioning() async throws {
+        do {
+            try await withTemporaryDatabase(client: self.client, prefix: "tmp_ap") { db in
+                let table = "ap_\(UUID().uuidString.prefix(6))"
+
+                // Create a plain table with a primary key
+                _ = try await self.client.execute("""
+                USE [\(db)];
+                CREATE TABLE [dbo].[\(table)] (
+                    id INT NOT NULL PRIMARY KEY,
+                    name NVARCHAR(100)
+                )
+                """)
+
+                // Add period columns and enable versioning via API
+                try await self.client.temporal.addPeriodColumnsAndEnableVersioning(
+                    database: db,
+                    schema: "dbo",
+                    table: table,
+                    historySchema: "dbo",
+                    historyTable: "\(table)_History"
+                )
+
+                // Verify it's now system-versioned
+                let temporal = try await self.client.temporal.listSystemVersionedTables(database: db)
+                let found = temporal.first(where: { $0.name == table })
+                XCTAssertNotNil(found, "Table should be system-versioned")
+                XCTAssertEqual(found?.historyTable, "\(table)_History")
+                XCTAssertEqual(found?.periodStartColumn, "ValidFrom")
+                XCTAssertEqual(found?.periodEndColumn, "ValidTo")
+
+                // Clean up: disable versioning first (required before drop)
+                try await self.client.temporal.disableSystemVersioning(database: db, schema: "dbo", table: table)
+            }
+        } catch let e as SQLServerError {
+            if case .connectionClosed = e { throw XCTSkip("Connection closed during add period columns test") }
+            throw e
+        }
+    }
 }
