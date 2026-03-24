@@ -31,4 +31,6 @@ extension SQLServerClient {
     public var cms: SQLServerCMSClient { SQLServerCMSClient(client: self) }
     public var serverConfig: SQLServerServerConfigurationClient { SQLServerServerConfigurationClient(client: self) }
     public var errorLog: SQLServerErrorLogClient { SQLServerErrorLogClient(client: self) }
+    public var audit: SQLServerAuditClient { SQLServerAuditClient(client: self) }
+    public var alwaysEncrypted: SQLServerAlwaysEncryptedClient { SQLServerAlwaysEncryptedClient(client: self) }
 }
