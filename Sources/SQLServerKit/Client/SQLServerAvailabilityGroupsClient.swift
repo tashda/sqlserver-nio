@@ -254,4 +254,22 @@ public final class SQLServerAvailabilityGroupsClient: @unchecked Sendable {
         let sql = "ALTER AVAILABILITY GROUP [\(groupName)] FAILOVER"
         _ = try await client.execute(sql)
     }
+
+    // MARK: - Database Management
+
+    /// Adds a database to an availability group.
+    @available(macOS 12.0, *)
+    public func addDatabase(groupName: String, databaseName: String) async throws {
+        let g = groupName.replacingOccurrences(of: "]", with: "]]")
+        let d = databaseName.replacingOccurrences(of: "]", with: "]]")
+        _ = try await client.execute("ALTER AVAILABILITY GROUP [\(g)] ADD DATABASE [\(d)];")
+    }
+
+    /// Removes a database from an availability group.
+    @available(macOS 12.0, *)
+    public func removeDatabase(groupName: String, databaseName: String) async throws {
+        let g = groupName.replacingOccurrences(of: "]", with: "]]")
+        let d = databaseName.replacingOccurrences(of: "]", with: "]]")
+        _ = try await client.execute("ALTER AVAILABILITY GROUP [\(g)] REMOVE DATABASE [\(d)];")
+    }
 }
