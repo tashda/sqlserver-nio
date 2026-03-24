@@ -272,4 +272,14 @@ public final class SQLServerAvailabilityGroupsClient: @unchecked Sendable {
         let d = databaseName.replacingOccurrences(of: "]", with: "]]")
         _ = try await client.execute("ALTER AVAILABILITY GROUP [\(g)] REMOVE DATABASE [\(d)];")
     }
+
+    // MARK: - Configuration
+
+    /// Sets the automated backup preference for an availability group.
+    /// Valid values: PRIMARY, SECONDARY_ONLY, SECONDARY, NONE
+    @available(macOS 12.0, *)
+    public func setBackupPreference(groupName: String, preference: String) async throws {
+        let g = groupName.replacingOccurrences(of: "]", with: "]]")
+        _ = try await client.execute("ALTER AVAILABILITY GROUP [\(g)] SET (AUTOMATED_BACKUP_PREFERENCE = \(preference));")
+    }
 }

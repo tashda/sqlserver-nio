@@ -22,6 +22,15 @@ extension SQLServerAgentOperations {
         run("EXEC msdb.dbo.sp_delete_alert @name = N'\(Self.escapeLiteral(name))';").map { _ in () }
     }
 
+    internal func enableAlert(name: String, enabled: Bool) -> EventLoopFuture<Void> {
+        run("EXEC msdb.dbo.sp_update_alert @name = N'\(Self.escapeLiteral(name))', @enabled = \(enabled ? 1 : 0);").map { _ in () }
+    }
+
+    @available(macOS 12.0, *)
+    public func enableAlert(name: String, enabled: Bool) async throws {
+        try await enableAlert(name: name, enabled: enabled).get()
+    }
+
     internal func listAlerts() -> EventLoopFuture<[SQLServerAgentAlertInfo]> {
         run("SELECT name, severity, message_id, enabled FROM msdb.dbo.sysalerts ORDER BY name;").map { rows in
             rows.compactMap { row in

@@ -85,4 +85,31 @@ extension SQLServerSecurityClient {
         let escapedName = Self.escapeIdentifier(name)
         _ = try await exec("DROP SECURITY POLICY \(escapedSchema).\(escapedName)")
     }
+
+    /// Creates a security policy with a filter predicate.
+    @available(macOS 12.0, *)
+    public func createSecurityPolicy(
+        name: String,
+        schema: String,
+        filterFunction: String,
+        filterFunctionSchema: String,
+        targetTable: String,
+        targetSchema: String,
+        predicateType: PredicateType = .filter,
+        enabled: Bool = true,
+        schemaBound: Bool = true
+    ) async throws {
+        let policyName = "\(Self.escapeIdentifier(schema)).\(Self.escapeIdentifier(name))"
+        let funcName = "\(Self.escapeIdentifier(filterFunctionSchema)).\(Self.escapeIdentifier(filterFunction))"
+        let tableName = "\(Self.escapeIdentifier(targetSchema)).\(Self.escapeIdentifier(targetTable))"
+        let predicateKeyword = predicateType == .filter ? "FILTER" : "BLOCK"
+
+        let sql = """
+        CREATE SECURITY POLICY \(policyName)
+        ADD \(predicateKeyword) PREDICATE \(funcName)(\(tableName))
+        ON \(tableName)
+        WITH (STATE = \(enabled ? "ON" : "OFF"), SCHEMABINDING = \(schemaBound ? "ON" : "OFF"));
+        """
+        _ = try await exec(sql)
+    }
 }
