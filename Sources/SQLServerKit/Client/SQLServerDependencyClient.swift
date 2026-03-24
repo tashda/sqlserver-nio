@@ -18,7 +18,7 @@ public final class SQLServerDependencyClient: @unchecked Sendable {
           AND type IN ('U', 'V', 'P', 'FN', 'IF', 'TF')
         ORDER BY [schema], name
         """
-        let rows = try await client.query(sql).get()
+        let rows = try await client.query(sql)
         return rows.compactMap { row in
             guard let schema = row.column("schema")?.string,
                   let name = row.column("name")?.string,
@@ -38,7 +38,7 @@ public final class SQLServerDependencyClient: @unchecked Sendable {
         JOIN sys.objects r ON sed.referenced_id = r.object_id
         WHERE d.is_ms_shipped = 0 AND r.is_ms_shipped = 0
         """
-        let rows = try await client.query(sql).get()
+        let rows = try await client.query(sql)
         return rows.compactMap { row in
             guard let depSchema = row.column("dep_schema")?.string,
                   let depName = row.column("dep_name")?.string,
