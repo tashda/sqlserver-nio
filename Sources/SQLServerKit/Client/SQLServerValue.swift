@@ -80,11 +80,31 @@ public struct SQLServerValue: Sendable, CustomStringConvertible {
     public var udtTypeName: String? {
         (base.metadata as? TDSTokens.ColMetadataToken.ColumnData)?.udtInfo?.typeName
     }
+    
+    /// Returns the decoded spatial data if this value is a geometry or geography UDT.
+    public var spatial: SQLServerSpatial? {
+        guard let name = udtTypeName,
+              (name.caseInsensitiveCompare("geometry") == .orderedSame || 
+               name.caseInsensitiveCompare("geography") == .orderedSame),
+              var buffer = base.value else {
+            return nil
+        }
+        return SQLServerSpatial.decode(from: &buffer)
+    }
+
     public var description: String {
         if isNull { return "NULL" }
-        if let bytes, udtTypeName?.caseInsensitiveCompare("hierarchyid") == .orderedSame,
-           let hierarchyID = SQLServerHierarchyID.string(from: bytes) {
-            return hierarchyID
+        if let name = udtTypeName {
+            if name.caseInsensitiveCompare("hierarchyid") == .orderedSame,
+               let bytes,
+               let hierarchyID = SQLServerHierarchyID.string(from: bytes) {
+                return hierarchyID
+            }
+            if name.caseInsensitiveCompare("geometry") == .orderedSame || 
+               name.caseInsensitiveCompare("geography") == .orderedSame,
+               let spatial = self.spatial {
+                return spatial.wkt
+            }
         }
         if let string { return string }
         if let int { return String(int) }
