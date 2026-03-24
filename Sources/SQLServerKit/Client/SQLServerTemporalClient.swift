@@ -142,4 +142,47 @@ public final class SQLServerTemporalClient: @unchecked Sendable {
             )
         }
     }
+
+    // MARK: - Enable System Versioning (Full)
+
+    /// Adds period columns to an existing table and enables system versioning.
+    ///
+    /// This is a two-step operation:
+    /// 1. ALTER TABLE ADD ... GENERATED ALWAYS AS ROW START/END, PERIOD FOR SYSTEM_TIME
+    /// 2. ALTER TABLE SET (SYSTEM_VERSIONING = ON (...))
+    @available(macOS 12.0, *)
+    public func addPeriodColumnsAndEnableVersioning(
+        database: String,
+        schema: String,
+        table: String,
+        startColumn: String = "ValidFrom",
+        endColumn: String = "ValidTo",
+        historySchema: String? = nil,
+        historyTable: String? = nil
+    ) async throws {
+        let db = Self.escapeIdentifier(database)
+        let qualified = "\(db).\(Self.escapeIdentifier(schema)).\(Self.escapeIdentifier(table))"
+        let startCol = Self.escapeIdentifier(startColumn)
+        let endCol = Self.escapeIdentifier(endColumn)
+
+        // Step 1: Add period columns
+        let addColumnsSql = """
+        ALTER TABLE \(qualified) ADD
+            \(startCol) DATETIME2 GENERATED ALWAYS AS ROW START HIDDEN
+                CONSTRAINT [DF_\(Self.escapeLiteral(table))_\(Self.escapeLiteral(startColumn))] DEFAULT SYSUTCDATETIME() NOT NULL,
+            \(endCol) DATETIME2 GENERATED ALWAYS AS ROW END HIDDEN
+                CONSTRAINT [DF_\(Self.escapeLiteral(table))_\(Self.escapeLiteral(endColumn))] DEFAULT CONVERT(DATETIME2, '9999-12-31 23:59:59.9999999') NOT NULL,
+            PERIOD FOR SYSTEM_TIME (\(startCol), \(endCol))
+        """
+        _ = try await client.execute(addColumnsSql)
+
+        // Step 2: Enable system versioning
+        try await enableSystemVersioning(
+            database: database,
+            schema: schema,
+            table: table,
+            historySchema: historySchema,
+            historyTable: historyTable
+        )
+    }
 }

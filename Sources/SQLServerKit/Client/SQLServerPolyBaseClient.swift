@@ -146,4 +146,82 @@ public final class SQLServerPolyBaseClient: @unchecked Sendable {
         let escaped = Self.escapeIdentifier(name)
         _ = try await client.execute("USE \(db); DROP EXTERNAL FILE FORMAT \(escaped)")
     }
+
+    // MARK: - Create Operations
+
+    /// Creates an external data source.
+    @available(macOS 12.0, *)
+    public func createExternalDataSource(
+        database: String,
+        name: String,
+        location: String,
+        type: ExternalDataSourceType? = nil,
+        credential: String? = nil,
+        resourceManagerLocation: String? = nil
+    ) async throws {
+        let db = Self.escapeIdentifier(database)
+        var withParts = ["LOCATION = N'\(Self.escapeLiteral(location))'"]
+        if let type, type != .unknown { withParts.append("TYPE = \(type.rawValue)") }
+        if let cred = credential { withParts.append("CREDENTIAL = \(Self.escapeIdentifier(cred))") }
+        if let rml = resourceManagerLocation { withParts.append("RESOURCE_MANAGER_LOCATION = N'\(Self.escapeLiteral(rml))'") }
+        let sql = "USE \(db); CREATE EXTERNAL DATA SOURCE \(Self.escapeIdentifier(name)) WITH (\(withParts.joined(separator: ", ")))"
+        _ = try await client.execute(sql)
+    }
+
+    /// Creates an external file format.
+    @available(macOS 12.0, *)
+    public func createExternalFileFormat(
+        database: String,
+        name: String,
+        formatType: ExternalFileFormatType,
+        fieldTerminator: String? = nil,
+        stringDelimiter: String? = nil,
+        firstRow: Int? = nil,
+        dateFormat: String? = nil,
+        useTypeDefault: Bool? = nil
+    ) async throws {
+        let db = Self.escapeIdentifier(database)
+        var withParts = ["FORMAT_TYPE = \(formatType.rawValue)"]
+        if let ft = fieldTerminator { withParts.append("FIELD_TERMINATOR = N'\(Self.escapeLiteral(ft))'") }
+        if let sd = stringDelimiter { withParts.append("STRING_DELIMITER = N'\(Self.escapeLiteral(sd))'") }
+        if let fr = firstRow { withParts.append("FIRST_ROW = \(fr)") }
+        if let df = dateFormat { withParts.append("DATE_FORMAT = N'\(Self.escapeLiteral(df))'") }
+        if let utd = useTypeDefault { withParts.append("USE_TYPE_DEFAULT = \(utd ? "TRUE" : "FALSE")") }
+        let sql = "USE \(db); CREATE EXTERNAL FILE FORMAT \(Self.escapeIdentifier(name)) WITH (\(withParts.joined(separator: ", ")))"
+        _ = try await client.execute(sql)
+    }
+
+    /// Creates an external table.
+    @available(macOS 12.0, *)
+    public func createExternalTable(
+        database: String,
+        schema: String = "dbo",
+        name: String,
+        columns: [(name: String, dataType: String)],
+        location: String,
+        dataSource: String,
+        fileFormat: String? = nil,
+        rejectType: String? = nil,
+        rejectValue: Double? = nil
+    ) async throws {
+        guard !columns.isEmpty else {
+            throw SQLServerError.invalidArgument("At least one column is required")
+        }
+        let db = Self.escapeIdentifier(database)
+        let qualified = "\(Self.escapeIdentifier(schema)).\(Self.escapeIdentifier(name))"
+        let colDefs = columns.map { "\(Self.escapeIdentifier($0.name)) \($0.dataType)" }.joined(separator: ",\n    ")
+        var withParts = [
+            "LOCATION = N'\(Self.escapeLiteral(location))'",
+            "DATA_SOURCE = \(Self.escapeIdentifier(dataSource))"
+        ]
+        if let ff = fileFormat { withParts.append("FILE_FORMAT = \(Self.escapeIdentifier(ff))") }
+        if let rt = rejectType { withParts.append("REJECT_TYPE = \(rt)") }
+        if let rv = rejectValue { withParts.append("REJECT_VALUE = \(rv)") }
+        let sql = "USE \(db); CREATE EXTERNAL TABLE \(qualified) (\n    \(colDefs)\n) WITH (\(withParts.joined(separator: ", ")))"
+        _ = try await client.execute(sql)
+    }
+
+    private static func escapeLiteral(_ literal: String) -> String {
+        literal.replacingOccurrences(of: "'", with: "''")
+    }
 }

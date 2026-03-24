@@ -82,4 +82,33 @@ final class SQLServerServerTriggerClientTests: XCTestCase, @unchecked Sendable {
             throw e
         }
     }
+
+    // MARK: - Create API Round-Trips
+
+    @available(macOS 12.0, *)
+    func testCreateDatabaseDDLTriggerViaAPI() async throws {
+        do {
+            try await withTemporaryDatabase(client: self.client, prefix: "tmp_cdt") { db in
+                let name = "api_trg_\(UUID().uuidString.prefix(6))"
+
+                try await self.client.triggers.createDatabaseDDLTrigger(
+                    name: name,
+                    database: db,
+                    events: ["CREATE_TABLE", "DROP_TABLE"],
+                    body: "BEGIN\n    PRINT 'DDL event'\nEND"
+                )
+
+                let triggers = try await self.client.triggers.listDatabaseDDLTriggers(database: db)
+                let found = triggers.first(where: { $0.name == name })
+                XCTAssertNotNil(found)
+                XCTAssertTrue(found?.events.contains("CREATE_TABLE") ?? false)
+                XCTAssertTrue(found?.events.contains("DROP_TABLE") ?? false)
+
+                try await self.client.triggers.dropDatabaseDDLTrigger(name: name, database: db)
+            }
+        } catch let e as SQLServerError {
+            if case .connectionClosed = e { throw XCTSkip("Connection closed") }
+            throw e
+        }
+    }
 }
