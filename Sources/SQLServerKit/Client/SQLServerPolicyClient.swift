@@ -106,14 +106,31 @@ public final class SQLServerPolicyClient: @unchecked Sendable {
         }
     }
     
+    // MARK: - Enable / Disable
+
+    /// Enables a policy.
+    @available(macOS 12.0, *)
+    public func enablePolicy(name: String) async throws {
+        let escaped = name.replacingOccurrences(of: "'", with: "''")
+        let sql = "EXEC msdb.dbo.sp_syspolicy_update_policy @name = N'\(escaped)', @is_enabled = 1;"
+        try await client.execute(sql)
+    }
+
+    /// Disables a policy.
+    @available(macOS 12.0, *)
+    public func disablePolicy(name: String) async throws {
+        let escaped = name.replacingOccurrences(of: "'", with: "''")
+        let sql = "EXEC msdb.dbo.sp_syspolicy_update_policy @name = N'\(escaped)', @is_enabled = 0;"
+        try await client.execute(sql)
+    }
+
     // MARK: - Execution
-    
+
     /// Evaluates a policy manually.
     @available(macOS 12.0, *)
     public func evaluatePolicy(name: String) async throws {
-        // SQL Server evaluates policies via a complex internal engine or PowerShell.
-        // We can trigger it via a stored procedure if available or by creating an on-demand job.
-        // For now, we provide the T-SQL to check compliance if possible.
-        throw SQLServerError.sqlExecutionError(message: "Manual policy evaluation requires msdb internal procedures not yet implemented.")
+        let escaped = name.replacingOccurrences(of: "'", with: "''")
+        let sql = "EXEC msdb.dbo.sp_syspolicy_execute_policy @policy_name = N'\(escaped)';"
+        try await client.execute(sql)
     }
 }
