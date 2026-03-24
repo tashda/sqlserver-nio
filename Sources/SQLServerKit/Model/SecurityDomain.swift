@@ -244,6 +244,21 @@ public struct LoginDatabaseMapping: Sendable {
     }
 }
 
+// MARK: - Effective Permissions
+
+/// A single effective permission entry returned by `fn_my_permissions()`.
+public struct EffectivePermissionInfo: Sendable, Hashable {
+    public let entityName: String?
+    public let subentityName: String?
+    public let permissionName: String
+
+    public init(entityName: String? = nil, subentityName: String? = nil, permissionName: String) {
+        self.entityName = entityName
+        self.subentityName = subentityName
+        self.permissionName = permissionName
+    }
+}
+
 /// Represents a database role and whether a user is a member.
 public struct DatabaseUserRoleMembership: Sendable {
     public let roleName: String
