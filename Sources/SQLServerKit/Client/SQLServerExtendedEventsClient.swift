@@ -379,6 +379,28 @@ public final class SQLServerExtendedEventsClient: @unchecked Sendable {
         xmlParser.parse()
         return parser.events
     }
+
+    // MARK: - Alter Session
+
+    /// Adds an event to an existing session. The session must be stopped first.
+    @available(macOS 12.0, *)
+    public func addEvent(sessionName: String, eventName: String, predicate: String? = nil) async throws {
+        let escaped = sessionName.replacingOccurrences(of: "]", with: "]]")
+        var sql = "ALTER EVENT SESSION [\(escaped)] ON SERVER ADD EVENT sqlserver.\(eventName)"
+        if let predicate, !predicate.isEmpty {
+            let escapedPred = predicate.replacingOccurrences(of: "'", with: "''")
+            sql += " (WHERE \(escapedPred))"
+        }
+        sql += ";"
+        _ = try await client.execute(sql)
+    }
+
+    /// Removes an event from an existing session. The session must be stopped first.
+    @available(macOS 12.0, *)
+    public func dropEvent(sessionName: String, eventName: String) async throws {
+        let escaped = sessionName.replacingOccurrences(of: "]", with: "]]")
+        _ = try await client.execute("ALTER EVENT SESSION [\(escaped)] ON SERVER DROP EVENT sqlserver.\(eventName);")
+    }
 }
 
 // MARK: - Ring Buffer XML Parser
