@@ -166,6 +166,66 @@ public final class SQLServerResourceGovernorClient: @unchecked Sendable {
         }
     }
     
+    // MARK: - Pool CRUD
+
+    /// Creates a new resource pool.
+    @available(macOS 12.0, *)
+    public func createResourcePool(
+        name: String,
+        minCpuPercent: Int = 0,
+        maxCpuPercent: Int = 100,
+        minMemoryPercent: Int = 0,
+        maxMemoryPercent: Int = 100
+    ) async throws {
+        let sql = """
+        CREATE RESOURCE POOL \(escapeIdentifier(name))
+        WITH (MIN_CPU_PERCENT = \(minCpuPercent), MAX_CPU_PERCENT = \(maxCpuPercent),
+              MIN_MEMORY_PERCENT = \(minMemoryPercent), MAX_MEMORY_PERCENT = \(maxMemoryPercent));
+        ALTER RESOURCE GOVERNOR RECONFIGURE;
+        """
+        _ = try await client.execute(sql)
+    }
+
+    /// Drops a resource pool.
+    @available(macOS 12.0, *)
+    public func dropResourcePool(name: String) async throws {
+        let sql = "DROP RESOURCE POOL \(escapeIdentifier(name)); ALTER RESOURCE GOVERNOR RECONFIGURE;"
+        _ = try await client.execute(sql)
+    }
+
+    // MARK: - Workload Group CRUD
+
+    /// Creates a new workload group in a resource pool.
+    @available(macOS 12.0, *)
+    public func createWorkloadGroup(
+        name: String,
+        poolName: String,
+        importance: String = "MEDIUM",
+        requestMaxMemoryGrantPercent: Int = 25,
+        requestMaxCpuTimeSec: Int = 0,
+        maxDop: Int = 0,
+        groupMaxRequests: Int = 0
+    ) async throws {
+        let sql = """
+        CREATE WORKLOAD GROUP \(escapeIdentifier(name))
+        WITH (IMPORTANCE = \(importance),
+              REQUEST_MAX_MEMORY_GRANT_PERCENT = \(requestMaxMemoryGrantPercent),
+              REQUEST_MAX_CPU_TIME_SEC = \(requestMaxCpuTimeSec),
+              MAX_DOP = \(maxDop),
+              GROUP_MAX_REQUESTS = \(groupMaxRequests))
+        USING \(escapeIdentifier(poolName));
+        ALTER RESOURCE GOVERNOR RECONFIGURE;
+        """
+        _ = try await client.execute(sql)
+    }
+
+    /// Drops a workload group.
+    @available(macOS 12.0, *)
+    public func dropWorkloadGroup(name: String) async throws {
+        let sql = "DROP WORKLOAD GROUP \(escapeIdentifier(name)); ALTER RESOURCE GOVERNOR RECONFIGURE;"
+        _ = try await client.execute(sql)
+    }
+
     private func escapeIdentifier(_ identifier: String) -> String {
         "[\(identifier.replacingOccurrences(of: "]", with: "]]"))]"
     }
