@@ -12,6 +12,7 @@ public final class SQLServerPolicyClient: @unchecked Sendable {
     // MARK: - Policies
     
     /// Lists all defined policies.
+    @available(macOS 12.0, *)
     public func listPolicies() async throws -> [SQLServerPolicy] {
         let sql = """
         SELECT p.policy_id, p.name, c.name as condition_name, p.is_enabled, 
@@ -20,7 +21,7 @@ public final class SQLServerPolicyClient: @unchecked Sendable {
         JOIN msdb.dbo.syspolicy_conditions c ON p.condition_id = c.condition_id
         LEFT JOIN msdb.dbo.sysschedules s ON p.schedule_uid = s.schedule_uid
         """
-        let rows = try await client.query(sql).get()
+        let rows = try await client.query(sql)
         return rows.compactMap { row in
             guard let id = row.column("policy_id")?.int32,
                   let name = row.column("name")?.string,
@@ -41,12 +42,13 @@ public final class SQLServerPolicyClient: @unchecked Sendable {
     // MARK: - Conditions
     
     /// Lists all defined conditions.
+    @available(macOS 12.0, *)
     public func listConditions() async throws -> [SQLServerPolicyCondition] {
         let sql = """
         SELECT condition_id, name, facet_name, expression
         FROM msdb.dbo.syspolicy_conditions
         """
-        let rows = try await client.query(sql).get()
+        let rows = try await client.query(sql)
         return rows.compactMap { row in
             guard let id = row.column("condition_id")?.int32,
                   let name = row.column("name")?.string,
@@ -64,9 +66,10 @@ public final class SQLServerPolicyClient: @unchecked Sendable {
     // MARK: - Facets
     
     /// Lists all available management facets.
+    @available(macOS 12.0, *)
     public func listFacets() async throws -> [SQLServerPolicyFacet] {
         let sql = "SELECT name, description FROM msdb.dbo.syspolicy_management_facets"
-        let rows = try await client.query(sql).get()
+        let rows = try await client.query(sql)
         return rows.compactMap { row in
             guard let name = row.column("name")?.string else { return nil }
             return SQLServerPolicyFacet(name: name, description: row.column("description")?.string)
@@ -76,6 +79,7 @@ public final class SQLServerPolicyClient: @unchecked Sendable {
     // MARK: - History
     
     /// Returns the execution history for a specific policy.
+    @available(macOS 12.0, *)
     public func fetchHistory(policyId: Int32? = nil, limit: Int = 100) async throws -> [SQLServerPolicyHistory] {
         var sql = """
         SELECT TOP (\(limit)) history_id, policy_id, start_date, end_date, result
@@ -86,7 +90,7 @@ public final class SQLServerPolicyClient: @unchecked Sendable {
         }
         sql += " ORDER BY start_date DESC"
         
-        let rows = try await client.query(sql).get()
+        let rows = try await client.query(sql)
         return rows.compactMap { row in
             guard let id = row.column("history_id")?.int64,
                   let pid = row.column("policy_id")?.int32,
@@ -105,6 +109,7 @@ public final class SQLServerPolicyClient: @unchecked Sendable {
     // MARK: - Execution
     
     /// Evaluates a policy manually.
+    @available(macOS 12.0, *)
     public func evaluatePolicy(name: String) async throws {
         // SQL Server evaluates policies via a complex internal engine or PowerShell.
         // We can trigger it via a stored procedure if available or by creating an on-demand job.
