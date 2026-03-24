@@ -289,4 +289,21 @@ extension SQLServerSecurityClient {
         let sql = "DROP APPLICATION ROLE \(Self.escapeIdentifier(name));"
         return run(sql).map { _ in () }
     }
+
+    // MARK: - Application Role Async Wrappers
+
+    @available(macOS 12.0, *)
+    public func createApplicationRole(name: String, password: String, defaultSchema: String? = nil) async throws {
+        try await createApplicationRole(name: name, password: password, defaultSchema: defaultSchema).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func alterApplicationRole(name: String, newName: String? = nil, password: String? = nil) async throws {
+        try await alterApplicationRole(name: name, newName: newName, password: password).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func dropApplicationRole(name: String) async throws {
+        try await dropApplicationRole(name: name).get()
+    }
 }
