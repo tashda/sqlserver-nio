@@ -186,7 +186,8 @@ public enum DatabaseUserAuthenticationType: String, Sendable {
 // MARK: - Catalog Info Types
 
 /// Information about a database certificate from `sys.certificates`.
-public struct CertificateInfo: Sendable, Hashable {
+public struct CertificateInfo: Sendable, Hashable, Identifiable {
+    public var id: String { name }
     public let name: String
     public let subject: String?
     public let expiryDate: String?
@@ -199,7 +200,8 @@ public struct CertificateInfo: Sendable, Hashable {
 }
 
 /// Information about a database asymmetric key from `sys.asymmetric_keys`.
-public struct AsymmetricKeyInfo: Sendable, Hashable {
+public struct AsymmetricKeyInfo: Sendable, Hashable, Identifiable {
+    public var id: String { name }
     public let name: String
     public let algorithm: String?
 
