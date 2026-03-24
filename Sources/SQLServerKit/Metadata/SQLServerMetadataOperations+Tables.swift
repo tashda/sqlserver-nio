@@ -30,6 +30,9 @@ extension SQLServerMetadataOperations {
     internal func listTables(database: String? = nil, schema: String? = nil, includeComments: Bool = false) -> EventLoopFuture<[TableMetadata]> {
         let qualifiedObjects = qualified(database, object: "sys.objects")
         let qualifiedSchemas = qualified(database, object: "sys.schemas")
+        let qualifiedTables = qualified(database, object: "sys.tables")
+        let qualifiedPeriods = qualified(database, object: "sys.periods")
+        let qualifiedColumns = qualified(database, object: "sys.columns")
         let qualifiedExtended = qualified(database, object: "sys.extended_properties")
 
         var predicates: [String] = [
@@ -60,10 +63,29 @@ extension SQLServerMetadataOperations {
                 WHEN o.type = 'S' OR o.is_ms_shipped = 1 THEN 'SYSTEM TABLE'
                 ELSE o.type_desc
             END AS table_type,
-            o.is_ms_shipped\(commentSelect)
+            o.is_ms_shipped,
+            t.temporal_type,
+            ht.name AS history_table,
+            hs.name AS history_schema,
+            pc_start.name AS period_start_column,
+            pc_end.name AS period_end_column,
+            t.is_memory_optimized,
+            t.durability_desc\(commentSelect)
         FROM \(qualifiedObjects) AS o WITH (NOLOCK)
         INNER JOIN \(qualifiedSchemas) AS s WITH (NOLOCK)
             ON s.schema_id = o.schema_id
+        LEFT JOIN \(qualifiedTables) AS t WITH (NOLOCK)
+            ON t.object_id = o.object_id
+        LEFT JOIN \(qualifiedTables) AS ht WITH (NOLOCK)
+            ON ht.object_id = t.history_table_id
+        LEFT JOIN \(qualifiedSchemas) AS hs WITH (NOLOCK)
+            ON hs.schema_id = ht.schema_id
+        LEFT JOIN \(qualifiedPeriods) AS p WITH (NOLOCK)
+            ON p.object_id = t.object_id
+        LEFT JOIN \(qualifiedColumns) AS pc_start WITH (NOLOCK)
+            ON pc_start.object_id = t.object_id AND pc_start.column_id = p.start_column_id
+        LEFT JOIN \(qualifiedColumns) AS pc_end WITH (NOLOCK)
+            ON pc_end.object_id = t.object_id AND pc_end.column_id = p.end_column_id
         \(commentJoin)
         \(whereClause)
         ORDER BY s.name, o.name;
@@ -91,13 +113,20 @@ extension SQLServerMetadataOperations {
 
                 let normalizedType = tableType.uppercased()
                 let isSystemObject = normalizedType.contains("SYSTEM") || (row.column("is_ms_shipped")?.int ?? 0) != 0
-                
+
                 return TableMetadata(
                     schema: schemaName,
                     name: tableName,
                     type: normalizedType,
                     isSystemObject: isSystemObject,
-                    comment: includeComments ? row.column("comment")?.string : nil
+                    comment: includeComments ? row.column("comment")?.string : nil,
+                    temporalType: row.column("temporal_type")?.int ?? 0,
+                    historyTableSchema: row.column("history_schema")?.string,
+                    historyTableName: row.column("history_table")?.string,
+                    periodStartColumn: row.column("period_start_column")?.string,
+                    periodEndColumn: row.column("period_end_column")?.string,
+                    isMemoryOptimized: (row.column("is_memory_optimized")?.int ?? 0) != 0,
+                    durabilityDescription: row.column("durability_desc")?.string
                 )
             }
         }
