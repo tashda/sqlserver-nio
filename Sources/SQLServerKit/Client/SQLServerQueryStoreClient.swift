@@ -245,6 +245,12 @@ public final class SQLServerQueryStoreClient: @unchecked Sendable {
         self.client = client
     }
 
+    private static func formatDate(_ date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withFullDate, .withTime, .withColonSeparatorInTime]
+        return formatter.string(from: date)
+    }
+
     // MARK: - Options
 
     /// Returns Query Store configuration and status for a database.
@@ -357,7 +363,11 @@ public final class SQLServerQueryStoreClient: @unchecked Sendable {
     public func topQueries(
         database: String,
         limit: Int = 20,
-        orderBy: SQLServerQueryStoreTopQueryOrder = .totalDuration
+        orderBy: SQLServerQueryStoreTopQueryOrder = .totalDuration,
+        startDate: Date? = nil,
+        endDate: Date? = nil,
+        minExecutionCount: Int? = nil,
+        queryTextFilter: String? = nil
     ) async throws -> [SQLServerQueryStoreTopQuery] {
         let orderColumn: String
         switch orderBy {
@@ -366,6 +376,24 @@ public final class SQLServerQueryStoreClient: @unchecked Sendable {
         case .totalIOReads: orderColumn = "total_io_reads"
         case .totalExecutions: orderColumn = "total_executions"
         }
+
+        var whereClauses: [String] = []
+        if let startDate {
+            let formatted = Self.formatDate(startDate)
+            whereClauses.append("rsi.start_time >= '\(formatted)'")
+        }
+        if let endDate {
+            let formatted = Self.formatDate(endDate)
+            whereClauses.append("rsi.end_time <= '\(formatted)'")
+        }
+        if let filter = queryTextFilter, !filter.isEmpty {
+            let escaped = filter.replacingOccurrences(of: "'", with: "''")
+            whereClauses.append("qt.query_sql_text LIKE N'%\(escaped)%'")
+        }
+
+        let whereClause = whereClauses.isEmpty ? "" : "WHERE " + whereClauses.joined(separator: " AND ")
+        let havingClause = minExecutionCount.map { "HAVING SUM(rs.count_executions) >= \($0)" } ?? ""
+        let needsInterval = startDate != nil || endDate != nil
 
         let sql = """
         SELECT TOP (\(limit))
@@ -381,7 +409,10 @@ public final class SQLServerQueryStoreClient: @unchecked Sendable {
         JOIN sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
         JOIN sys.query_store_plan p ON q.query_id = p.query_id
         JOIN sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+        \(needsInterval ? "JOIN sys.query_store_runtime_stats_interval rsi ON rs.runtime_stats_interval_id = rsi.runtime_stats_interval_id" : "")
+        \(whereClause)
         GROUP BY q.query_id, qt.query_sql_text
+        \(havingClause)
         ORDER BY \(orderColumn) DESC
         """
 
