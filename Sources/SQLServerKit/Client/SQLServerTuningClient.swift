@@ -72,4 +72,65 @@ public final class SQLServerTuningClient: @unchecked Sendable {
             .map { $0.replacingOccurrences(of: "[", with: "").replacingOccurrences(of: "]", with: "") }
             .filter { !$0.isEmpty }
     }
+
+    // MARK: - Index Usage Statistics
+
+    /// Statistics about how an existing index is being used.
+    public struct SQLServerIndexUsageStat: Sendable, Equatable, Identifiable {
+        public var id: String { "\(schemaName).\(tableName).\(indexName)" }
+        public let schemaName: String
+        public let tableName: String
+        public let indexName: String
+        public let indexType: String
+        public let userSeeks: Int64
+        public let userScans: Int64
+        public let userLookups: Int64
+        public let userUpdates: Int64
+        public let lastUserSeek: String?
+        public let lastUserScan: String?
+    }
+
+    /// Returns index usage statistics for the current database.
+    @available(macOS 12.0, *)
+    public func indexUsageStats(minUpdates: Int = 0) async throws -> [SQLServerIndexUsageStat] {
+        let sql = """
+        SELECT
+            s.name AS schema_name,
+            o.name AS table_name,
+            i.name AS index_name,
+            i.type_desc AS index_type,
+            ISNULL(us.user_seeks, 0) AS user_seeks,
+            ISNULL(us.user_scans, 0) AS user_scans,
+            ISNULL(us.user_lookups, 0) AS user_lookups,
+            ISNULL(us.user_updates, 0) AS user_updates,
+            CONVERT(VARCHAR(30), us.last_user_seek, 121) AS last_user_seek,
+            CONVERT(VARCHAR(30), us.last_user_scan, 121) AS last_user_scan
+        FROM sys.indexes i
+        JOIN sys.objects o ON i.object_id = o.object_id
+        JOIN sys.schemas s ON o.schema_id = s.schema_id
+        LEFT JOIN sys.dm_db_index_usage_stats us
+            ON i.object_id = us.object_id AND i.index_id = us.index_id
+            AND us.database_id = DB_ID()
+        WHERE o.is_ms_shipped = 0 AND i.name IS NOT NULL
+        ORDER BY ISNULL(us.user_updates, 0) DESC, ISNULL(us.user_seeks, 0) ASC
+        """
+        let rows = try await client.query(sql)
+        return rows.compactMap { row in
+            guard let schema = row.column("schema_name")?.string,
+                  let table = row.column("table_name")?.string,
+                  let index = row.column("index_name")?.string else { return nil }
+            return SQLServerIndexUsageStat(
+                schemaName: schema,
+                tableName: table,
+                indexName: index,
+                indexType: row.column("index_type")?.string ?? "",
+                userSeeks: Int64(row.column("user_seeks")?.int ?? 0),
+                userScans: Int64(row.column("user_scans")?.int ?? 0),
+                userLookups: Int64(row.column("user_lookups")?.int ?? 0),
+                userUpdates: Int64(row.column("user_updates")?.int ?? 0),
+                lastUserSeek: row.column("last_user_seek")?.string,
+                lastUserScan: row.column("last_user_scan")?.string
+            )
+        }
+    }
 }
