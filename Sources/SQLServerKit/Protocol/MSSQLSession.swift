@@ -23,6 +23,10 @@ public protocol MSSQLSession {
     var errorLog: SQLServerErrorLogClient { get }
     var audit: SQLServerAuditClient { get }
     var alwaysEncrypted: SQLServerAlwaysEncryptedClient { get }
+    var triggers: SQLServerTriggerClient { get }
+    var temporal: SQLServerTemporalClient { get }
+    var serviceBroker: SQLServerServiceBrokerClient { get }
+    var polyBase: SQLServerPolyBaseClient { get }
     @available(*, deprecated, message: "Use client.agent instead.")
     func makeAgentClient() -> SQLServerAgentOperations
     @available(*, deprecated, message: "Use client.admin instead.")
