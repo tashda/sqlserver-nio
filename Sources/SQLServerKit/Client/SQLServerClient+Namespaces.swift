@@ -34,4 +34,5 @@ extension SQLServerClient {
     public var audit: SQLServerAuditClient { SQLServerAuditClient(client: self) }
     public var alwaysEncrypted: SQLServerAlwaysEncryptedClient { SQLServerAlwaysEncryptedClient(client: self) }
     public var temporal: SQLServerTemporalClient { SQLServerTemporalClient(client: self) }
+    public var serviceBroker: SQLServerServiceBrokerClient { SQLServerServiceBrokerClient(client: self) }
 }
