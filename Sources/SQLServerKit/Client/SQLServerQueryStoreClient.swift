@@ -550,4 +550,50 @@ public final class SQLServerQueryStoreClient: @unchecked Sendable {
             )
         }
     }
+
+    // MARK: - Wait Statistics
+
+    /// A wait category summary from Query Store wait stats.
+    public struct SQLServerQueryStoreWaitStat: Sendable, Equatable, Identifiable {
+        public var id: String { waitCategory }
+        public let waitCategory: String
+        public let totalWaitTimeMs: Double
+        public let avgWaitTimeMs: Double
+        public let waitCount: Int
+
+        public init(waitCategory: String, totalWaitTimeMs: Double, avgWaitTimeMs: Double, waitCount: Int) {
+            self.waitCategory = waitCategory
+            self.totalWaitTimeMs = totalWaitTimeMs
+            self.avgWaitTimeMs = avgWaitTimeMs
+            self.waitCount = waitCount
+        }
+    }
+
+    /// Returns wait statistics for a specific query from Query Store.
+    @available(macOS 12.0, *)
+    public func waitStats(database: String, planId: Int) async throws -> [SQLServerQueryStoreWaitStat] {
+        let sql = """
+        SELECT
+            ws.wait_category_desc AS wait_category,
+            SUM(ws.total_query_wait_time_ms) AS total_wait_time_ms,
+            AVG(ws.avg_query_wait_time_ms) AS avg_wait_time_ms,
+            SUM(ws.total_query_wait_time_ms) AS wait_count
+        FROM sys.query_store_wait_stats ws
+        WHERE ws.plan_id = \(planId)
+        GROUP BY ws.wait_category_desc
+        ORDER BY total_wait_time_ms DESC
+        """
+        let rows = try await client.withDatabase(database) { connection in
+            try await connection.query(sql)
+        }
+        return rows.compactMap { row in
+            guard let category = row.column("wait_category")?.string else { return nil }
+            return SQLServerQueryStoreWaitStat(
+                waitCategory: category,
+                totalWaitTimeMs: row.column("total_wait_time_ms")?.double ?? 0,
+                avgWaitTimeMs: row.column("avg_wait_time_ms")?.double ?? 0,
+                waitCount: row.column("wait_count")?.int ?? 0
+            )
+        }
+    }
 }
