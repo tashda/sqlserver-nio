@@ -183,6 +183,68 @@ public final class SQLServerReplicationClient: @unchecked Sendable {
 
     // MARK: - Articles
 
+    // MARK: - Agent Status
+
+    /// Replication agent status entry.
+    public struct SQLServerReplicationAgentStatus: Sendable, Equatable, Identifiable {
+        public var id: String { "\(agentType)_\(name)" }
+        public let agentType: String
+        public let name: String
+        public let status: String
+        public let lastAction: String?
+        public let lastRunTime: String?
+        public let publicationName: String?
+    }
+
+    /// Returns status of replication agents (distribution, log reader, snapshot).
+    @available(macOS 12.0, *)
+    public func agentStatus() async throws -> [SQLServerReplicationAgentStatus] {
+        // Query the distribution database agent tables if distributor is configured
+        let sql = """
+        SELECT
+            'Distribution' AS agent_type,
+            a.name,
+            CASE a.status
+                WHEN 1 THEN 'Started'
+                WHEN 2 THEN 'Succeeded'
+                WHEN 3 THEN 'In progress'
+                WHEN 4 THEN 'Idle'
+                WHEN 5 THEN 'Retrying'
+                WHEN 6 THEN 'Failed'
+                ELSE 'Unknown'
+            END AS status,
+            h.comments AS last_action,
+            CONVERT(VARCHAR(30), h.time, 121) AS last_run_time,
+            p.publication AS publication_name
+        FROM msdb.dbo.MSdistribution_agents a
+        LEFT JOIN msdb.dbo.syspublications p ON a.publication = p.name
+        OUTER APPLY (
+            SELECT TOP 1 comments, time
+            FROM msdb.dbo.MSdistribution_history dh
+            WHERE dh.agent_id = a.id
+            ORDER BY dh.time DESC
+        ) h
+        """
+        let rows: [SQLServerRow]
+        do {
+            rows = try await client.query(sql)
+        } catch {
+            // Distribution database may not be configured
+            return []
+        }
+        return rows.compactMap { row in
+            guard let name = row.column("name")?.string else { return nil }
+            return SQLServerReplicationAgentStatus(
+                agentType: row.column("agent_type")?.string ?? "Distribution",
+                name: name,
+                status: row.column("status")?.string ?? "Unknown",
+                lastAction: row.column("last_action")?.string,
+                lastRunTime: row.column("last_run_time")?.string,
+                publicationName: row.column("publication_name")?.string
+            )
+        }
+    }
+
     /// Lists articles in a specific publication.
     @available(macOS 12.0, *)
     public func listArticles(publicationName: String) async throws -> [SQLServerReplicationArticle] {

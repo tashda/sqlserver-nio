@@ -282,4 +282,50 @@ public final class SQLServerAvailabilityGroupsClient: @unchecked Sendable {
         let g = groupName.replacingOccurrences(of: "]", with: "]]")
         _ = try await client.execute("ALTER AVAILABILITY GROUP [\(g)] SET (AUTOMATED_BACKUP_PREFERENCE = \(preference));")
     }
+
+    // MARK: - Listeners
+
+    /// An AG listener endpoint.
+    public struct SQLServerAGListener: Sendable, Equatable, Identifiable {
+        public var id: String { "\(groupId)_\(dnsName)" }
+        public let groupId: String
+        public let dnsName: String
+        public let port: Int
+        public let ipAddresses: [String]
+        public let state: String
+    }
+
+    /// Lists listeners for an availability group.
+    @available(macOS 12.0, *)
+    public func listListeners(groupId: String) async throws -> [SQLServerAGListener] {
+        let escaped = groupId.replacingOccurrences(of: "'", with: "''")
+        let sql = """
+        SELECT
+            l.group_id,
+            l.dns_name,
+            l.port,
+            l.state_desc,
+            STRING_AGG(CAST(ip.ip_address AS NVARCHAR(48)), ', ') AS ip_addresses
+        FROM sys.availability_group_listeners l
+        LEFT JOIN sys.availability_group_listener_ip_addresses ip
+            ON l.listener_id = ip.listener_id
+        WHERE CAST(l.group_id AS NVARCHAR(36)) = N'\(escaped)'
+        GROUP BY l.group_id, l.dns_name, l.port, l.state_desc
+        ORDER BY l.dns_name
+        """
+        let rows = try await client.query(sql)
+        return rows.compactMap { row in
+            guard let dns = row.column("dns_name")?.string else { return nil }
+            let ips = (row.column("ip_addresses")?.string ?? "")
+                .components(separatedBy: ", ")
+                .filter { !$0.isEmpty }
+            return SQLServerAGListener(
+                groupId: row.column("group_id")?.string ?? groupId,
+                dnsName: dns,
+                port: row.column("port")?.int ?? 0,
+                ipAddresses: ips,
+                state: row.column("state_desc")?.string ?? "UNKNOWN"
+            )
+        }
+    }
 }
