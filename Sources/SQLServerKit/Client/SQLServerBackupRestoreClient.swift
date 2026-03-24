@@ -284,7 +284,7 @@ public final class SQLServerBackupRestoreClient: @unchecked Sendable {
         let escaped = diskPath.replacingOccurrences(of: "'", with: "''")
         let sql = "RESTORE HEADERONLY FROM DISK = N'\(escaped)';"
 
-        let rows = try await client.query(sql).get()
+        let rows = try await client.query(sql)
         return rows.enumerated().compactMap { index, row -> SQLServerBackupSetInfo? in
             guard let dbName = row.column("DatabaseName")?.string else { return nil }
             return SQLServerBackupSetInfo(
@@ -310,7 +310,7 @@ public final class SQLServerBackupRestoreClient: @unchecked Sendable {
         let escaped = diskPath.replacingOccurrences(of: "'", with: "''")
         let sql = "RESTORE FILELISTONLY FROM DISK = N'\(escaped)';"
 
-        let rows = try await client.query(sql).get()
+        let rows = try await client.query(sql)
         return rows.compactMap { row -> SQLServerBackupFileInfo? in
             guard let logicalName = row.column("LogicalName")?.string,
                   let physicalName = row.column("PhysicalName")?.string,
@@ -524,7 +524,7 @@ public final class SQLServerBackupRestoreClient: @unchecked Sendable {
         ORDER BY bs.backup_finish_date DESC;
         """
 
-        let rows = try await client.query(sql).get()
+        let rows = try await client.query(sql)
         return rows.map { row in
             SQLServerBackupHistoryEntry(
                 id: row.column("backup_set_id")?.int ?? 0,

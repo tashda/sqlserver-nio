@@ -10,6 +10,7 @@ public final class SQLServerDACClient: @unchecked Sendable {
     }
     
     /// Extracts a database schema into a DACPAC model.
+    @available(macOS 12.0, *)
     public func extractDacpac(database: String) async throws -> Data {
         // This usually involves generating a complex XML model of the database.
         // For now, we return a placeholder error as this requires extensive metadata mapping.
@@ -17,11 +18,13 @@ public final class SQLServerDACClient: @unchecked Sendable {
     }
     
     /// Deploys a DACPAC model to a database.
+    @available(macOS 12.0, *)
     public func deployDacpac(data: Data, targetDatabase: String) async throws {
         throw NSError(domain: "SQLServerDAC", code: -1, userInfo: [NSLocalizedDescriptionKey: "DACPAC deployment is not yet fully implemented."])
     }
     
     /// Exports a database (schema + data) into a BACPAC archive.
+    @available(macOS 12.0, *)
     public func exportBacpac(database: String) async throws -> URL {
         throw NSError(domain: "SQLServerDAC", code: -1, userInfo: [NSLocalizedDescriptionKey: "BACPAC export is not yet fully implemented."])
     }

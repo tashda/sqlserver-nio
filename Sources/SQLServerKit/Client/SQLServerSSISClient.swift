@@ -11,6 +11,7 @@ public final class SQLServerSSISClient: @unchecked Sendable {
     }
     
     /// Checks if the SSISDB catalog is available on this instance.
+    @available(macOS 12.0, *)
     public func isSSISCatalogAvailable() async throws -> Bool {
         let sql = "SELECT ISNULL(DB_ID('SSISDB'), 0) AS is_available"
         let rows = try await client.query(sql)
@@ -18,6 +19,7 @@ public final class SQLServerSSISClient: @unchecked Sendable {
     }
     
     /// Lists all folders in the SSIS Catalog.
+    @available(macOS 12.0, *)
     public func listFolders() async throws -> [SQLServerSSISFolder] {
         let sql = "SELECT folder_id, name, description, created_by_name, created_time FROM SSISDB.catalog.folders"
         let rows = try await client.query(sql)
@@ -37,6 +39,7 @@ public final class SQLServerSSISClient: @unchecked Sendable {
     }
     
     /// Lists all projects within a specific folder.
+    @available(macOS 12.0, *)
     public func listProjects(folderId: Int64) async throws -> [SQLServerSSISProject] {
         let sql = """
         SELECT project_id, folder_id, name, description, deployed_by_name, last_deployed_time 
@@ -62,6 +65,7 @@ public final class SQLServerSSISClient: @unchecked Sendable {
     }
     
     /// Lists all packages within a specific project.
+    @available(macOS 12.0, *)
     public func listPackages(projectId: Int64) async throws -> [SQLServerSSISPackage] {
         let sql = """
         SELECT package_id, project_id, name, description, version_major, version_minor 
@@ -85,6 +89,7 @@ public final class SQLServerSSISClient: @unchecked Sendable {
     }
     
     /// Fetches recent execution history from the SSIS Catalog.
+    @available(macOS 12.0, *)
     public func fetchExecutions(limit: Int = 100) async throws -> [SQLServerSSISExecution] {
         let sql = """
         SELECT TOP (\(limit)) 

@@ -40,7 +40,7 @@ public final class SQLServerSecurityClient: @unchecked Sendable {
         case .client(let c):
             return try await c.execute(sql)
         case .connection(let conn):
-            return try await conn.execute(sql).get()
+            return try await conn.execute(sql)
         }
     }
     
@@ -50,7 +50,7 @@ public final class SQLServerSecurityClient: @unchecked Sendable {
         case .client(let c):
             return try await c.query(sql)
         case .connection(let conn):
-            return try await conn.query(sql).get()
+            return try await conn.query(sql)
         }
     }
     

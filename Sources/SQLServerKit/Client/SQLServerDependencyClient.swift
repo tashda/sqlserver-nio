@@ -10,6 +10,7 @@ public final class SQLServerDependencyClient: @unchecked Sendable {
     }
     
     /// Returns all scriptable objects in the current database.
+    @available(macOS 12.0, *)
     public func listAllObjects() async throws -> [SQLServerObjectIdentifier] {
         let sql = """
         SELECT SCHEMA_NAME(schema_id) as [schema], name, type
@@ -18,7 +19,7 @@ public final class SQLServerDependencyClient: @unchecked Sendable {
           AND type IN ('U', 'V', 'P', 'FN', 'IF', 'TF')
         ORDER BY [schema], name
         """
-        let rows = try await client.query(sql).get()
+        let rows = try await client.query(sql)
         return rows.compactMap { row in
             guard let schema = row.column("schema")?.string,
                   let name = row.column("name")?.string,
@@ -28,6 +29,7 @@ public final class SQLServerDependencyClient: @unchecked Sendable {
     }
     
     /// Fetches all cross-object dependencies in the current database.
+    @available(macOS 12.0, *)
     public func fetchDependencies() async throws -> [SQLServerScriptingDependency] {
         let sql = """
         SELECT 
@@ -38,7 +40,7 @@ public final class SQLServerDependencyClient: @unchecked Sendable {
         JOIN sys.objects r ON sed.referenced_id = r.object_id
         WHERE d.is_ms_shipped = 0 AND r.is_ms_shipped = 0
         """
-        let rows = try await client.query(sql).get()
+        let rows = try await client.query(sql)
         return rows.compactMap { row in
             guard let depSchema = row.column("dep_schema")?.string,
                   let depName = row.column("dep_name")?.string,
@@ -55,6 +57,7 @@ public final class SQLServerDependencyClient: @unchecked Sendable {
     }
     
     /// Builds a full dependency graph for the current database.
+    @available(macOS 12.0, *)
     public func buildGraph() async throws -> SQLServerDependencyGraph {
         async let objects = listAllObjects()
         async let dependencies = fetchDependencies()

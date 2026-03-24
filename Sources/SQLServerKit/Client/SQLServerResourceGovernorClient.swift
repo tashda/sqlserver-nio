@@ -12,9 +12,10 @@ public final class SQLServerResourceGovernorClient: @unchecked Sendable {
     // MARK: - Configuration
     
     /// Returns the current global configuration of the Resource Governor.
+    @available(macOS 12.0, *)
     public func fetchConfiguration() async throws -> SQLServerResourceGovernorConfiguration {
         let sql = "SELECT classifier_function_id, is_enabled, is_reconfiguration_pending FROM sys.resource_governor_configuration"
-        let rows = try await client.query(sql).get()
+        let rows = try await client.query(sql)
         guard let row = rows.first else {
             throw SQLServerError.sqlExecutionError(message: "Resource Governor configuration not found.")
         }
@@ -26,7 +27,7 @@ public final class SQLServerResourceGovernorClient: @unchecked Sendable {
         var classifierName: String? = nil
         if classifierId != 0 {
             let nameSql = "SELECT OBJECT_NAME(\(classifierId)) as name"
-            classifierName = try await client.query(nameSql).get().first?.column("name")?.string
+            classifierName = try await client.query(nameSql).first?.column("name")?.string
         }
         
         return SQLServerResourceGovernorConfiguration(
@@ -37,39 +38,44 @@ public final class SQLServerResourceGovernorClient: @unchecked Sendable {
     }
     
     /// Enables the Resource Governor.
+    @available(macOS 12.0, *)
     public func enable() async throws {
         _ = try await client.query("ALTER RESOURCE GOVERNOR RECONFIGURE").get()
     }
     
     /// Disables the Resource Governor.
+    @available(macOS 12.0, *)
     public func disable() async throws {
         _ = try await client.query("ALTER RESOURCE GOVERNOR DISABLE").get()
     }
     
     /// Reconfigures the Resource Governor to apply pending changes.
+    @available(macOS 12.0, *)
     public func reconfigure() async throws {
         _ = try await client.query("ALTER RESOURCE GOVERNOR RECONFIGURE").get()
     }
     
     /// Sets the classifier function for the Resource Governor.
+    @available(macOS 12.0, *)
     public func setClassifierFunction(_ functionName: String?) async throws {
         let sql = if let name = functionName {
             "ALTER RESOURCE GOVERNOR WITH (CLASSIFIER_FUNCTION = \(escapeIdentifier(name)))"
         } else {
             "ALTER RESOURCE GOVERNOR WITH (CLASSIFIER_FUNCTION = NULL)"
         }
-        _ = try await client.query(sql).get()
+        _ = try await client.query(sql)
     }
     
     // MARK: - Resource Pools
     
     /// Lists all defined resource pools.
+    @available(macOS 12.0, *)
     public func listResourcePools(includeStats: Bool = false) async throws -> [SQLServerResourcePool] {
         let sql = """
         SELECT pool_id, name, min_cpu_percent, max_cpu_percent, min_memory_percent, max_memory_percent, cap_cpu_percent
         FROM sys.resource_governor_resource_pools
         """
-        let rows = try await client.query(sql).get()
+        let rows = try await client.query(sql)
         
         var statsMap: [Int32: SQLServerResourcePool.Stats] = [:]
         if includeStats {
@@ -77,7 +83,7 @@ public final class SQLServerResourceGovernorClient: @unchecked Sendable {
             SELECT pool_id, active_session_count, used_memory_kb, target_memory_kb, cpu_usage_total
             FROM sys.dm_resource_governor_resource_pools
             """
-            let statsRows = try await client.query(statsSql).get()
+            let statsRows = try await client.query(statsSql)
             for row in statsRows {
                 if let id = row.column("pool_id")?.int32 {
                     statsMap[id] = SQLServerResourcePool.Stats(
@@ -110,6 +116,7 @@ public final class SQLServerResourceGovernorClient: @unchecked Sendable {
     // MARK: - Workload Groups
     
     /// Lists all defined workload groups.
+    @available(macOS 12.0, *)
     public func listWorkloadGroups(includeStats: Bool = false) async throws -> [SQLServerWorkloadGroup] {
         let sql = """
         SELECT g.group_id, g.name, p.name as pool_name, g.importance, 
@@ -118,7 +125,7 @@ public final class SQLServerResourceGovernorClient: @unchecked Sendable {
         FROM sys.resource_governor_workload_groups g
         JOIN sys.resource_governor_resource_pools p ON g.pool_id = p.pool_id
         """
-        let rows = try await client.query(sql).get()
+        let rows = try await client.query(sql)
         
         var statsMap: [Int32: SQLServerWorkloadGroup.Stats] = [:]
         if includeStats {
@@ -126,7 +133,7 @@ public final class SQLServerResourceGovernorClient: @unchecked Sendable {
             SELECT group_id, active_request_count, queued_request_count, blocked_task_count, total_cpu_usage_ms
             FROM sys.dm_resource_governor_workload_groups
             """
-            let statsRows = try await client.query(statsSql).get()
+            let statsRows = try await client.query(statsSql)
             for row in statsRows {
                 if let id = row.column("group_id")?.int32 {
                     statsMap[id] = SQLServerWorkloadGroup.Stats(
