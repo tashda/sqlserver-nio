@@ -225,6 +225,69 @@ extension SQLServerSecurityClient {
         }
     }
     
+    // MARK: - Effective Permissions (fn_my_permissions)
+
+    @available(macOS 12.0, *)
+    public func listEffectivePermissions(on securable: String?, class securableClass: String) async throws -> [EffectivePermissionInfo] {
+        let securableLiteral: String
+        if let securable {
+            securableLiteral = "N'\(securable.replacingOccurrences(of: "'", with: "''"))'"
+        } else {
+            securableLiteral = "NULL"
+        }
+        let sql = "SELECT entity_name, subentity_name, permission_name FROM fn_my_permissions(\(securableLiteral), N'\(securableClass.replacingOccurrences(of: "'", with: "''"))')"
+        let rows = try await query(sql)
+        return rows.map { row in
+            EffectivePermissionInfo(
+                entityName: row.column("entity_name")?.string,
+                subentityName: row.column("subentity_name")?.string,
+                permissionName: row.column("permission_name")?.string ?? ""
+            )
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func listBuiltinPermissions(class securableClass: String) async throws -> [String] {
+        let sql = "SELECT permission_name FROM fn_builtin_permissions(N'\(securableClass.replacingOccurrences(of: "'", with: "''"))') ORDER BY permission_name"
+        let rows = try await query(sql)
+        return rows.compactMap { $0.column("permission_name")?.string }
+    }
+
+    @available(macOS 12.0, *)
+    public func listObjectPermissions(schema: String, object: String) async throws -> [DetailedPermissionInfo] {
+        let sql = """
+        SELECT
+            p.permission_name, p.state_desc, p.class_desc,
+            s.name AS schema_name, o.name AS object_name,
+            ISNULL(col.name, '') AS column_name,
+            grantee.name AS principal_name,
+            ISNULL(grantor.name, '') AS grantor_name
+        FROM sys.database_permissions AS p
+        INNER JOIN sys.objects AS o ON o.object_id = p.major_id
+        INNER JOIN sys.schemas AS s ON s.schema_id = o.schema_id
+        INNER JOIN sys.database_principals AS grantee ON grantee.principal_id = p.grantee_principal_id
+        LEFT JOIN sys.database_principals AS grantor ON grantor.principal_id = p.grantor_principal_id
+        LEFT JOIN sys.columns AS col ON (p.minor_id > 0 AND col.object_id = p.major_id AND col.column_id = p.minor_id)
+        WHERE s.name = N'\(schema.replacingOccurrences(of: "'", with: "''"))'
+          AND o.name = N'\(object.replacingOccurrences(of: "'", with: "''"))'
+          AND p.class = 1
+        ORDER BY grantee.name, p.permission_name
+        """
+        let rows = try await query(sql)
+        return rows.map { row in
+            DetailedPermissionInfo(
+                permission: row.column("permission_name")?.string ?? "",
+                state: row.column("state_desc")?.string ?? "",
+                classDesc: row.column("class_desc")?.string ?? "",
+                schemaName: row.column("schema_name")?.string,
+                objectName: row.column("object_name")?.string,
+                columnName: row.column("column_name")?.string,
+                principalName: row.column("principal_name")?.string ?? "",
+                grantor: row.column("grantor_name")?.string
+            )
+        }
+    }
+
     @available(macOS 12.0, *)
     public func listPermissions(principal: String? = nil, object: String? = nil) async throws -> [PermissionInfo] {
         var sql = """
