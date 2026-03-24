@@ -48,16 +48,26 @@ public final class SQLServerAlwaysEncryptedClient: @unchecked Sendable {
     }
 
     /// Creates a column master key definition.
+    ///
+    /// - Parameters:
+    ///   - name: The key name.
+    ///   - keyStoreProviderName: The key store provider (e.g. `MSSQL_CERTIFICATE_STORE`, `AZURE_KEY_VAULT`).
+    ///   - keyPath: The key path within the store.
+    ///   - allowEnclaveComputations: When `true`, enables secure enclave computations for this CMK (SQL Server 2019+).
     @available(macOS 12.0, *)
-    public func createColumnMasterKey(name: String, keyStoreProviderName: String, keyPath: String) async throws {
+    public func createColumnMasterKey(name: String, keyStoreProviderName: String, keyPath: String, allowEnclaveComputations: Bool = false) async throws {
         let escapedName = Self.escapeIdentifier(name)
         let escapedProvider = keyStoreProviderName.replacingOccurrences(of: "'", with: "''")
         let escapedPath = keyPath.replacingOccurrences(of: "'", with: "''")
-        let sql = """
+        var sql = """
         CREATE COLUMN MASTER KEY \(escapedName)
         WITH (KEY_STORE_PROVIDER_NAME = N'\(escapedProvider)',
-              KEY_PATH = N'\(escapedPath)')
+              KEY_PATH = N'\(escapedPath)'
         """
+        if allowEnclaveComputations {
+            sql += ",\n      ENCLAVE_COMPUTATIONS (SIGNATURE = 0x)"
+        }
+        sql += ")"
         _ = try await client.execute(sql)
     }
 
