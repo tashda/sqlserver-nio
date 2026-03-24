@@ -3,7 +3,20 @@ import Logging
 import NIO
 
 public struct SQLServerAgentJobStep: Sendable {
-    public enum Subsystem: String, Sendable { case tsql = "TSQL", cmdExec = "CmdExec", powershell = "PowerShell" }
+    public enum Subsystem: String, Sendable, CaseIterable {
+        case tsql = "TSQL"
+        case cmdExec = "CmdExec"
+        case powershell = "PowerShell"
+        case ssis = "SSIS"
+        case snapshot = "Snapshot"
+        case logReader = "LogReader"
+        case distribution = "Distribution"
+        case merge = "Merge"
+        case queueReader = "QueueReader"
+        case analysisCommand = "ANALYSISCOMMAND"
+        case analysisQuery = "ANALYSISQUERY"
+        case activeScripting = "ActiveScripting"
+    }
     public enum StepAction: Sendable {
         case quitWithSuccess
         case quitWithFailure
