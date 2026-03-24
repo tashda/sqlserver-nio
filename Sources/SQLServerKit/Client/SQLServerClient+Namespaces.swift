@@ -35,4 +35,5 @@ extension SQLServerClient {
     public var alwaysEncrypted: SQLServerAlwaysEncryptedClient { SQLServerAlwaysEncryptedClient(client: self) }
     public var temporal: SQLServerTemporalClient { SQLServerTemporalClient(client: self) }
     public var serviceBroker: SQLServerServiceBrokerClient { SQLServerServiceBrokerClient(client: self) }
+    public var polyBase: SQLServerPolyBaseClient { SQLServerPolyBaseClient(client: self) }
 }
