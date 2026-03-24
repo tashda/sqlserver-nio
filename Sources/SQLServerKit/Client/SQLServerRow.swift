@@ -102,13 +102,24 @@ public struct SQLServerRow: Sendable {
                 else { result.append(nil) }
 
             default:
-                // Unknown type / UDT — check hierarchyid, then string fallback
-                if let udtInfo = (metadata as? TDSTokens.ColMetadataToken.ColumnData)?.udtInfo,
-                   udtInfo.typeName.caseInsensitiveCompare("hierarchyid") == .orderedSame,
-                   let bytes = tdsData.bytes,
-                   let hid = SQLServerHierarchyID.string(from: bytes) {
-                    result.append(hid)
-                } else if let s = tdsData.string { result.append(s) }
+                // Unknown type / UDT — check hierarchyid/spatial, then string fallback
+                if let udtInfo = (metadata as? TDSTokens.ColMetadataToken.ColumnData)?.udtInfo {
+                    let typeName = udtInfo.typeName
+                    if typeName.caseInsensitiveCompare("hierarchyid") == .orderedSame,
+                       let bytes = tdsData.bytes,
+                       let hid = SQLServerHierarchyID.string(from: bytes) {
+                        result.append(hid)
+                        continue
+                    }
+                    if (typeName.caseInsensitiveCompare("geometry") == .orderedSame || 
+                        typeName.caseInsensitiveCompare("geography") == .orderedSame),
+                       var buf = base.columnData[i].data,
+                       let spatial = SQLServerSpatial.decode(from: &buf) {
+                        result.append(spatial.wkt)
+                        continue
+                    }
+                }
+                
                 if let s = tdsData.string { result.append(s) }
                 else { result.append(nil) }
             }

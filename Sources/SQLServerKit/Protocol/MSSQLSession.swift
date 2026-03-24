@@ -27,6 +27,16 @@ public protocol MSSQLSession {
     var temporal: SQLServerTemporalClient { get }
     var serviceBroker: SQLServerServiceBrokerClient { get }
     var polyBase: SQLServerPolyBaseClient { get }
+    var tuning: SQLServerTuningClient { get }
+    var profiler: SQLServerProfilerClient { get }
+    var resourceGovernor: SQLServerResourceGovernorClient { get }
+    var policy: SQLServerPolicyClient { get }
+    var dependencies: SQLServerDependencyClient { get }
+    var dac: SQLServerDACClient { get }
+    var bulkCopy: SQLServerBulkCopyClient { get }
+    var ssis: SQLServerSSISClient { get }
+    var ssas: SQLServerSSASClient { get }
+    var ssrs: SQLServerSSRSClient { get }
     @available(*, deprecated, message: "Use client.agent instead.")
     func makeAgentClient() -> SQLServerAgentOperations
     @available(*, deprecated, message: "Use client.admin instead.")
