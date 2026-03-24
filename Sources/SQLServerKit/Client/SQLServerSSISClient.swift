@@ -13,14 +13,14 @@ public final class SQLServerSSISClient: @unchecked Sendable {
     /// Checks if the SSISDB catalog is available on this instance.
     public func isSSISCatalogAvailable() async throws -> Bool {
         let sql = "SELECT ISNULL(DB_ID('SSISDB'), 0) AS is_available"
-        let rows = try await client.query(sql).get()
+        let rows = try await client.query(sql)
         return (rows.first?.column("is_available")?.int ?? 0) > 0
     }
     
     /// Lists all folders in the SSIS Catalog.
     public func listFolders() async throws -> [SQLServerSSISFolder] {
         let sql = "SELECT folder_id, name, description, created_by_name, created_time FROM SSISDB.catalog.folders"
-        let rows = try await client.query(sql).get()
+        let rows = try await client.query(sql)
         return rows.compactMap { row in
             guard let id = row.column("folder_id")?.int64,
                   let name = row.column("name")?.string,
@@ -43,7 +43,7 @@ public final class SQLServerSSISClient: @unchecked Sendable {
         FROM SSISDB.catalog.projects 
         WHERE folder_id = \(folderId)
         """
-        let rows = try await client.query(sql).get()
+        let rows = try await client.query(sql)
         return rows.compactMap { row in
             guard let id = row.column("project_id")?.int64,
                   let fid = row.column("folder_id")?.int64,
@@ -68,7 +68,7 @@ public final class SQLServerSSISClient: @unchecked Sendable {
         FROM SSISDB.catalog.packages 
         WHERE project_id = \(projectId)
         """
-        let rows = try await client.query(sql).get()
+        let rows = try await client.query(sql)
         return rows.compactMap { row in
             guard let id = row.column("package_id")?.int64,
                   let pid = row.column("project_id")?.int64,
@@ -93,7 +93,7 @@ public final class SQLServerSSISClient: @unchecked Sendable {
         FROM SSISDB.catalog.executions
         ORDER BY start_time DESC
         """
-        let rows = try await client.query(sql).get()
+        let rows = try await client.query(sql)
         return rows.compactMap { row in
             guard let id = row.column("execution_id")?.int64,
                   let folder = row.column("folder_name")?.string,

@@ -311,6 +311,17 @@ public final class SQLServerServerConfigurationClient: @unchecked Sendable {
         return result.messages
     }
 
+    // MARK: - Startup Parameters (Phase 7.4)
+
+    /// Fetches the SQL Server startup parameters from the registry.
+    /// Requires VIEW SERVER STATE and sysadmin permissions.
+    @available(macOS 12.0, *)
+    public func fetchStartupParameters() async throws -> [String] {
+        let sql = "SELECT [value] FROM sys.dm_server_registry WHERE registry_key LIKE '%\\MSSQLServer\\Parameters'"
+        let rows = try await client.query(sql)
+        return rows.compactMap { $0.column("value")?.string }
+    }
+
     // MARK: - Private
 
     @available(macOS 12.0, *)
