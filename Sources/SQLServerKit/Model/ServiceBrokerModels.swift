@@ -109,3 +109,60 @@ public struct ServiceBrokerRemoteBinding: Sendable, Equatable, Identifiable {
         self.isAnonymous = isAnonymous
     }
 }
+
+// MARK: - Creation Types
+
+/// Validation mode for a Service Broker message type.
+public enum MessageTypeValidation: Sendable, Equatable {
+    case none
+    case empty
+    case wellFormedXML
+    case validXML(schemaCollection: String)
+
+    public var sqlClause: String {
+        switch self {
+        case .none: return "NONE"
+        case .empty: return "EMPTY"
+        case .wellFormedXML: return "WELL_FORMED_XML"
+        case .validXML(let sc): return "VALID_XML WITH SCHEMA COLLECTION [\(sc.replacingOccurrences(of: "]", with: "]]"))]"
+        }
+    }
+}
+
+/// Direction constraint for a contract message usage.
+public enum ContractSentBy: String, Sendable, Equatable {
+    case initiator = "INITIATOR"
+    case target = "TARGET"
+    case any = "ANY"
+}
+
+/// Options for creating a Service Broker queue.
+public struct QueueCreationOptions: Sendable {
+    public var status: Bool
+    public var retention: Bool
+    public var activationEnabled: Bool
+    public var activationProcedure: String?
+    public var maxQueueReaders: Int
+    public var executeAs: String?
+    public var poisonMessageHandling: Bool
+
+    public init(
+        status: Bool = true,
+        retention: Bool = false,
+        activationEnabled: Bool = false,
+        activationProcedure: String? = nil,
+        maxQueueReaders: Int = 1,
+        executeAs: String? = nil,
+        poisonMessageHandling: Bool = true
+    ) {
+        self.status = status
+        self.retention = retention
+        self.activationEnabled = activationEnabled
+        self.activationProcedure = activationProcedure
+        self.maxQueueReaders = maxQueueReaders
+        self.executeAs = executeAs
+        self.poisonMessageHandling = poisonMessageHandling
+    }
+
+    public static let defaults = QueueCreationOptions()
+}

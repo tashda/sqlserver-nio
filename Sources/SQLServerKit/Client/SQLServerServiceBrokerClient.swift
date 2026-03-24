@@ -200,4 +200,140 @@ public final class SQLServerServiceBrokerClient: @unchecked Sendable {
             )
         }
     }
+
+    // MARK: - Create Operations
+
+    /// Creates a message type.
+    @available(macOS 12.0, *)
+    public func createMessageType(
+        database: String,
+        name: String,
+        validation: MessageTypeValidation = .none
+    ) async throws {
+        let db = Self.escapeIdentifier(database)
+        let sql = "USE \(db); CREATE MESSAGE TYPE \(Self.escapeIdentifier(name)) VALIDATION = \(validation.sqlClause)"
+        _ = try await client.execute(sql)
+    }
+
+    /// Drops a message type.
+    @available(macOS 12.0, *)
+    public func dropMessageType(database: String, name: String) async throws {
+        let db = Self.escapeIdentifier(database)
+        _ = try await client.execute("USE \(db); DROP MESSAGE TYPE \(Self.escapeIdentifier(name))")
+    }
+
+    /// Creates a contract with one or more message type usages.
+    @available(macOS 12.0, *)
+    public func createContract(
+        database: String,
+        name: String,
+        messageUsages: [(messageType: String, sentBy: ContractSentBy)]
+    ) async throws {
+        guard !messageUsages.isEmpty else {
+            throw SQLServerError.invalidArgument("At least one message type usage is required")
+        }
+        let db = Self.escapeIdentifier(database)
+        let usages = messageUsages.map { usage in
+            "\(Self.escapeIdentifier(usage.messageType)) SENT BY \(usage.sentBy.rawValue)"
+        }.joined(separator: ",\n    ")
+        let sql = "USE \(db); CREATE CONTRACT \(Self.escapeIdentifier(name)) (\n    \(usages)\n)"
+        _ = try await client.execute(sql)
+    }
+
+    /// Drops a contract.
+    @available(macOS 12.0, *)
+    public func dropContract(database: String, name: String) async throws {
+        let db = Self.escapeIdentifier(database)
+        _ = try await client.execute("USE \(db); DROP CONTRACT \(Self.escapeIdentifier(name))")
+    }
+
+    /// Creates a queue with optional activation and poison message handling.
+    @available(macOS 12.0, *)
+    public func createQueue(
+        database: String,
+        schema: String = "dbo",
+        name: String,
+        options: QueueCreationOptions = .defaults
+    ) async throws {
+        let db = Self.escapeIdentifier(database)
+        let qualified = "\(Self.escapeIdentifier(schema)).\(Self.escapeIdentifier(name))"
+        var withParts: [String] = []
+        withParts.append("STATUS = \(options.status ? "ON" : "OFF")")
+        withParts.append("RETENTION = \(options.retention ? "ON" : "OFF")")
+        if options.activationEnabled, let proc = options.activationProcedure, !proc.isEmpty {
+            var activation = "ACTIVATION (STATUS = ON, PROCEDURE_NAME = \(Self.escapeIdentifier(proc))"
+            activation += ", MAX_QUEUE_READERS = \(options.maxQueueReaders)"
+            if let ea = options.executeAs {
+                activation += ", EXECUTE AS '\(Self.escapeLiteral(ea))'"
+            } else {
+                activation += ", EXECUTE AS SELF"
+            }
+            activation += ")"
+            withParts.append(activation)
+        }
+        withParts.append("POISON_MESSAGE_HANDLING (STATUS = \(options.poisonMessageHandling ? "ON" : "OFF"))")
+        let sql = "USE \(db); CREATE QUEUE \(qualified) WITH \(withParts.joined(separator: ", "))"
+        _ = try await client.execute(sql)
+    }
+
+    /// Drops a queue.
+    @available(macOS 12.0, *)
+    public func dropQueue(database: String, schema: String = "dbo", name: String) async throws {
+        let db = Self.escapeIdentifier(database)
+        let qualified = "\(Self.escapeIdentifier(schema)).\(Self.escapeIdentifier(name))"
+        _ = try await client.execute("USE \(db); DROP QUEUE \(qualified)")
+    }
+
+    /// Creates a service on an existing queue.
+    @available(macOS 12.0, *)
+    public func createService(
+        database: String,
+        name: String,
+        queue: String,
+        contracts: [String] = []
+    ) async throws {
+        let db = Self.escapeIdentifier(database)
+        var sql = "USE \(db); CREATE SERVICE \(Self.escapeIdentifier(name)) ON QUEUE \(Self.escapeIdentifier(queue))"
+        if !contracts.isEmpty {
+            let contractList = contracts.map { Self.escapeIdentifier($0) }.joined(separator: ", ")
+            sql += " (\(contractList))"
+        }
+        _ = try await client.execute(sql)
+    }
+
+    /// Drops a service.
+    @available(macOS 12.0, *)
+    public func dropService(database: String, name: String) async throws {
+        let db = Self.escapeIdentifier(database)
+        _ = try await client.execute("USE \(db); DROP SERVICE \(Self.escapeIdentifier(name))")
+    }
+
+    /// Creates a route.
+    @available(macOS 12.0, *)
+    public func createRoute(
+        database: String,
+        name: String,
+        address: String,
+        serviceName: String? = nil,
+        brokerInstance: String? = nil,
+        lifetime: Int? = nil,
+        mirrorAddress: String? = nil
+    ) async throws {
+        let db = Self.escapeIdentifier(database)
+        var withParts: [String] = []
+        if let sn = serviceName { withParts.append("SERVICE_NAME = N'\(Self.escapeLiteral(sn))'") }
+        if let bi = brokerInstance { withParts.append("BROKER_INSTANCE = N'\(Self.escapeLiteral(bi))'") }
+        if let lt = lifetime { withParts.append("LIFETIME = \(lt)") }
+        withParts.append("ADDRESS = N'\(Self.escapeLiteral(address))'")
+        if let ma = mirrorAddress { withParts.append("MIRROR_ADDRESS = N'\(Self.escapeLiteral(ma))'") }
+        let sql = "USE \(db); CREATE ROUTE \(Self.escapeIdentifier(name)) WITH \(withParts.joined(separator: ", "))"
+        _ = try await client.execute(sql)
+    }
+
+    /// Drops a route.
+    @available(macOS 12.0, *)
+    public func dropRoute(database: String, name: String) async throws {
+        let db = Self.escapeIdentifier(database)
+        _ = try await client.execute("USE \(db); DROP ROUTE \(Self.escapeIdentifier(name))")
+    }
 }
