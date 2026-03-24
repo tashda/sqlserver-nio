@@ -14,15 +14,15 @@ public final class SQLServerResourceGovernorClient: @unchecked Sendable {
     /// Returns the current global configuration of the Resource Governor.
     public func fetchConfiguration() async throws -> SQLServerResourceGovernorConfiguration {
         let sql = "SELECT classifier_function_id, is_enabled, is_reconfiguration_pending FROM sys.resource_governor_configuration"
-        let rows = try await client.query(sql)
+        let rows = try await client.query(sql).get()
         guard let row = rows.first else {
             throw SQLServerError.sqlExecutionError(message: "Resource Governor configuration not found.")
         }
-        
+
         let classifierId = row.column("classifier_function_id")?.int ?? 0
         let isEnabled = row.column("is_enabled")?.int == 1
         let isPending = row.column("is_reconfiguration_pending")?.int == 1
-        
+
         var classifierName: String? = nil
         if classifierId != 0 {
             let nameSql = "SELECT OBJECT_NAME(\(classifierId)) as name"
@@ -69,7 +69,7 @@ public final class SQLServerResourceGovernorClient: @unchecked Sendable {
         SELECT pool_id, name, min_cpu_percent, max_cpu_percent, min_memory_percent, max_memory_percent, cap_cpu_percent
         FROM sys.resource_governor_resource_pools
         """
-        let rows = try await client.query(sql)
+        let rows = try await client.query(sql).get()
         
         var statsMap: [Int32: SQLServerResourcePool.Stats] = [:]
         if includeStats {
@@ -118,7 +118,7 @@ public final class SQLServerResourceGovernorClient: @unchecked Sendable {
         FROM sys.resource_governor_workload_groups g
         JOIN sys.resource_governor_resource_pools p ON g.pool_id = p.pool_id
         """
-        let rows = try await client.query(sql)
+        let rows = try await client.query(sql).get()
         
         var statsMap: [Int32: SQLServerWorkloadGroup.Stats] = [:]
         if includeStats {

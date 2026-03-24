@@ -20,7 +20,7 @@ public final class SQLServerPolicyClient: @unchecked Sendable {
         JOIN msdb.dbo.syspolicy_conditions c ON p.condition_id = c.condition_id
         LEFT JOIN msdb.dbo.sysschedules s ON p.schedule_uid = s.schedule_uid
         """
-        let rows = try await client.query(sql)
+        let rows = try await client.query(sql).get()
         return rows.compactMap { row in
             guard let id = row.column("policy_id")?.int32,
                   let name = row.column("name")?.string,
@@ -46,7 +46,7 @@ public final class SQLServerPolicyClient: @unchecked Sendable {
         SELECT condition_id, name, facet_name, expression
         FROM msdb.dbo.syspolicy_conditions
         """
-        let rows = try await client.query(sql)
+        let rows = try await client.query(sql).get()
         return rows.compactMap { row in
             guard let id = row.column("condition_id")?.int32,
                   let name = row.column("name")?.string,
@@ -66,7 +66,7 @@ public final class SQLServerPolicyClient: @unchecked Sendable {
     /// Lists all available management facets.
     public func listFacets() async throws -> [SQLServerPolicyFacet] {
         let sql = "SELECT name, description FROM msdb.dbo.syspolicy_management_facets"
-        let rows = try await client.query(sql)
+        let rows = try await client.query(sql).get()
         return rows.compactMap { row in
             guard let name = row.column("name")?.string else { return nil }
             return SQLServerPolicyFacet(name: name, description: row.column("description")?.string)
@@ -86,7 +86,7 @@ public final class SQLServerPolicyClient: @unchecked Sendable {
         }
         sql += " ORDER BY start_date DESC"
         
-        let rows = try await client.query(sql)
+        let rows = try await client.query(sql).get()
         return rows.compactMap { row in
             guard let id = row.column("history_id")?.int64,
                   let pid = row.column("policy_id")?.int32,
