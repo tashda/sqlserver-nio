@@ -51,8 +51,9 @@ GEMINI.md
 CLAUDE.md
 Tests/SETUP.md
 Docs/
-Debug/
-!Sources/SQLServerTDS/Debug/PromiseTracker.swift
+# Debug directories (except production PromiseTracker)
+Docs/Debug/
+Tests/Debug/
 
 # One-off debug/test scripts
 debug_*.swift
