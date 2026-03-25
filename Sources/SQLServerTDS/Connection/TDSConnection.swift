@@ -133,6 +133,26 @@ public final class TDSConnection {
         self.channel.triggerUserOutboundEvent(TDSUserEvent.attention, promise: nil)
     }
 
+    /// Disables auto-read on the underlying channel so that data is only read
+    /// when explicitly requested via `requestRead()`. Used for back-pressure
+    /// in streaming queries.
+    public func suspendAutoRead() {
+        channel.setOption(ChannelOptions.autoRead, value: false).whenFailure { _ in }
+    }
+
+    /// Re-enables auto-read on the underlying channel. Should be called when
+    /// a streaming query completes to restore normal read behavior.
+    public func resumeAutoRead() {
+        channel.setOption(ChannelOptions.autoRead, value: true).whenFailure { _ in }
+        channel.read()
+    }
+
+    /// Requests a single read from the channel. When auto-read is disabled,
+    /// this triggers the next batch of data to be read from the socket.
+    public func requestRead() {
+        channel.read()
+    }
+
     // Fails the currently active request on this connection with a timeout-like
     // error without closing the underlying channel. Useful for watchdogs.
     public func failActiveRequestTimeout() {

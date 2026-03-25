@@ -14,10 +14,20 @@ public struct SQLServerFixtureUnavailable: Error, Sendable {
 // MARK: - Database Lifecycle
 
 @available(macOS 12.0, *)
-public func createTemporaryDatabase(client: SQLServerClient, prefix: String = "tmp") async throws -> String {
+public func createTemporaryDatabase(
+    client: SQLServerClient, 
+    prefix: String = "tmp",
+    contained: Bool = false
+) async throws -> String {
     let token = UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8)
     let dbName = "\(prefix)_\(token)"
-    let createSql = "CREATE DATABASE [\(dbName)];"
+    var sql = "CREATE DATABASE [\(dbName)]"
+    if contained {
+        sql += " CONTAINMENT = PARTIAL"
+    }
+    sql += ";"
+    let createSql = sql
+    
     try await executeWithTransientRetry(client: client) { connection in
         try await connection.execute(createSql)
     }
@@ -34,9 +44,10 @@ public func dropTemporaryDatabase(client: SQLServerClient, name: String) async t
 public func withTemporaryDatabase<T>(
     client: SQLServerClient,
     prefix: String = "tmp",
+    contained: Bool = false,
     operation: (String) async throws -> T
 ) async throws -> T {
-    let dbName = try await createTemporaryDatabase(client: client, prefix: prefix)
+    let dbName = try await createTemporaryDatabase(client: client, prefix: prefix, contained: contained)
 
     do {
         let result = try await operation(dbName)
@@ -100,7 +111,7 @@ public func dropDatabaseIfExists(client: SQLServerClient, name: String) async th
     """
 
     var attempt = 0
-    while attempt < 5 {
+    while attempt < 10 {
         attempt += 1
         do {
             try await executeWithTransientRetry(client: client) { connection in
@@ -108,14 +119,18 @@ public func dropDatabaseIfExists(client: SQLServerClient, name: String) async th
                 return try await connection.execute(dropSql)
             }
         } catch {
-            if !isTransientConnectionClosureError(error) {
+            let msg = error.localizedDescription
+            if !isTransientConnectionClosureError(error) && 
+               !msg.contains("currently in use") && 
+               !msg.contains("3702") { // Error 3702 is "Cannot drop database ... because it is currently in use"
                 throw error
             }
+            // Fall through to retry
         }
 
         // Verify the database is gone before returning
         if try await databaseExists(client: client, name: name) {
-            try await Task.sleep(nanoseconds: 100_000_000)
+            try await Task.sleep(nanoseconds: 500_000_000) // 0.5s
             continue
         } else {
             return

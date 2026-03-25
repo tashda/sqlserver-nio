@@ -17,6 +17,16 @@ public struct SQLServerQueryStoreOptions: Sendable, Equatable {
     public let sizeBasedCleanupMode: String
     public let waitStatsCaptureMode: String
 
+    // CUSTOM capture policy (SQL Server 2019+, only relevant when queryCaptureMode == "CUSTOM")
+    /// Execution count threshold for custom capture. Default 30.
+    public let captureExecutionCount: Int
+    /// Total compile CPU time threshold in ms. Default 1000.
+    public let captureCompileCpuTimeMs: Int
+    /// Total execution CPU time threshold in ms. Default 100.
+    public let captureExecutionCpuTimeMs: Int
+    /// Stale capture policy threshold in hours. Default 24.
+    public let captureStalePolicyThresholdHours: Int
+
     public init(
         actualState: String,
         desiredState: String,
@@ -28,7 +38,11 @@ public struct SQLServerQueryStoreOptions: Sendable, Equatable {
         maxPlansPerQuery: Int = 200,
         queryCaptureMode: String = "ALL",
         sizeBasedCleanupMode: String = "AUTO",
-        waitStatsCaptureMode: String = "ON"
+        waitStatsCaptureMode: String = "ON",
+        captureExecutionCount: Int = 30,
+        captureCompileCpuTimeMs: Int = 1000,
+        captureExecutionCpuTimeMs: Int = 100,
+        captureStalePolicyThresholdHours: Int = 24
     ) {
         self.actualState = actualState
         self.desiredState = desiredState
@@ -41,6 +55,10 @@ public struct SQLServerQueryStoreOptions: Sendable, Equatable {
         self.queryCaptureMode = queryCaptureMode
         self.sizeBasedCleanupMode = sizeBasedCleanupMode
         self.waitStatsCaptureMode = waitStatsCaptureMode
+        self.captureExecutionCount = captureExecutionCount
+        self.captureCompileCpuTimeMs = captureCompileCpuTimeMs
+        self.captureExecutionCpuTimeMs = captureExecutionCpuTimeMs
+        self.captureStalePolicyThresholdHours = captureStalePolicyThresholdHours
     }
 
     /// Whether Query Store is currently active and collecting data.
@@ -70,6 +88,7 @@ public enum SQLServerQueryStoreOption: Sendable {
     case queryCaptureMode(QueryStoreCaptureMode)
     case sizeBasedCleanupMode(QueryStoreCleanupMode)
     case waitStatsCaptureMode(QueryStoreWaitStatsMode)
+    case customCapturePolicy(executionCount: Int, compileCpuTimeMs: Int, executionCpuTimeMs: Int, stalePolicyThresholdHours: Int)
 }
 
 /// Desired operational state for Query Store.
@@ -226,6 +245,12 @@ public final class SQLServerQueryStoreClient: @unchecked Sendable {
         self.client = client
     }
 
+    private static func formatDate(_ date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withFullDate, .withTime, .withColonSeparatorInTime]
+        return formatter.string(from: date)
+    }
+
     // MARK: - Options
 
     /// Returns Query Store configuration and status for a database.
@@ -243,7 +268,11 @@ public final class SQLServerQueryStoreClient: @unchecked Sendable {
             CAST(max_plans_per_query AS INT) AS max_plans_per_query,
             query_capture_mode_desc,
             size_based_cleanup_mode_desc,
-            wait_stats_capture_mode_desc
+            wait_stats_capture_mode_desc,
+            CAST(ISNULL(capture_policy_execution_count, 30) AS INT) AS capture_policy_execution_count,
+            CAST(ISNULL(capture_policy_total_compile_cpu_time_ms, 1000) AS INT) AS capture_policy_total_compile_cpu_time_ms,
+            CAST(ISNULL(capture_policy_total_execution_cpu_time_ms, 100) AS INT) AS capture_policy_total_execution_cpu_time_ms,
+            CAST(ISNULL(capture_policy_stale_threshold_hours, 24) AS INT) AS capture_policy_stale_threshold_hours
         FROM sys.database_query_store_options
         """
         let rows = try await client.withDatabase(database) { connection in
@@ -263,7 +292,11 @@ public final class SQLServerQueryStoreClient: @unchecked Sendable {
             maxPlansPerQuery: row.column("max_plans_per_query")?.int ?? 200,
             queryCaptureMode: row.column("query_capture_mode_desc")?.string ?? "ALL",
             sizeBasedCleanupMode: row.column("size_based_cleanup_mode_desc")?.string ?? "AUTO",
-            waitStatsCaptureMode: row.column("wait_stats_capture_mode_desc")?.string ?? "ON"
+            waitStatsCaptureMode: row.column("wait_stats_capture_mode_desc")?.string ?? "ON",
+            captureExecutionCount: row.column("capture_policy_execution_count")?.int ?? 30,
+            captureCompileCpuTimeMs: row.column("capture_policy_total_compile_cpu_time_ms")?.int ?? 1000,
+            captureExecutionCpuTimeMs: row.column("capture_policy_total_execution_cpu_time_ms")?.int ?? 100,
+            captureStalePolicyThresholdHours: row.column("capture_policy_stale_threshold_hours")?.int ?? 24
         )
     }
 
@@ -293,6 +326,14 @@ public final class SQLServerQueryStoreClient: @unchecked Sendable {
             setting = "SIZE_BASED_CLEANUP_MODE = \(mode.rawValue)"
         case .waitStatsCaptureMode(let mode):
             setting = "WAIT_STATS_CAPTURE_MODE = \(mode.rawValue)"
+        case .customCapturePolicy(let execCount, let compileCpu, let execCpu, let staleHours):
+            setting = """
+            QUERY_CAPTURE_MODE = CUSTOM, \
+            QUERY_CAPTURE_POLICY = (STALE_CAPTURE_POLICY_THRESHOLD = \(staleHours) HOURS, \
+            EXECUTION_COUNT = \(execCount), \
+            TOTAL_COMPILE_CPU_TIME_MS = \(compileCpu), \
+            TOTAL_EXECUTION_CPU_TIME_MS = \(execCpu))
+            """
         }
         let sql = "ALTER DATABASE [\(escapedDB)] SET QUERY_STORE (\(setting))"
         _ = try await client.execute(sql)
@@ -322,7 +363,11 @@ public final class SQLServerQueryStoreClient: @unchecked Sendable {
     public func topQueries(
         database: String,
         limit: Int = 20,
-        orderBy: SQLServerQueryStoreTopQueryOrder = .totalDuration
+        orderBy: SQLServerQueryStoreTopQueryOrder = .totalDuration,
+        startDate: Date? = nil,
+        endDate: Date? = nil,
+        minExecutionCount: Int? = nil,
+        queryTextFilter: String? = nil
     ) async throws -> [SQLServerQueryStoreTopQuery] {
         let orderColumn: String
         switch orderBy {
@@ -331,6 +376,24 @@ public final class SQLServerQueryStoreClient: @unchecked Sendable {
         case .totalIOReads: orderColumn = "total_io_reads"
         case .totalExecutions: orderColumn = "total_executions"
         }
+
+        var whereClauses: [String] = []
+        if let startDate {
+            let formatted = Self.formatDate(startDate)
+            whereClauses.append("rsi.start_time >= '\(formatted)'")
+        }
+        if let endDate {
+            let formatted = Self.formatDate(endDate)
+            whereClauses.append("rsi.end_time <= '\(formatted)'")
+        }
+        if let filter = queryTextFilter, !filter.isEmpty {
+            let escaped = filter.replacingOccurrences(of: "'", with: "''")
+            whereClauses.append("qt.query_sql_text LIKE N'%\(escaped)%'")
+        }
+
+        let whereClause = whereClauses.isEmpty ? "" : "WHERE " + whereClauses.joined(separator: " AND ")
+        let havingClause = minExecutionCount.map { "HAVING SUM(rs.count_executions) >= \($0)" } ?? ""
+        let needsInterval = startDate != nil || endDate != nil
 
         let sql = """
         SELECT TOP (\(limit))
@@ -346,7 +409,10 @@ public final class SQLServerQueryStoreClient: @unchecked Sendable {
         JOIN sys.query_store_query_text qt ON q.query_text_id = qt.query_text_id
         JOIN sys.query_store_plan p ON q.query_id = p.query_id
         JOIN sys.query_store_runtime_stats rs ON p.plan_id = rs.plan_id
+        \(needsInterval ? "JOIN sys.query_store_runtime_stats_interval rsi ON rs.runtime_stats_interval_id = rsi.runtime_stats_interval_id" : "")
+        \(whereClause)
         GROUP BY q.query_id, qt.query_sql_text
+        \(havingClause)
         ORDER BY \(orderColumn) DESC
         """
 
@@ -481,6 +547,52 @@ public final class SQLServerQueryStoreClient: @unchecked Sendable {
         try await client.withDatabase(database) { connection in
             _ = try await connection.execute(
                 "EXEC sp_query_store_unforce_plan @query_id = \(queryId), @plan_id = \(planId)"
+            )
+        }
+    }
+
+    // MARK: - Wait Statistics
+
+    /// A wait category summary from Query Store wait stats.
+    public struct SQLServerQueryStoreWaitStat: Sendable, Equatable, Identifiable {
+        public var id: String { waitCategory }
+        public let waitCategory: String
+        public let totalWaitTimeMs: Double
+        public let avgWaitTimeMs: Double
+        public let waitCount: Int
+
+        public init(waitCategory: String, totalWaitTimeMs: Double, avgWaitTimeMs: Double, waitCount: Int) {
+            self.waitCategory = waitCategory
+            self.totalWaitTimeMs = totalWaitTimeMs
+            self.avgWaitTimeMs = avgWaitTimeMs
+            self.waitCount = waitCount
+        }
+    }
+
+    /// Returns wait statistics for a specific query from Query Store.
+    @available(macOS 12.0, *)
+    public func waitStats(database: String, planId: Int) async throws -> [SQLServerQueryStoreWaitStat] {
+        let sql = """
+        SELECT
+            ws.wait_category_desc AS wait_category,
+            SUM(ws.total_query_wait_time_ms) AS total_wait_time_ms,
+            AVG(ws.avg_query_wait_time_ms) AS avg_wait_time_ms,
+            SUM(ws.total_query_wait_time_ms) AS wait_count
+        FROM sys.query_store_wait_stats ws
+        WHERE ws.plan_id = \(planId)
+        GROUP BY ws.wait_category_desc
+        ORDER BY total_wait_time_ms DESC
+        """
+        let rows = try await client.withDatabase(database) { connection in
+            try await connection.query(sql)
+        }
+        return rows.compactMap { row in
+            guard let category = row.column("wait_category")?.string else { return nil }
+            return SQLServerQueryStoreWaitStat(
+                waitCategory: category,
+                totalWaitTimeMs: row.column("total_wait_time_ms")?.double ?? 0,
+                avgWaitTimeMs: row.column("avg_wait_time_ms")?.double ?? 0,
+                waitCount: row.column("wait_count")?.int ?? 0
             )
         }
     }

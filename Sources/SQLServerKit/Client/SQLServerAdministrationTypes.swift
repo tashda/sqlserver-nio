@@ -196,6 +196,33 @@ public enum SQLServerDatabaseOption: Sendable {
     case numericRoundAbort(Bool)
     case dateCorrelationOptimization(Bool)
 
+    // Cursor
+    case cursorCloseOnCommit(Bool)
+    case cursorDefaultLocal(Bool)
+
+    // Containment
+    case containment(ContainmentOption)
+    case defaultFulltextLanguage(Int)
+    case defaultLanguage(Int)
+    case nestedTriggers(Bool)
+    case transformNoiseWords(Bool)
+    case twoDigitYearCutoff(Int)
+
+    // State
+    case restrictAccess(UserAccessOption)
+    case databaseState(DatabaseStateOption)
+
+    public enum ContainmentOption: String, Sendable, CaseIterable {
+        case none = "NONE"
+        case partial = "PARTIAL"
+    }
+
+    public enum DatabaseStateOption: String, Sendable {
+        case online = "ONLINE"
+        case offline = "OFFLINE"
+        case emergency = "EMERGENCY"
+    }
+
     public enum RecoveryModel: String, Sendable, CaseIterable {
         case simple = "SIMPLE"
         case bulkLogged = "BULK_LOGGED"

@@ -29,4 +29,20 @@ extension SQLServerClient {
     public var maintenance: SQLServerMaintenanceClient { SQLServerMaintenanceClient(client: self) }
     public var replication: SQLServerReplicationClient { SQLServerReplicationClient(client: self) }
     public var cms: SQLServerCMSClient { SQLServerCMSClient(client: self) }
+    public var serverConfig: SQLServerServerConfigurationClient { SQLServerServerConfigurationClient(client: self) }
+    public var errorLog: SQLServerErrorLogClient { SQLServerErrorLogClient(client: self) }
+    public var audit: SQLServerAuditClient { SQLServerAuditClient(client: self) }
+    public var alwaysEncrypted: SQLServerAlwaysEncryptedClient { SQLServerAlwaysEncryptedClient(client: self) }
+    public var temporal: SQLServerTemporalClient { SQLServerTemporalClient(client: self) }
+    public var serviceBroker: SQLServerServiceBrokerClient { SQLServerServiceBrokerClient(client: self) }
+    public var polyBase: SQLServerPolyBaseClient { SQLServerPolyBaseClient(client: self) }
+    public var tuning: SQLServerTuningClient { SQLServerTuningClient(client: self) }
+    public var profiler: SQLServerProfilerClient { SQLServerProfilerClient(client: self) }
+    public var resourceGovernor: SQLServerResourceGovernorClient { SQLServerResourceGovernorClient(client: self) }
+    public var policy: SQLServerPolicyClient { SQLServerPolicyClient(client: self) }
+    public var dependencies: SQLServerDependencyClient { SQLServerDependencyClient(client: self) }
+    public var dac: SQLServerDACClient { SQLServerDACClient(client: self) }
+    public var ssis: SQLServerSSISClient { SQLServerSSISClient(client: self) }
+    public var ssas: SQLServerSSASClient { SQLServerSSASClient(client: self) }
+    public var ssrs: SQLServerSSRSClient { SQLServerSSRSClient(client: self) }
 }

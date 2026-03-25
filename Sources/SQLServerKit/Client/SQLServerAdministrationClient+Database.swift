@@ -481,75 +481,130 @@ extension SQLServerAdministrationClient {
         return result.messages
     }
 
-    /// Alter a database option using ALTER DATABASE SET.
-    /// Returns informational messages from SQL Server.
+    // MARK: - Detach / Attach
+
+    /// Detach a database, releasing its files.
     @available(macOS 12.0, *)
     @discardableResult
-    public func alterDatabaseOption(name: String, option: SQLServerDatabaseOption) async throws -> [SQLServerStreamMessage] {
-        let escaped = Self.escapeIdentifier(name)
-        let onOff: (Bool) -> String = { $0 ? "ON" : "OFF" }
-        let setClause: String
-
-        switch option {
-        case .recoveryModel(let model):
-            setClause = "SET RECOVERY \(model.rawValue)"
-        case .compatibilityLevel(let level):
-            setClause = "SET COMPATIBILITY_LEVEL = \(level)"
-        case .readOnly(let readOnly):
-            setClause = readOnly ? "SET READ_ONLY" : "SET READ_WRITE"
-        case .autoClose(let on):
-            setClause = "SET AUTO_CLOSE \(onOff(on))"
-        case .autoShrink(let on):
-            setClause = "SET AUTO_SHRINK \(onOff(on))"
-        case .autoCreateStatistics(let on):
-            setClause = "SET AUTO_CREATE_STATISTICS \(onOff(on))"
-        case .autoUpdateStatistics(let on):
-            setClause = "SET AUTO_UPDATE_STATISTICS \(onOff(on))"
-        case .autoUpdateStatisticsAsync(let on):
-            setClause = "SET AUTO_UPDATE_STATISTICS_ASYNC \(onOff(on))"
-        case .pageVerify(let option):
-            setClause = "SET PAGE_VERIFY \(option.rawValue)"
-        case .userAccess(let access):
-            setClause = "SET \(access.rawValue)"
-        case .targetRecoveryTime(let seconds):
-            setClause = "SET TARGET_RECOVERY_TIME = \(seconds) SECONDS"
-        case .delayedDurability(let option):
-            setClause = "SET DELAYED_DURABILITY = \(option.rawValue)"
-        case .allowSnapshotIsolation(let on):
-            setClause = "SET ALLOW_SNAPSHOT_ISOLATION \(onOff(on))"
-        case .readCommittedSnapshot(let on):
-            setClause = "SET READ_COMMITTED_SNAPSHOT \(onOff(on))"
-        case .encryption(let on):
-            setClause = "SET ENCRYPTION \(onOff(on))"
-        case .brokerEnabled(let on):
-            setClause = on ? "SET ENABLE_BROKER" : "SET DISABLE_BROKER"
-        case .trustworthy(let on):
-            setClause = "SET TRUSTWORTHY \(onOff(on))"
-        case .parameterization(let option):
-            setClause = "SET PARAMETERIZATION \(option.rawValue)"
-        case .ansiNullDefault(let on):
-            setClause = "SET ANSI_NULL_DEFAULT \(onOff(on))"
-        case .ansiNulls(let on):
-            setClause = "SET ANSI_NULLS \(onOff(on))"
-        case .ansiPadding(let on):
-            setClause = "SET ANSI_PADDING \(onOff(on))"
-        case .ansiWarnings(let on):
-            setClause = "SET ANSI_WARNINGS \(onOff(on))"
-        case .arithAbort(let on):
-            setClause = "SET ARITHABORT \(onOff(on))"
-        case .concatNullYieldsNull(let on):
-            setClause = "SET CONCAT_NULL_YIELDS_NULL \(onOff(on))"
-        case .quotedIdentifier(let on):
-            setClause = "SET QUOTED_IDENTIFIER \(onOff(on))"
-        case .recursiveTriggers(let on):
-            setClause = "SET RECURSIVE_TRIGGERS \(onOff(on))"
-        case .numericRoundAbort(let on):
-            setClause = "SET NUMERIC_ROUNDABORT \(onOff(on))"
-        case .dateCorrelationOptimization(let on):
-            setClause = "SET DATE_CORRELATION_OPTIMIZATION \(onOff(on))"
-        }
-
-        let result = try await client.execute("ALTER DATABASE \(escaped) \(setClause)")
+    public func detachDatabase(
+        name: String,
+        skipChecks: Bool = false,
+        keepFullTextIndexFiles: Bool = true
+    ) async throws -> [SQLServerStreamMessage] {
+        let escapedName = name.replacingOccurrences(of: "'", with: "''")
+        let skipStr = skipChecks ? "true" : "false"
+        let keepFTStr = keepFullTextIndexFiles ? "true" : "false"
+        let sql = "EXEC sp_detach_db @dbname = N'\(escapedName)', @skipchecks = N'\(skipStr)', @keepfulltextindexfile = N'\(keepFTStr)'"
+        let result = try await client.execute(sql)
         return result.messages
+    }
+
+    /// Attach a database from existing MDF/NDF/LDF files.
+    @available(macOS 12.0, *)
+    @discardableResult
+    public func attachDatabase(
+        name: String,
+        files: [String]
+    ) async throws -> [SQLServerStreamMessage] {
+        let escaped = Self.escapeIdentifier(name)
+        let fileSpecs = files.map { path in
+            let escapedPath = path.replacingOccurrences(of: "'", with: "''")
+            return "    (FILENAME = N'\(escapedPath)')"
+        }.joined(separator: ",\n")
+        let sql = """
+        CREATE DATABASE \(escaped)
+        ON \(fileSpecs)
+        FOR ATTACH
+        """
+        let result = try await client.execute(sql)
+        return result.messages
+    }
+
+    /// Attach a database and rebuild the transaction log if missing.
+    @available(macOS 12.0, *)
+    @discardableResult
+    public func attachDatabaseRebuildLog(
+        name: String,
+        files: [String]
+    ) async throws -> [SQLServerStreamMessage] {
+        let escaped = Self.escapeIdentifier(name)
+        let fileSpecs = files.map { path in
+            let escapedPath = path.replacingOccurrences(of: "'", with: "''")
+            return "    (FILENAME = N'\(escapedPath)')"
+        }.joined(separator: ",\n")
+        let sql = """
+        CREATE DATABASE \(escaped)
+        ON \(fileSpecs)
+        FOR ATTACH_REBUILD_LOG
+        """
+        let result = try await client.execute(sql)
+        return result.messages
+    }
+
+    /// Get active connections to a database.
+    @available(macOS 12.0, *)
+    public func getActiveConnections(database: String) async throws -> [SQLServerActiveConnection] {
+        let escapedName = database.replacingOccurrences(of: "'", with: "''")
+        let sql = """
+        SELECT
+            s.session_id,
+            COALESCE(s.login_name, '') AS login_name,
+            COALESCE(s.host_name, '') AS host_name,
+            COALESCE(s.program_name, '') AS program_name,
+            COALESCE(s.status, '') AS status
+        FROM sys.dm_exec_sessions s
+        WHERE s.database_id = DB_ID(N'\(escapedName)')
+            AND s.session_id <> @@SPID
+        ORDER BY s.session_id
+        """
+        let rows = try await client.query(sql)
+        return rows.compactMap { row in
+            guard let sessionId = row.column("session_id")?.int else { return nil }
+            return SQLServerActiveConnection(
+                sessionId: sessionId,
+                loginName: row.column("login_name")?.string ?? "",
+                hostName: row.column("host_name")?.string ?? "",
+                programName: row.column("program_name")?.string ?? "",
+                status: row.column("status")?.string ?? ""
+            )
+        }
+    }
+
+    /// Set database to single-user mode.
+    @available(macOS 12.0, *)
+    @discardableResult
+    public func setDatabaseSingleUser(name: String, rollbackImmediate: Bool = true) async throws -> [SQLServerStreamMessage] {
+        let escaped = Self.escapeIdentifier(name)
+        let rollback = rollbackImmediate ? " WITH ROLLBACK IMMEDIATE" : ""
+        let result = try await client.execute("ALTER DATABASE \(escaped) SET SINGLE_USER\(rollback)")
+        return result.messages
+    }
+
+    /// Set database back to multi-user mode.
+    @available(macOS 12.0, *)
+    @discardableResult
+    public func setDatabaseMultiUser(name: String) async throws -> [SQLServerStreamMessage] {
+        let escaped = Self.escapeIdentifier(name)
+        let result = try await client.execute("ALTER DATABASE \(escaped) SET MULTI_USER")
+        return result.messages
+    }
+
+}
+
+/// An active connection to a database.
+public struct SQLServerActiveConnection: Sendable, Identifiable {
+    public var id: Int { sessionId }
+    public let sessionId: Int
+    public let loginName: String
+    public let hostName: String
+    public let programName: String
+    public let status: String
+
+    public init(sessionId: Int, loginName: String, hostName: String, programName: String, status: String) {
+        self.sessionId = sessionId
+        self.loginName = loginName
+        self.hostName = hostName
+        self.programName = programName
+        self.status = status
     }
 }

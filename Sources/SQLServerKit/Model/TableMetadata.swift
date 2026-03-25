@@ -10,6 +10,33 @@ public struct TableMetadata: Sendable {
     /// Optional MS_Description extended property for this table/view/type
     public let comment: String?
 
+    // MARK: - Temporal Table Properties
+
+    /// Temporal type from `sys.tables.temporal_type`:
+    /// 0 = non-temporal, 1 = history table, 2 = system-versioned table.
+    public let temporalType: Int
+
+    /// Schema of the linked history table (when `temporalType == 2`).
+    public let historyTableSchema: String?
+
+    /// Name of the linked history table (when `temporalType == 2`).
+    public let historyTableName: String?
+
+    /// Name of the period start column (e.g. `ValidFrom`).
+    public let periodStartColumn: String?
+
+    /// Name of the period end column (e.g. `ValidTo`).
+    public let periodEndColumn: String?
+
+    // MARK: - In-Memory OLTP Properties
+
+    /// True when this table is memory-optimized (Hekaton / In-Memory OLTP).
+    public let isMemoryOptimized: Bool
+
+    /// Durability description for memory-optimized tables:
+    /// `SCHEMA_AND_DATA` or `SCHEMA_ONLY`. Nil for disk-based tables.
+    public let durabilityDescription: String?
+
     public enum Kind: String, Sendable {
         case table
         case view
@@ -18,13 +45,39 @@ public struct TableMetadata: Sendable {
         case other
     }
 
-    public init(schema: String, name: String, type: String, isSystemObject: Bool, comment: String? = nil) {
+    public init(
+        schema: String,
+        name: String,
+        type: String,
+        isSystemObject: Bool,
+        comment: String? = nil,
+        temporalType: Int = 0,
+        historyTableSchema: String? = nil,
+        historyTableName: String? = nil,
+        periodStartColumn: String? = nil,
+        periodEndColumn: String? = nil,
+        isMemoryOptimized: Bool = false,
+        durabilityDescription: String? = nil
+    ) {
         self.schema = schema
         self.name = name
         self.type = type
         self.isSystemObject = isSystemObject
         self.comment = comment
+        self.temporalType = temporalType
+        self.historyTableSchema = historyTableSchema
+        self.historyTableName = historyTableName
+        self.periodStartColumn = periodStartColumn
+        self.periodEndColumn = periodEndColumn
+        self.isMemoryOptimized = isMemoryOptimized
+        self.durabilityDescription = durabilityDescription
     }
+
+    /// True when this table has system-versioning enabled (temporal type 2).
+    public var isSystemVersioned: Bool { temporalType == 2 }
+
+    /// True when this table is a history table for a system-versioned table.
+    public var isHistoryTable: Bool { temporalType == 1 }
 
     public var kind: Kind {
         let normalized = type

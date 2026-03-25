@@ -92,22 +92,40 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
     /// List databases a login is mapped to (has a user in).
     internal func listLoginDatabaseMappings(login: String) -> EventLoopFuture<[LoginDatabaseMapping]> {
         let loginLit = escapeLiteral(login)
+        // Use a table variable + cursor to iterate online databases.
+        // The key fix: declare the cursor and table variable in a single batch,
+        // and use SET NOCOUNT ON to prevent row-count messages from interfering
+        // with the final SELECT result set.
         let sql = """
+        SET NOCOUNT ON;
         DECLARE @results TABLE (db_name sysname, user_name sysname, default_schema sysname NULL);
+        DECLARE @sid varbinary(85) = SUSER_SID(N'\(loginLit)');
         DECLARE @db sysname;
-        DECLARE cur CURSOR FAST_FORWARD FOR
-        SELECT name FROM sys.databases WHERE state = 0;
-        OPEN cur; FETCH NEXT FROM cur INTO @db;
-        WHILE @@FETCH_STATUS = 0 BEGIN
-            DECLARE @sql nvarchar(max) = N'USE ' + QUOTENAME(@db) + N';
-                INSERT INTO @results
-                SELECT DB_NAME(), dp.name, dp.default_schema_name
-                FROM sys.database_principals dp
-                WHERE dp.sid = SUSER_SID(N''\(loginLit)'')
-                AND dp.type IN (''S'',''U'',''G'');';
-            BEGIN TRY EXEC sp_executesql @sql; END TRY BEGIN CATCH END CATCH;
-            FETCH NEXT FROM cur INTO @db;
-        END; CLOSE cur; DEALLOCATE cur;
+        DECLARE db_cur CURSOR LOCAL FAST_FORWARD FOR
+            SELECT name FROM sys.databases WHERE state = 0 AND database_id > 0;
+        OPEN db_cur;
+        FETCH NEXT FROM db_cur INTO @db;
+        WHILE @@FETCH_STATUS = 0
+        BEGIN
+            BEGIN TRY
+                DECLARE @sql nvarchar(max) = N'SELECT @oName = dp.name, @oSchema = dp.default_schema_name
+                    FROM ' + QUOTENAME(@db) + N'.sys.database_principals dp
+                    WHERE dp.sid = @pSid AND dp.type IN (''S'',''U'',''G'')';
+                DECLARE @oName sysname, @oSchema sysname;
+                SET @oName = NULL; SET @oSchema = NULL;
+                EXEC sp_executesql @sql,
+                    N'@pSid varbinary(85), @oName sysname OUTPUT, @oSchema sysname OUTPUT',
+                    @pSid = @sid, @oName = @oName OUTPUT, @oSchema = @oSchema OUTPUT;
+                IF @oName IS NOT NULL
+                    INSERT INTO @results VALUES (@db, @oName, @oSchema);
+            END TRY
+            BEGIN CATCH
+            END CATCH;
+            FETCH NEXT FROM db_cur INTO @db;
+        END;
+        CLOSE db_cur;
+        DEALLOCATE db_cur;
+        SET NOCOUNT OFF;
         SELECT db_name, user_name, default_schema FROM @results ORDER BY db_name;
         """
         return run(sql: sql).map { rows in
@@ -295,20 +313,39 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
     }
 
     // MARK: - Server permissions
+
+    /// Lists all available server-level permissions from the system catalog.
+    internal func listAllServerPermissions() -> EventLoopFuture<[String]> {
+        let sql = "SELECT permission_name FROM sys.fn_builtin_permissions('SERVER') ORDER BY permission_name"
+        return run(sql: sql).map { rows in
+            rows.compactMap { $0.column("permission_name")?.string }
+        }
+    }
+
     internal func grant(permission: ServerPermissionName, to principal: String, withGrantOption: Bool = false) -> EventLoopFuture<Void> {
-        var sql = "GRANT \(permission.rawValue) TO [\(escapeIdentifier(principal))]"
+        grantRaw(permission: permission.rawValue, to: principal, withGrantOption: withGrantOption)
+    }
+    internal func revoke(permission: ServerPermissionName, from principal: String, cascade: Bool = false) -> EventLoopFuture<Void> {
+        revokeRaw(permission: permission.rawValue, from: principal, cascade: cascade)
+    }
+    internal func deny(permission: ServerPermissionName, to principal: String) -> EventLoopFuture<Void> {
+        denyRaw(permission: permission.rawValue, to: principal)
+    }
+
+    internal func grantRaw(permission: String, to principal: String, withGrantOption: Bool = false) -> EventLoopFuture<Void> {
+        var sql = "GRANT \(permission) TO [\(escapeIdentifier(principal))]"
         if withGrantOption { sql += " WITH GRANT OPTION" }
         sql += ";"
         return exec(sql: sql).map { _ in () }
     }
-    internal func revoke(permission: ServerPermissionName, from principal: String, cascade: Bool = false) -> EventLoopFuture<Void> {
-        var sql = "REVOKE \(permission.rawValue) FROM [\(escapeIdentifier(principal))]"
+    internal func revokeRaw(permission: String, from principal: String, cascade: Bool = false) -> EventLoopFuture<Void> {
+        var sql = "REVOKE \(permission) FROM [\(escapeIdentifier(principal))]"
         if cascade { sql += " CASCADE" }
         sql += ";"
         return exec(sql: sql).map { _ in () }
     }
-    internal func deny(permission: ServerPermissionName, to principal: String) -> EventLoopFuture<Void> {
-        let sql = "DENY \(permission.rawValue) TO [\(escapeIdentifier(principal))];"
+    internal func denyRaw(permission: String, to principal: String) -> EventLoopFuture<Void> {
+        let sql = "DENY \(permission) TO [\(escapeIdentifier(principal))];"
         return exec(sql: sql).map { _ in () }
     }
     public struct ServerPermissionInfo: Sendable {
@@ -444,11 +481,19 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
     @available(macOS 12.0, *)
     public func listServerRolesForPrincipal(principal: String) async throws -> [String] { try await listServerRolesForPrincipal(principal: principal).get() }
     @available(macOS 12.0, *)
+    public func listAllServerPermissions() async throws -> [String] { try await listAllServerPermissions().get() }
+    @available(macOS 12.0, *)
     public func grant(permission: ServerPermissionName, to principal: String, withGrantOption: Bool = false) async throws { _ = try await grant(permission: permission, to: principal, withGrantOption: withGrantOption).get() }
     @available(macOS 12.0, *)
     public func revoke(permission: ServerPermissionName, from principal: String, cascade: Bool = false) async throws { _ = try await revoke(permission: permission, from: principal, cascade: cascade).get() }
     @available(macOS 12.0, *)
     public func deny(permission: ServerPermissionName, to principal: String) async throws { _ = try await deny(permission: permission, to: principal).get() }
+    @available(macOS 12.0, *)
+    public func grantRaw(permission: String, to principal: String, withGrantOption: Bool = false) async throws { _ = try await grantRaw(permission: permission, to: principal, withGrantOption: withGrantOption).get() }
+    @available(macOS 12.0, *)
+    public func revokeRaw(permission: String, from principal: String, cascade: Bool = false) async throws { _ = try await revokeRaw(permission: permission, from: principal, cascade: cascade).get() }
+    @available(macOS 12.0, *)
+    public func denyRaw(permission: String, to principal: String) async throws { _ = try await denyRaw(permission: permission, to: principal).get() }
     @available(macOS 12.0, *)
     public func listPermissions(principal: String? = nil) async throws -> [ServerPermissionInfo] { try await listPermissions(principal: principal).get() }
     @available(macOS 12.0, *)

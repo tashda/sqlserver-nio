@@ -213,6 +213,7 @@ public final class SQLServerConnection: @unchecked Sendable {
                         }
                     }
                 )
+                logger.info("Connected to \(cfg.hostname):\(cfg.port)/\(cfg.login.database)")
                 return sqlConnection.bootstrapSession().map { sqlConnection }
             }
         }
@@ -277,6 +278,7 @@ public final class SQLServerConnection: @unchecked Sendable {
         guard shouldClose else {
             return eventLoop.makeSucceededFuture(())
         }
+        logger.debug("Connection closed")
         if reuseOnClose {
             // Roll back any orphaned transaction before returning to pool.
             let guardFuture: EventLoopFuture<Void>
@@ -315,6 +317,7 @@ public final class SQLServerConnection: @unchecked Sendable {
             return true
         }
         guard shouldClose else { return }
+        logger.debug("Connection closed")
 
         if reuseOnClose {
             // Roll back any orphaned transaction before returning to pool.

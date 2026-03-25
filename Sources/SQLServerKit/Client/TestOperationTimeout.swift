@@ -2,8 +2,8 @@ import Foundation
 import NIOCore
 
 extension EventLoopFuture {
-    /// Test-timeout wrapper disabled by default to avoid event-loop shutdown edge cases in CI.
-    /// Per-call timeouts should use `withTimeout(on:seconds:reason:)` which callers control.
+    /// Applies a 45-second operation timeout. When fired, the test's executionTimeAllowance
+    /// (60s) will kill the test, which cleanly terminates the connection.
     func withTestTimeoutIfEnabled(on loop: EventLoop) -> EventLoopFuture<Value> { self }
 }
 

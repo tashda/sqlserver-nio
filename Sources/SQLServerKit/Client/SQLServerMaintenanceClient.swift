@@ -1,4 +1,5 @@
 import Foundation
+import Logging
 import NIO
 
 // MARK: - Maintenance Types
@@ -14,6 +15,37 @@ public struct SQLServerMaintenanceResult: Sendable, Equatable {
         self.messages = messages
         self.succeeded = succeeded
     }
+}
+
+/// Options for DBCC SHRINKDATABASE / SHRINKFILE.
+public enum SQLServerShrinkOption: Sendable {
+    case defaultBehavior
+    case noTruncate
+    case truncateOnly
+}
+
+/// Result of a shrink operation with page-level detail.
+public struct SQLServerShrinkResult: Sendable {
+    public let dbId: Int
+    public let fileId: Int
+    public let currentSizePages: Int
+    public let minimumSizePages: Int
+    public let usedPages: Int
+    public let estimatedPages: Int
+
+    public init(dbId: Int, fileId: Int, currentSizePages: Int, minimumSizePages: Int, usedPages: Int, estimatedPages: Int) {
+        self.dbId = dbId
+        self.fileId = fileId
+        self.currentSizePages = currentSizePages
+        self.minimumSizePages = minimumSizePages
+        self.usedPages = usedPages
+        self.estimatedPages = estimatedPages
+    }
+
+    /// Current size in MB (pages are 8KB each).
+    public var currentSizeMB: Double { Double(currentSizePages) * 8.0 / 1024.0 }
+    /// Minimum size in MB.
+    public var minimumSizeMB: Double { Double(minimumSizePages) * 8.0 / 1024.0 }
 }
 
 // MARK: - SQLServerMaintenanceClient
@@ -52,6 +84,7 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
                 succeeded: true
             )
         } catch {
+            client.logger.warning("Maintenance operation 'Rebuild Indexes' failed: \(error)")
             return SQLServerMaintenanceResult(
                 operation: "Rebuild Indexes",
                 messages: [error.localizedDescription],
@@ -75,6 +108,7 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
                 succeeded: true
             )
         } catch {
+            client.logger.warning("Maintenance operation 'Rebuild Index' failed: \(error)")
             return SQLServerMaintenanceResult(
                 operation: "Rebuild Index",
                 messages: [error.localizedDescription],
@@ -99,6 +133,7 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
                 succeeded: true
             )
         } catch {
+            client.logger.warning("Maintenance operation 'Update Statistics' failed: \(error)")
             return SQLServerMaintenanceResult(
                 operation: "Update Statistics",
                 messages: [error.localizedDescription],
@@ -122,6 +157,7 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
                 succeeded: true
             )
         } catch {
+            client.logger.warning("Maintenance operation 'Update Index Statistics' failed: \(error)")
             return SQLServerMaintenanceResult(
                 operation: "Update Statistics",
                 messages: [error.localizedDescription],
@@ -145,6 +181,7 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
                 succeeded: true
             )
         } catch {
+            client.logger.warning("Maintenance operation 'Check Database' failed: \(error)")
             return SQLServerMaintenanceResult(
                 operation: "Check Database",
                 messages: [error.localizedDescription],
@@ -168,8 +205,66 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
                 succeeded: true
             )
         } catch {
+            client.logger.warning("Maintenance operation 'Shrink Database' failed: \(error)")
             return SQLServerMaintenanceResult(
                 operation: "Shrink Database",
+                messages: [error.localizedDescription],
+                succeeded: false
+            )
+        }
+    }
+
+    /// Shrinks the specified database with target percentage and option.
+    @available(macOS 12.0, *)
+    public func shrinkDatabase(database: String, targetPercent: Int, option: SQLServerShrinkOption = .defaultBehavior) async throws -> SQLServerMaintenanceResult {
+        let escaped = database.replacingOccurrences(of: "]", with: "]]")
+        var sql = "DBCC SHRINKDATABASE ([\(escaped)], \(targetPercent)"
+        switch option {
+        case .defaultBehavior: break
+        case .noTruncate: sql += ", NOTRUNCATE"
+        case .truncateOnly: sql += ", TRUNCATEONLY"
+        }
+        sql += ")"
+        do {
+            _ = try await client.execute(sql)
+            return SQLServerMaintenanceResult(
+                operation: "Shrink Database",
+                messages: ["Database [\(database)] shrunk successfully with target \(targetPercent)%."],
+                succeeded: true
+            )
+        } catch {
+            client.logger.warning("Maintenance operation 'Shrink Database' failed: \(error)")
+            return SQLServerMaintenanceResult(
+                operation: "Shrink Database",
+                messages: [error.localizedDescription],
+                succeeded: false
+            )
+        }
+    }
+
+    /// Shrinks a specific database file.
+    @available(macOS 12.0, *)
+    public func shrinkFile(database: String, fileName: String, targetSizeMB: Int = 0, option: SQLServerShrinkOption = .defaultBehavior) async throws -> SQLServerMaintenanceResult {
+        let escapedDb = database.replacingOccurrences(of: "]", with: "]]")
+        let escapedFile = fileName.replacingOccurrences(of: "'", with: "''")
+        var sql = "USE [\(escapedDb)]; DBCC SHRINKFILE(N'\(escapedFile)', \(targetSizeMB)"
+        switch option {
+        case .defaultBehavior: break
+        case .noTruncate: sql += ", NOTRUNCATE"
+        case .truncateOnly: sql += ", TRUNCATEONLY"
+        }
+        sql += ")"
+        do {
+            _ = try await client.execute(sql)
+            return SQLServerMaintenanceResult(
+                operation: "Shrink File",
+                messages: ["File '\(fileName)' in [\(database)] shrunk successfully to target \(targetSizeMB) MB."],
+                succeeded: true
+            )
+        } catch {
+            client.logger.warning("Maintenance operation 'Shrink File' failed: \(error)")
+            return SQLServerMaintenanceResult(
+                operation: "Shrink File",
                 messages: [error.localizedDescription],
                 succeeded: false
             )
@@ -193,6 +288,7 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
                 succeeded: true
             )
         } catch {
+            client.logger.warning("Maintenance operation 'Reorganize Index' failed: \(error)")
             return SQLServerMaintenanceResult(
                 operation: "Reorganize Index",
                 messages: [error.localizedDescription],
@@ -215,6 +311,7 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
                 succeeded: true
             )
         } catch {
+            client.logger.warning("Maintenance operation 'Reorganize Indexes' failed: \(error)")
             return SQLServerMaintenanceResult(
                 operation: "Reorganize Indexes",
                 messages: [error.localizedDescription],

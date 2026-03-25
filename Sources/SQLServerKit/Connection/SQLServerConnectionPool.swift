@@ -11,12 +11,14 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
         public var maximumConcurrentConnections: Int
         public var minimumIdleConnections: Int
         public var connectionIdleTimeout: TimeInterval?
+        public var checkoutTimeout: TimeInterval
         public var validationQuery: String?
 
         public init(
             maximumConcurrentConnections: Int = 8,
             minimumIdleConnections: Int = 0,
             connectionIdleTimeout: TimeInterval? = nil,
+            checkoutTimeout: TimeInterval = 30,
             validationQuery: String? = nil
         ) {
             precondition(maximumConcurrentConnections > 0, "maximumConcurrentConnections must be positive")
@@ -25,6 +27,7 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
             self.maximumConcurrentConnections = maximumConcurrentConnections
             self.minimumIdleConnections = minimumIdleConnections
             self.connectionIdleTimeout = connectionIdleTimeout
+            self.checkoutTimeout = checkoutTimeout
             self.validationQuery = validationQuery
         }
     }
@@ -37,7 +40,10 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
     private struct PoolRequest {
         let promise: EventLoopPromise<TDSConnection>
         let eventLoop: EventLoop
+        let id: UInt64
     }
+
+    private let requestIDCounter = NIOLockedValueBox<UInt64>(0)
 
     private struct IdleConnection {
         let connection: TDSConnection
@@ -127,9 +133,33 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
     internal func checkout(on eventLoop: EventLoop? = nil) -> EventLoopFuture<PooledConnection> {
         let targetLoop = eventLoop ?? eventLoopGroup.next()
         let promise = targetLoop.makePromise(of: TDSConnection.self)
-        let request = PoolRequest(promise: promise, eventLoop: targetLoop)
+        let requestID = requestIDCounter.withLockedValue { id -> UInt64 in
+            id += 1
+            return id
+        }
+        let request = PoolRequest(promise: promise, eventLoop: targetLoop, id: requestID)
         process(request: request)
-        return promise.futureResult.map { connection in
+
+        let timeout = configuration.checkoutTimeout
+        let timeoutNanos = Int64(timeout * 1_000_000_000)
+        let timeoutTask = targetLoop.scheduleTask(deadline: .now() + .nanoseconds(timeoutNanos)) { [weak self] in
+            // Remove the timed-out waiter from the queue
+            let waiterCount: Int = self?.lock.withLock {
+                if let index = self?.waiters.firstIndex(where: { $0.id == requestID }) {
+                    self?.waiters.remove(at: index)
+                }
+                return self?.waiters.count ?? 0
+            } ?? 0
+            self?.logger.warning("Connection pool checkout timed out after \(timeout)s, waiters=\(waiterCount)")
+            promise.fail(SQLServerError.timeout(
+                description: "connection pool checkout timed out after \(timeout)s (pool may be exhausted or a connection is stuck)",
+                underlying: nil
+            ))
+        }
+
+        return promise.futureResult.always { _ in
+            timeoutTask.cancel()
+        }.map { connection in
             PooledConnection(connection: connection, pool: self)
         }
     }
@@ -426,6 +456,10 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
         self.lock.withLock {
             self.leased[Swift.ObjectIdentifier(connection)] = connection
         }
+        let poolStats = self.lock.withLock {
+            (active: self.activeConnections, idle: self.idle.count, waiters: self.waiters.count)
+        }
+        logger.debug("Pool checkout: active=\(poolStats.active) idle=\(poolStats.idle) waiters=\(poolStats.waiters)")
         if let validationQuery = configuration.validationQuery {
             connection.rawSql(validationQuery).whenComplete { result in
                 switch result {

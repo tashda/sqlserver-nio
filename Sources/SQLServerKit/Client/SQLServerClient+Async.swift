@@ -207,35 +207,45 @@ extension SQLServerClient {
         }
     }
 
+    /// Executes pre-split SQL statements sequentially on a locked connection.
+    @available(*, deprecated, message: "Use executeBatches(_:) instead")
     @available(macOS 12.0, *)
     public func executeSeparateBatches(_ sqlStatements: [String]) async throws -> [SQLServerExecutionResult] {
-        let script = sqlStatements.joined(separator: "\nGO\n")
-        return try await executeScript(script)
+        let batchResult = try await executeBatches(sqlStatements)
+        var results: [SQLServerExecutionResult] = []
+        for single in batchResult.batchResults {
+            if let error = single.error { throw error }
+            if let result = single.result { results.append(result) }
+        }
+        return results
     }
 
+    /// Splits SQL at GO boundaries and executes each batch sequentially.
+    @available(*, deprecated, message: "Split batches client-side and use executeBatches(_:) instead")
     @available(macOS 12.0, *)
     public func executeScript(_ sql: String) async throws -> [SQLServerExecutionResult] {
-        let splitResults = SQLServerQuerySplitter.splitQuery(sql, options: .mssql)
-        return try await executeWithConnectionLock { connection in
-            var results: [SQLServerExecutionResult] = []
-            for (_, splitResult) in splitResults.enumerated() {
-                if splitResult.text.isEmpty || self.isCommentOnlyBatch(splitResult.text) { continue }
-                do {
-                    let result = try await connection.execute(splitResult.text).get()
-                    if let errorMessage = result.messages.first(where: { $0.kind == .error }) {
-                        if errorMessage.number == 1205 {
-                            throw SQLServerError.deadlockDetected(message: errorMessage.message)
-                        } else {
-                            throw SQLServerError.sqlExecutionError(message: errorMessage.message)
-                        }
-                    }
-                    results.append(result)
-                } catch {
-                    throw error
-                }
+        // Preserve backward compatibility: split on GO and delegate to executeBatches
+        let batches = sql.components(separatedBy: "\n").reduce(into: (current: [String](), result: [String]())) { state, line in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.range(of: #"^GO[\t\r ]*$"#, options: [.regularExpression, .caseInsensitive]) != nil {
+                let batch = state.current.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+                if !batch.isEmpty { state.result.append(batch) }
+                state.current.removeAll()
+            } else {
+                state.current.append(line)
             }
-            return results
         }
+        var finalBatches = batches.result
+        let lastBatch = batches.current.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !lastBatch.isEmpty { finalBatches.append(lastBatch) }
+
+        let batchResult = try await executeBatches(finalBatches)
+        var results: [SQLServerExecutionResult] = []
+        for single in batchResult.batchResults {
+            if let error = single.error { throw error }
+            if let result = single.result { results.append(result) }
+        }
+        return results
     }
 
     @available(macOS 12.0, *)
@@ -290,12 +300,34 @@ extension SQLServerClient {
         }
     }
 
-    /// Streams query results row by row via an AsyncThrowingStream.
+    /// Streams query results row by row via a back-pressure-aware async sequence.
     /// The connection is held for the duration of the stream and returned to the pool on completion.
     @available(macOS 12.0, *)
-    public func streamQuery(_ sql: String) async throws -> (connection: SQLServerConnection, stream: AsyncThrowingStream<SQLServerStreamEvent, Error>) {
+    public func streamQuery(_ sql: String) async throws -> (connection: SQLServerConnection, stream: SQLServerStreamSequence) {
         let connection = try await self.connection()
         let stream = connection.streamQuery(sql)
+        return (connection: connection, stream: stream)
+    }
+
+    // MARK: - Multi-batch execution
+
+    /// Executes multiple pre-split batches sequentially on a single pooled connection.
+    ///
+    /// Continues on error — failed batches are captured in results, not thrown.
+    @available(macOS 12.0, *)
+    public func executeBatches(_ batches: [String]) async throws -> BatchExecutionResult {
+        try await executeWithConnectionLock { connection in
+            try await connection.executeBatches(batches)
+        }
+    }
+
+    /// Streams events from multiple pre-split batches on a single pooled connection.
+    ///
+    /// The connection is held for the duration of all batches.
+    @available(macOS 12.0, *)
+    public func streamBatches(_ batches: [String]) async throws -> (connection: SQLServerConnection, stream: AsyncThrowingStream<BatchStreamEvent, any Error>) {
+        let connection = try await self.connection()
+        let stream = connection.streamBatches(batches)
         return (connection: connection, stream: stream)
     }
 }

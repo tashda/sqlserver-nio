@@ -97,12 +97,41 @@ public enum Securable: Sendable {
     case column(ObjectIdentifier, [String])
 }
 
-public enum ServerPermissionName: String, Sendable {
-    case viewServerState = "VIEW SERVER STATE"
-    case alterAnyLogin = "ALTER ANY LOGIN"
-    case controlServer = "CONTROL SERVER"
+public enum ServerPermissionName: String, Sendable, CaseIterable, Hashable {
+    case administerBulkOperations = "ADMINISTER BULK OPERATIONS"
+    case alterAnyAvailabilityGroup = "ALTER ANY AVAILABILITY GROUP"
+    case alterAnyConnection = "ALTER ANY CONNECTION"
     case alterAnyCredential = "ALTER ANY CREDENTIAL"
+    case alterAnyDatabase = "ALTER ANY DATABASE"
+    case alterAnyEndpoint = "ALTER ANY ENDPOINT"
+    case alterAnyEventNotification = "ALTER ANY EVENT NOTIFICATION"
+    case alterAnyEventSession = "ALTER ANY EVENT SESSION"
+    case alterAnyLinkedServer = "ALTER ANY LINKED SERVER"
+    case alterAnyLogin = "ALTER ANY LOGIN"
+    case alterAnyServerAudit = "ALTER ANY SERVER AUDIT"
+    case alterAnyServerRole = "ALTER ANY SERVER ROLE"
+    case alterResources = "ALTER RESOURCES"
+    case alterServerState = "ALTER SERVER STATE"
+    case alterSettings = "ALTER SETTINGS"
+    case alterTrace = "ALTER TRACE"
+    case authenticateServer = "AUTHENTICATE SERVER"
+    case connectAnyDatabase = "CONNECT ANY DATABASE"
+    case connectSql = "CONNECT SQL"
+    case controlServer = "CONTROL SERVER"
     case createAnyDatabase = "CREATE ANY DATABASE"
+    case createAvailabilityGroup = "CREATE AVAILABILITY GROUP"
+    case createDdlEventNotification = "CREATE DDL EVENT NOTIFICATION"
+    case createEndpoint = "CREATE ENDPOINT"
+    case createServerRole = "CREATE SERVER ROLE"
+    case createTraceEventNotification = "CREATE TRACE EVENT NOTIFICATION"
+    case externalAccessAssembly = "EXTERNAL ACCESS ASSEMBLY"
+    case impersonateAnyLogin = "IMPERSONATE ANY LOGIN"
+    case selectAllUserSecurables = "SELECT ALL USER SECURABLES"
+    case shutdown = "SHUTDOWN"
+    case unsafeAssembly = "UNSAFE ASSEMBLY"
+    case viewAnyDatabase = "VIEW ANY DATABASE"
+    case viewAnyDefinition = "VIEW ANY DEFINITION"
+    case viewServerState = "VIEW SERVER STATE"
 }
 
 public enum DatabasePermissionName: String, Sendable {
@@ -127,6 +156,74 @@ public enum ObjectPermissionName: String, Sendable {
     case references = "REFERENCES"
 }
 
+// MARK: - Database User Types
+
+/// The type of database user to create, determining authentication and login mapping.
+public enum DatabaseUserType: Sendable, Hashable {
+    /// Standard SQL user mapped to a server login.
+    case mappedToLogin(String)
+    /// Contained database user with a password (requires database containment).
+    case withPassword(String)
+    /// User with no login mapping (for application roles, schema ownership, etc.).
+    case withoutLogin
+    /// Windows/AD user mapped to a Windows login.
+    case windowsUser(String)
+    /// User mapped to a database certificate.
+    case mappedToCertificate(String)
+    /// User mapped to a database asymmetric key.
+    case mappedToAsymmetricKey(String)
+}
+
+/// The authentication type of an existing database user, as reported by SQL Server.
+public enum DatabaseUserAuthenticationType: String, Sendable {
+    case instance = "INSTANCE"
+    case database = "DATABASE"
+    case windows = "WINDOWS"
+    case external = "EXTERNAL"
+    case none = "NONE"
+}
+
+// MARK: - Catalog Info Types
+
+/// Information about a database certificate from `sys.certificates`.
+public struct CertificateInfo: Sendable, Hashable, Identifiable {
+    public var id: String { name }
+    public let name: String
+    public let subject: String?
+    public let expiryDate: String?
+
+    public init(name: String, subject: String? = nil, expiryDate: String? = nil) {
+        self.name = name
+        self.subject = subject
+        self.expiryDate = expiryDate
+    }
+}
+
+/// Information about a database asymmetric key from `sys.asymmetric_keys`.
+public struct AsymmetricKeyInfo: Sendable, Hashable, Identifiable {
+    public var id: String { name }
+    public let name: String
+    public let algorithm: String?
+
+    public init(name: String, algorithm: String? = nil) {
+        self.name = name
+        self.algorithm = algorithm
+    }
+}
+
+/// Information about a server language from `sys.syslanguages`.
+public struct LanguageInfo: Sendable, Hashable {
+    public let name: String
+    public let alias: String?
+    public let lcid: Int
+
+    public init(name: String, alias: String? = nil, lcid: Int) {
+        self.name = name
+        self.alias = alias
+        self.lcid = lcid
+    }
+}
+
 // MARK: - Directory Resolution
 
 public struct PrincipalResolution: Sendable {
@@ -146,6 +243,21 @@ public struct LoginDatabaseMapping: Sendable {
         self.databaseName = databaseName
         self.userName = userName
         self.defaultSchema = defaultSchema
+    }
+}
+
+// MARK: - Effective Permissions
+
+/// A single effective permission entry returned by `fn_my_permissions()`.
+public struct EffectivePermissionInfo: Sendable, Hashable {
+    public let entityName: String?
+    public let subentityName: String?
+    public let permissionName: String
+
+    public init(entityName: String? = nil, subentityName: String? = nil, permissionName: String) {
+        self.entityName = entityName
+        self.subentityName = subentityName
+        self.permissionName = permissionName
     }
 }
 

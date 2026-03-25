@@ -80,11 +80,52 @@ public class SQLServerDockerManager: @unchecked Sendable {
         let dockerDir = (executable as NSString).deletingLastPathComponent
         let currentPath = env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
         env["PATH"] = "\(dockerDir):/usr/local/bin:/opt/homebrew/bin:\(currentPath)"
+        env["DOCKER_CONFIG"] = ensureSanitizedDockerConfigDirectory()
         process.environment = env
         return process
     }
+
+    private func ensureSanitizedDockerConfigDirectory() -> String {
+        let fileManager = FileManager.default
+        let configDirectoryURL = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("sqlserver-nio-docker-config", isDirectory: true)
+        let configFileURL = configDirectoryURL.appendingPathComponent("config.json", isDirectory: false)
+
+        try? fileManager.createDirectory(at: configDirectoryURL, withIntermediateDirectories: true)
+
+        var sanitizedConfig: [String: Any] = [:]
+        if let sourceConfigURL = dockerConfigSourceURL(),
+           let data = try? Data(contentsOf: sourceConfigURL),
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            sanitizedConfig = object
+            sanitizedConfig.removeValue(forKey: "credsStore")
+            sanitizedConfig.removeValue(forKey: "credHelpers")
+            sanitizedConfig.removeValue(forKey: "currentContext")
+        }
+
+        if let encoded = try? JSONSerialization.data(withJSONObject: sanitizedConfig, options: [.prettyPrinted, .sortedKeys]) {
+            try? encoded.write(to: configFileURL, options: .atomic)
+        } else {
+            try? Data("{}".utf8).write(to: configFileURL, options: .atomic)
+        }
+
+        return configDirectoryURL.path
+    }
+
+    private func dockerConfigSourceURL() -> URL? {
+        let environment = ProcessInfo.processInfo.environment
+        if let configuredDirectory = environment["DOCKER_CONFIG"], !configuredDirectory.isEmpty {
+            return URL(fileURLWithPath: configuredDirectory, isDirectory: true)
+                .appendingPathComponent("config.json", isDirectory: false)
+        }
+
+        let homeDirectory = environment["HOME"] ?? NSHomeDirectory()
+        guard !homeDirectory.isEmpty else { return nil }
+        return URL(fileURLWithPath: homeDirectory, isDirectory: true)
+            .appendingPathComponent(".docker/config.json", isDirectory: false)
+    }
     
-    public func startIfNeeded() throws {
+    public func startIfNeeded(requireAdventureWorks: Bool = false) throws {
         lock.lock()
         defer { lock.unlock() }
 
@@ -121,7 +162,7 @@ public class SQLServerDockerManager: @unchecked Sendable {
                 try setCompatibilityLevel(compatibilityLevel, database: "master", dockerPath: dockerPath)
             }
 
-            if envFlagEnabled("TDS_LOAD_ADVENTUREWORKS") {
+            if requireAdventureWorks || envFlagEnabled("TDS_LOAD_ADVENTUREWORKS") {
                 try ensureAdventureWorksAvailable(
                     dockerPath: dockerPath,
                     reusedExistingContainer: reusedExistingContainer
@@ -140,7 +181,7 @@ public class SQLServerDockerManager: @unchecked Sendable {
 
     public func ensureFixture(requireAdventureWorks: Bool = false) throws -> SQLServerFixtureReport {
         do {
-            try startIfNeeded()
+            try startIfNeeded(requireAdventureWorks: requireAdventureWorks)
             let validations = try validateFixture(requireAdventureWorks: requireAdventureWorks)
             return SQLServerFixtureReport(
                 image: resolvedImageName(for: version),
@@ -152,7 +193,7 @@ public class SQLServerDockerManager: @unchecked Sendable {
             )
         } catch {
             try recreateFixtureContainer()
-            try startIfNeeded()
+            try startIfNeeded(requireAdventureWorks: requireAdventureWorks)
             let validations = try validateFixture(requireAdventureWorks: requireAdventureWorks)
             return SQLServerFixtureReport(
                 image: resolvedImageName(for: version),

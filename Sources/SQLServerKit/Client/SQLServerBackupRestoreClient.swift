@@ -10,6 +10,24 @@ public enum SQLServerBackupType: String, Sendable, CaseIterable {
     case log = "Log"
 }
 
+/// The scope of a SQL Server backup operation.
+public enum SQLServerBackupScope: Sendable, Equatable {
+    /// Back up the entire database (default).
+    case database
+    /// Back up specific database files by logical name.
+    case files([String])
+    /// Back up specific filegroups by name.
+    case filegroups([String])
+}
+
+/// A backup destination device — either a local disk path or an Azure Blob Storage URL.
+public enum SQLServerBackupDestination: Sendable, Equatable, Hashable {
+    /// A file path on the SQL Server machine.
+    case disk(path: String)
+    /// An Azure Blob Storage URL with a server credential name.
+    case url(url: String, credential: String)
+}
+
 /// Encryption algorithm for SQL Server backup encryption.
 public enum SQLServerBackupEncryptionAlgorithm: String, Sendable, CaseIterable {
     case aes128 = "AES_128"
@@ -35,11 +53,35 @@ public struct SQLServerBackupEncryption: Sendable {
     }
 }
 
+/// A logical file entry in a live database, returned by `listDatabaseFiles`.
+public struct SQLServerDatabaseFileInfo: Sendable, Identifiable, Equatable {
+    public var id: Int32 { fileID }
+    public let fileID: Int32
+    public let logicalName: String
+    public let physicalName: String
+    /// "D" for data, "L" for log.
+    public let type: String
+    public let filegroupName: String?
+    /// Current size in bytes.
+    public let sizeBytes: Int64
+    /// Maximum size in bytes (-1 for unlimited).
+    public let maxSizeBytes: Int64
+
+    public var typeDescription: String {
+        switch type {
+        case "D": return "Data"
+        case "L": return "Log"
+        default: return type
+        }
+    }
+}
+
 /// Options for a SQL Server BACKUP operation.
 public struct SQLServerBackupOptions: Sendable {
     public let database: String
-    public let diskPath: String
+    public let destinations: [SQLServerBackupDestination]
     public let backupType: SQLServerBackupType
+    public let scope: SQLServerBackupScope
     public let backupName: String?
     public let description: String?
     public let compression: Bool
@@ -54,6 +96,55 @@ public struct SQLServerBackupOptions: Sendable {
     public let encryption: SQLServerBackupEncryption?
     public let statsPercentage: Int
 
+    /// The first disk path destination, for backward compatibility.
+    public var diskPath: String {
+        switch destinations.first {
+        case .disk(let path): return path
+        case .url(let url, _): return url
+        case .none: return ""
+        }
+    }
+
+    /// Creates backup options with multiple destinations and optional file/filegroup scope.
+    public init(
+        database: String,
+        destinations: [SQLServerBackupDestination],
+        backupType: SQLServerBackupType = .full,
+        scope: SQLServerBackupScope = .database,
+        backupName: String? = nil,
+        description: String? = nil,
+        compression: Bool = false,
+        copyOnly: Bool = false,
+        checksum: Bool = false,
+        continueAfterError: Bool = false,
+        initMedia: Bool = false,
+        formatMedia: Bool = false,
+        mediaName: String? = nil,
+        verifyAfterBackup: Bool = false,
+        expireDate: Date? = nil,
+        encryption: SQLServerBackupEncryption? = nil,
+        statsPercentage: Int = 10
+    ) {
+        self.database = database
+        self.destinations = destinations
+        self.backupType = backupType
+        self.scope = scope
+        self.backupName = backupName
+        self.description = description
+        self.compression = compression
+        self.copyOnly = copyOnly
+        self.checksum = checksum
+        self.continueAfterError = continueAfterError
+        self.initMedia = initMedia
+        self.formatMedia = formatMedia
+        self.mediaName = mediaName
+        self.verifyAfterBackup = verifyAfterBackup
+        self.expireDate = expireDate
+        self.encryption = encryption
+        self.statsPercentage = statsPercentage
+    }
+
+    /// Backward-compatible initializer using a single disk path.
     public init(
         database: String,
         diskPath: String,
@@ -72,22 +163,25 @@ public struct SQLServerBackupOptions: Sendable {
         encryption: SQLServerBackupEncryption? = nil,
         statsPercentage: Int = 10
     ) {
-        self.database = database
-        self.diskPath = diskPath
-        self.backupType = backupType
-        self.backupName = backupName
-        self.description = description
-        self.compression = compression
-        self.copyOnly = copyOnly
-        self.checksum = checksum
-        self.continueAfterError = continueAfterError
-        self.initMedia = initMedia
-        self.formatMedia = formatMedia
-        self.mediaName = mediaName
-        self.verifyAfterBackup = verifyAfterBackup
-        self.expireDate = expireDate
-        self.encryption = encryption
-        self.statsPercentage = statsPercentage
+        self.init(
+            database: database,
+            destinations: [.disk(path: diskPath)],
+            backupType: backupType,
+            scope: .database,
+            backupName: backupName,
+            description: description,
+            compression: compression,
+            copyOnly: copyOnly,
+            checksum: checksum,
+            continueAfterError: continueAfterError,
+            initMedia: initMedia,
+            formatMedia: formatMedia,
+            mediaName: mediaName,
+            verifyAfterBackup: verifyAfterBackup,
+            expireDate: expireDate,
+            encryption: encryption,
+            statsPercentage: statsPercentage
+        )
     }
 }
 
@@ -284,7 +378,7 @@ public final class SQLServerBackupRestoreClient: @unchecked Sendable {
         let escaped = diskPath.replacingOccurrences(of: "'", with: "''")
         let sql = "RESTORE HEADERONLY FROM DISK = N'\(escaped)';"
 
-        let rows = try await client.query(sql).get()
+        let rows = try await client.query(sql)
         return rows.enumerated().compactMap { index, row -> SQLServerBackupSetInfo? in
             guard let dbName = row.column("DatabaseName")?.string else { return nil }
             return SQLServerBackupSetInfo(
@@ -310,7 +404,7 @@ public final class SQLServerBackupRestoreClient: @unchecked Sendable {
         let escaped = diskPath.replacingOccurrences(of: "'", with: "''")
         let sql = "RESTORE FILELISTONLY FROM DISK = N'\(escaped)';"
 
-        let rows = try await client.query(sql).get()
+        let rows = try await client.query(sql)
         return rows.compactMap { row -> SQLServerBackupFileInfo? in
             guard let logicalName = row.column("LogicalName")?.string,
                   let physicalName = row.column("PhysicalName")?.string,
@@ -323,6 +417,46 @@ public final class SQLServerBackupRestoreClient: @unchecked Sendable {
                 fileGroupName: row.column("FileGroupName")?.string,
                 size: row.column("Size")?.int64,
                 maxSize: row.column("MaxSize")?.int64
+            )
+        }
+    }
+
+    // MARK: - Database Files
+
+    /// Lists logical files and their filegroup assignments for a live database.
+    /// Queries `sys.database_files` joined with `sys.filegroups`.
+    @available(macOS 12.0, *)
+    public func listDatabaseFiles(database: String) async throws -> [SQLServerDatabaseFileInfo] {
+        let db = SQLServerAdministrationClient.escapeIdentifier(database)
+        let sql = """
+        USE \(db);
+        SELECT
+            df.file_id,
+            df.name AS logical_name,
+            df.physical_name,
+            CASE df.type WHEN 0 THEN 'D' WHEN 1 THEN 'L' ELSE CAST(df.type AS VARCHAR(10)) END AS file_type,
+            fg.name AS filegroup_name,
+            CAST(df.size AS BIGINT) * 8 * 1024 AS size_bytes,
+            CASE df.max_size WHEN -1 THEN CAST(-1 AS BIGINT) ELSE CAST(df.max_size AS BIGINT) * 8 * 1024 END AS max_size_bytes
+        FROM sys.database_files df
+        LEFT JOIN sys.filegroups fg ON df.data_space_id = fg.data_space_id
+        ORDER BY df.file_id;
+        """
+
+        let rows = try await client.query(sql)
+        return rows.compactMap { row -> SQLServerDatabaseFileInfo? in
+            guard let logicalName = row.column("logical_name")?.string,
+                  let physicalName = row.column("physical_name")?.string,
+                  let type = row.column("file_type")?.string
+            else { return nil }
+            return SQLServerDatabaseFileInfo(
+                fileID: Int32(row.column("file_id")?.int ?? 0),
+                logicalName: logicalName,
+                physicalName: physicalName,
+                type: type,
+                filegroupName: row.column("filegroup_name")?.string,
+                sizeBytes: row.column("size_bytes")?.int64 ?? 0,
+                maxSizeBytes: row.column("max_size_bytes")?.int64 ?? -1
             )
         }
     }
@@ -350,20 +484,53 @@ public final class SQLServerBackupRestoreClient: @unchecked Sendable {
 
     private func buildBackupSQL(_ options: SQLServerBackupOptions) -> String {
         let db = SQLServerAdministrationClient.escapeIdentifier(options.database)
-        let path = options.diskPath.replacingOccurrences(of: "'", with: "''")
+
+        var header: String
+        switch options.backupType {
+        case .full, .differential:
+            header = "BACKUP DATABASE \(db)"
+        case .log:
+            header = "BACKUP LOG \(db)"
+        }
+
+        // Append file/filegroup scope for non-log backups
+        if options.backupType != .log {
+            switch options.scope {
+            case .database:
+                break
+            case .files(let files):
+                let fileList = files.map { "FILE = N'\($0.replacingOccurrences(of: "'", with: "''"))'" }
+                header += " " + fileList.joined(separator: ", ")
+            case .filegroups(let groups):
+                let groupList = groups.map { "FILEGROUP = N'\($0.replacingOccurrences(of: "'", with: "''"))'" }
+                header += " " + groupList.joined(separator: ", ")
+            }
+        }
+
+        // Build destination clauses
+        let destinationClauses = options.destinations.map { dest -> String in
+            switch dest {
+            case .disk(let path):
+                return "DISK = N'\(path.replacingOccurrences(of: "'", with: "''"))'"
+            case .url(let url, _):
+                return "URL = N'\(url.replacingOccurrences(of: "'", with: "''"))'"
+            }
+        }
+        header += " TO " + destinationClauses.joined(separator: ", ")
 
         var parts: [String] = []
 
-        switch options.backupType {
-        case .full, .differential:
-            parts.append("BACKUP DATABASE \(db)")
-        case .log:
-            parts.append("BACKUP LOG \(db)")
+        // Emit CREDENTIAL for URL destinations (uses the first URL credential found)
+        if let urlDest = options.destinations.first(where: {
+            if case .url = $0 { return true }; return false
+        }), case .url(_, let credential) = urlDest {
+            let escaped = credential.replacingOccurrences(of: "'", with: "''")
+            parts.append("CREDENTIAL = N'\(escaped)'")
         }
 
-        parts.append("TO DISK = N'\(path)'")
-        parts.append(options.formatMedia ? "WITH FORMAT" : "WITH NOFORMAT")
-        parts.append(options.initMedia ? "INIT" : "NOINIT")
+        parts.append(options.formatMedia ? "FORMAT" : "NOFORMAT")
+        // FORMAT implies INIT — always use INIT when FORMAT is specified
+        parts.append((options.formatMedia || options.initMedia) ? "INIT" : "NOINIT")
 
         if let mediaName = options.mediaName, !mediaName.isEmpty {
             let escaped = mediaName.replacingOccurrences(of: "'", with: "''")
@@ -423,17 +590,16 @@ public final class SQLServerBackupRestoreClient: @unchecked Sendable {
         parts.append("SKIP, NOREWIND, NOUNLOAD")
         parts.append("STATS = \(max(1, min(100, options.statsPercentage)))")
 
-        return parts.joined(separator: ", ") + ";"
+        return header + " WITH " + parts.joined(separator: ", ") + ";"
     }
 
     private func buildRestoreSQL(_ options: SQLServerRestoreOptions) -> String {
         let db = SQLServerAdministrationClient.escapeIdentifier(options.database)
         let path = options.diskPath.replacingOccurrences(of: "'", with: "''")
 
+        let header = "RESTORE DATABASE \(db) FROM DISK = N'\(path)'"
         var parts: [String] = []
-        parts.append("RESTORE DATABASE \(db)")
-        parts.append("FROM DISK = N'\(path)'")
-        parts.append("WITH FILE = \(max(1, options.fileNumber))")
+        parts.append("FILE = \(max(1, options.fileNumber))")
 
         switch options.recoveryMode {
         case .recovery:
@@ -486,14 +652,18 @@ public final class SQLServerBackupRestoreClient: @unchecked Sendable {
         parts.append("NOUNLOAD")
         parts.append("STATS = \(max(1, min(100, options.statsPercentage)))")
 
-        return parts.joined(separator: ", ") + ";"
+        return header + " WITH " + parts.joined(separator: ", ") + ";"
     }
 
     // MARK: - Execution
 
     @available(macOS 12.0, *)
     private func executeLongRunning(_ sql: String) async throws -> [SQLServerStreamMessage] {
-        let result = try await client.execute(sql)
+        // Use a fresh connection to master to avoid pool connections that might
+        // be connected to the target database (which would block RESTORE/BACKUP).
+        let result: SQLServerExecutionResult = try await client.withFreshConnection(on: nil) { connection in
+            connection.execute(sql)
+        }.get()
         return result.messages
     }
 
@@ -520,7 +690,7 @@ public final class SQLServerBackupRestoreClient: @unchecked Sendable {
         ORDER BY bs.backup_finish_date DESC;
         """
 
-        let rows = try await client.query(sql).get()
+        let rows = try await client.query(sql)
         return rows.map { row in
             SQLServerBackupHistoryEntry(
                 id: row.column("backup_set_id")?.int ?? 0,

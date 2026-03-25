@@ -67,6 +67,7 @@ extension TDSConnection {
         let requestHandlerName = "tds.requestHandler"
         let errorHandlerName = "tds.errorHandler"
         let pipelineCoordinatorName = "tds.pipelineCoordinator"
+        logger.info("TDS channel connecting to \(socketAddress)")
         return bootstrap.connect(to: socketAddress).flatMap { (channel: Channel) -> EventLoopFuture<TDSConnection> in
             channel.eventLoop.assertInEventLoop()
             let firstDecoder = ByteToMessageHandler(TDSPacketDecoder(logger: logger))
@@ -109,6 +110,7 @@ extension TDSConnection {
 
             // Start reading immediately to handle multi-packet responses
             channel.read()
+            logger.info("TDS channel created to \(socketAddress)")
             return channel.eventLoop.makeSucceededFuture(connection)
         }.flatMap { (conn: TDSConnection) -> EventLoopFuture<TDSConnection> in
             return conn.prelogin(encryptionMode: encryptionMode, hasTLSConfiguration: tlsConfiguration != nil)

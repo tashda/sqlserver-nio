@@ -99,6 +99,7 @@ extension TDSConnection {
             case .success:
                 // Replace with succeeded future for subsequent calls.
                 self._loginFuture = self.eventLoop.makeSucceededFuture(())
+                self.logger.info("TDS login completed for database \(configuration.database)")
                 promise.succeed(())
             case .failure(let error):
                 // Clear so callers may retry a new login later.

@@ -170,4 +170,87 @@ public final class SQLServerChangeTrackingClient: @unchecked Sendable {
             )
         }
     }
+
+    // MARK: - Change Tracking Configuration
+
+    /// Enables Change Tracking on a database.
+    @available(macOS 12.0, *)
+    public func enableChangeTracking(
+        database: String,
+        retentionPeriod: Int = 2,
+        retentionUnit: String = "DAYS",
+        autoCleanup: Bool = true
+    ) async throws {
+        let escaped = database.replacingOccurrences(of: "]", with: "]]")
+        let sql = """
+        ALTER DATABASE [\(escaped)] SET CHANGE_TRACKING = ON
+        (CHANGE_RETENTION = \(retentionPeriod) \(retentionUnit), AUTO_CLEANUP = \(autoCleanup ? "ON" : "OFF"));
+        """
+        _ = try await client.execute(sql)
+    }
+
+    /// Disables Change Tracking on a database.
+    @available(macOS 12.0, *)
+    public func disableChangeTracking(database: String) async throws {
+        let escaped = database.replacingOccurrences(of: "]", with: "]]")
+        _ = try await client.execute("ALTER DATABASE [\(escaped)] SET CHANGE_TRACKING = OFF;")
+    }
+
+    // MARK: - Change Tracking Tables
+
+    /// A table with Change Tracking enabled.
+    public struct SQLServerCTTable: Sendable, Equatable, Identifiable {
+        public var id: String { "\(schemaName).\(tableName)" }
+        public let schemaName: String
+        public let tableName: String
+        public let isTrackColumnsUpdatedOn: Bool
+        public let minValidVersion: Int64
+        public let beginVersion: Int64
+    }
+
+    /// Returns all tables with Change Tracking enabled.
+    @available(macOS 12.0, *)
+    public func listChangeTrackingTables() async throws -> [SQLServerCTTable] {
+        let sql = """
+        SELECT
+            s.name AS schema_name,
+            t.name AS table_name,
+            ct.is_track_columns_updated_on,
+            ct.min_valid_version,
+            ct.begin_version
+        FROM sys.change_tracking_tables ct
+        JOIN sys.tables t ON ct.object_id = t.object_id
+        JOIN sys.schemas s ON t.schema_id = s.schema_id
+        ORDER BY s.name, t.name
+        """
+        let rows = try await client.query(sql)
+        return rows.compactMap { row in
+            guard let schema = row.column("schema_name")?.string,
+                  let table = row.column("table_name")?.string else { return nil }
+            return SQLServerCTTable(
+                schemaName: schema,
+                tableName: table,
+                isTrackColumnsUpdatedOn: (row.column("is_track_columns_updated_on")?.int ?? 0) == 1,
+                minValidVersion: Int64(row.column("min_valid_version")?.int ?? 0),
+                beginVersion: Int64(row.column("begin_version")?.int ?? 0)
+            )
+        }
+    }
+
+    /// Enables Change Tracking on a specific table.
+    @available(macOS 12.0, *)
+    public func enableTableChangeTracking(schema: String, table: String, trackColumnsUpdated: Bool = true) async throws {
+        let s = schema.replacingOccurrences(of: "]", with: "]]")
+        let t = table.replacingOccurrences(of: "]", with: "]]")
+        let sql = "ALTER TABLE [\(s)].[\(t)] ENABLE CHANGE_TRACKING WITH (TRACK_COLUMNS_UPDATED = \(trackColumnsUpdated ? "ON" : "OFF"));"
+        _ = try await client.execute(sql)
+    }
+
+    /// Disables Change Tracking on a specific table.
+    @available(macOS 12.0, *)
+    public func disableTableChangeTracking(schema: String, table: String) async throws {
+        let s = schema.replacingOccurrences(of: "]", with: "]]")
+        let t = table.replacingOccurrences(of: "]", with: "]]")
+        _ = try await client.execute("ALTER TABLE [\(s)].[\(t)] DISABLE CHANGE_TRACKING;")
+    }
 }

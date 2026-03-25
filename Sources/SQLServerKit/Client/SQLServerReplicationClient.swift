@@ -183,6 +183,209 @@ public final class SQLServerReplicationClient: @unchecked Sendable {
 
     // MARK: - Articles
 
+    // MARK: - Agent Status
+
+    /// Replication agent status entry.
+    public struct SQLServerReplicationAgentStatus: Sendable, Equatable, Identifiable {
+        public var id: String { "\(agentType)_\(name)" }
+        public let agentType: String
+        public let name: String
+        public let status: String
+        public let lastAction: String?
+        public let lastRunTime: String?
+        public let publicationName: String?
+    }
+
+    /// Returns status of replication agents (distribution, log reader, snapshot).
+    @available(macOS 12.0, *)
+    public func agentStatus() async throws -> [SQLServerReplicationAgentStatus] {
+        // Query the distribution database agent tables if distributor is configured
+        let sql = """
+        SELECT
+            'Distribution' AS agent_type,
+            a.name,
+            CASE a.status
+                WHEN 1 THEN 'Started'
+                WHEN 2 THEN 'Succeeded'
+                WHEN 3 THEN 'In progress'
+                WHEN 4 THEN 'Idle'
+                WHEN 5 THEN 'Retrying'
+                WHEN 6 THEN 'Failed'
+                ELSE 'Unknown'
+            END AS status,
+            h.comments AS last_action,
+            CONVERT(VARCHAR(30), h.time, 121) AS last_run_time,
+            p.publication AS publication_name
+        FROM msdb.dbo.MSdistribution_agents a
+        LEFT JOIN msdb.dbo.syspublications p ON a.publication = p.name
+        OUTER APPLY (
+            SELECT TOP 1 comments, time
+            FROM msdb.dbo.MSdistribution_history dh
+            WHERE dh.agent_id = a.id
+            ORDER BY dh.time DESC
+        ) h
+        """
+        let rows: [SQLServerRow]
+        do {
+            rows = try await client.query(sql)
+        } catch {
+            // Distribution database may not be configured
+            return []
+        }
+        return rows.compactMap { row in
+            guard let name = row.column("name")?.string else { return nil }
+            return SQLServerReplicationAgentStatus(
+                agentType: row.column("agent_type")?.string ?? "Distribution",
+                name: name,
+                status: row.column("status")?.string ?? "Unknown",
+                lastAction: row.column("last_action")?.string,
+                lastRunTime: row.column("last_run_time")?.string,
+                publicationName: row.column("publication_name")?.string
+            )
+        }
+    }
+
+    // MARK: - Publication Management
+
+    /// Creates a new replication publication using `sp_addpublication`.
+    ///
+    /// - Parameters:
+    ///   - name: The publication name.
+    ///   - type: The publication type (transactional, snapshot, or merge).
+    ///   - database: The database to create the publication in. If `nil`, uses the current database.
+    @available(macOS 12.0, *)
+    public func createPublication(
+        name: String,
+        type: SQLServerPublicationType,
+        database: String? = nil
+    ) async throws {
+        let escaped = name.replacingOccurrences(of: "'", with: "''")
+        let typeValue: String = switch type {
+        case .transactional: "transactional"
+        case .snapshot: "snapshot"
+        case .merge: "merge"
+        }
+        var sql = ""
+        if let db = database {
+            let escapedDB = db.replacingOccurrences(of: "'", with: "''")
+            sql += "USE [\(escapedDB)];\n"
+        }
+        sql += "EXEC sp_addpublication @publication = N'\(escaped)', @type = N'\(typeValue)'"
+        _ = try await client.query(sql)
+    }
+
+    /// Drops a replication publication using `sp_droppublication`.
+    ///
+    /// - Parameter name: The publication name to drop.
+    @available(macOS 12.0, *)
+    public func dropPublication(name: String) async throws {
+        let escaped = name.replacingOccurrences(of: "'", with: "''")
+        let sql = "EXEC sp_droppublication @publication = N'\(escaped)'"
+        _ = try await client.query(sql)
+    }
+
+    // MARK: - Article Management
+
+    /// Adds an article to a publication using `sp_addarticle`.
+    ///
+    /// - Parameters:
+    ///   - publicationName: The publication to add the article to.
+    ///   - table: The source table name.
+    ///   - schema: The source table schema (defaults to `dbo`).
+    @available(macOS 12.0, *)
+    public func addArticle(
+        publicationName: String,
+        table: String,
+        schema: String = "dbo"
+    ) async throws {
+        let escapedPub = publicationName.replacingOccurrences(of: "'", with: "''")
+        let escapedTable = table.replacingOccurrences(of: "'", with: "''")
+        let escapedSchema = schema.replacingOccurrences(of: "'", with: "''")
+        let sql = """
+        EXEC sp_addarticle
+            @publication = N'\(escapedPub)',
+            @article = N'\(escapedTable)',
+            @source_table = N'\(escapedTable)',
+            @source_owner = N'\(escapedSchema)',
+            @type = N'logbased'
+        """
+        _ = try await client.query(sql)
+    }
+
+    /// Removes an article from a publication using `sp_droparticle`.
+    ///
+    /// - Parameters:
+    ///   - publicationName: The publication to remove the article from.
+    ///   - table: The article/table name to remove.
+    ///   - schema: The source table schema (defaults to `dbo`).
+    @available(macOS 12.0, *)
+    public func removeArticle(
+        publicationName: String,
+        table: String,
+        schema: String = "dbo"
+    ) async throws {
+        let escapedPub = publicationName.replacingOccurrences(of: "'", with: "''")
+        let escapedTable = table.replacingOccurrences(of: "'", with: "''")
+        let sql = """
+        EXEC sp_droparticle
+            @publication = N'\(escapedPub)',
+            @article = N'\(escapedTable)'
+        """
+        _ = try await client.query(sql)
+    }
+
+    // MARK: - Subscription Management
+
+    /// Creates a push subscription to a publication using `sp_addsubscription`.
+    ///
+    /// - Parameters:
+    ///   - publicationName: The publication to subscribe to.
+    ///   - subscriberServer: The subscriber server name.
+    ///   - subscriberDB: The subscriber database name.
+    @available(macOS 12.0, *)
+    public func createSubscription(
+        publicationName: String,
+        subscriberServer: String,
+        subscriberDB: String
+    ) async throws {
+        let escapedPub = publicationName.replacingOccurrences(of: "'", with: "''")
+        let escapedServer = subscriberServer.replacingOccurrences(of: "'", with: "''")
+        let escapedDB = subscriberDB.replacingOccurrences(of: "'", with: "''")
+        let sql = """
+        EXEC sp_addsubscription
+            @publication = N'\(escapedPub)',
+            @subscriber = N'\(escapedServer)',
+            @destination_db = N'\(escapedDB)'
+        """
+        _ = try await client.query(sql)
+    }
+
+    /// Drops a subscription from a publication using `sp_dropsubscription`.
+    ///
+    /// - Parameters:
+    ///   - publicationName: The publication name.
+    ///   - subscriberServer: The subscriber server name.
+    ///   - subscriberDB: The subscriber database name.
+    @available(macOS 12.0, *)
+    public func dropSubscription(
+        publicationName: String,
+        subscriberServer: String,
+        subscriberDB: String
+    ) async throws {
+        let escapedPub = publicationName.replacingOccurrences(of: "'", with: "''")
+        let escapedServer = subscriberServer.replacingOccurrences(of: "'", with: "''")
+        let escapedDB = subscriberDB.replacingOccurrences(of: "'", with: "''")
+        let sql = """
+        EXEC sp_dropsubscription
+            @publication = N'\(escapedPub)',
+            @subscriber = N'\(escapedServer)',
+            @destination_db = N'\(escapedDB)'
+        """
+        _ = try await client.query(sql)
+    }
+
+    // MARK: - Articles Query
+
     /// Lists articles in a specific publication.
     @available(macOS 12.0, *)
     public func listArticles(publicationName: String) async throws -> [SQLServerReplicationArticle] {

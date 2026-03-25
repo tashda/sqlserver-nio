@@ -13,6 +13,9 @@ public struct SQLServerAgentJobDetail: Sendable {
     public let lastRunDate: Date?
     public let nextRunDate: Date?
     public let hasSchedule: Bool
+    public let notifyLevelEmail: Int
+    public let notifyEmailOperatorName: String?
+    public let notifyLevelEventlog: Int
 
     public init(
         jobId: String,
@@ -25,7 +28,10 @@ public struct SQLServerAgentJobDetail: Sendable {
         lastRunOutcome: String? = nil,
         lastRunDate: Date? = nil,
         nextRunDate: Date? = nil,
-        hasSchedule: Bool = false
+        hasSchedule: Bool = false,
+        notifyLevelEmail: Int = 0,
+        notifyEmailOperatorName: String? = nil,
+        notifyLevelEventlog: Int = 0
     ) {
         self.jobId = jobId
         self.name = name
@@ -38,5 +44,8 @@ public struct SQLServerAgentJobDetail: Sendable {
         self.lastRunDate = lastRunDate
         self.nextRunDate = nextRunDate
         self.hasSchedule = hasSchedule
+        self.notifyLevelEmail = notifyLevelEmail
+        self.notifyEmailOperatorName = notifyEmailOperatorName
+        self.notifyLevelEventlog = notifyLevelEventlog
     }
 }

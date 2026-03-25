@@ -43,6 +43,15 @@ jobs:
         with:
           swift-version: "6.2.4"
           skip-verify-signature: true
+      - name: Docker Preflight
+        env:
+          TDS_VERSION: "2022-latest"
+        run: |
+          export DOCKER_CONFIG="$RUNNER_TEMP/docker-config"
+          mkdir -p "$DOCKER_CONFIG"
+          printf '{}\n' > "$DOCKER_CONFIG/config.json"
+          docker info
+          docker pull "mcr.microsoft.com/mssql/server:${TDS_VERSION}"
       - name: Bootstrap validated SQL Server fixture
         env:
           USE_DOCKER: "1"
@@ -101,6 +110,23 @@ jobs:
         with:
           swift-version: "6.2.4"
           skip-verify-signature: true
+      - name: Docker Preflight
+        env:
+          TDS_VERSION: ${{ matrix.version }}
+        run: |
+          export DOCKER_CONFIG="$RUNNER_TEMP/docker-config"
+          mkdir -p "$DOCKER_CONFIG"
+          printf '{}\n' > "$DOCKER_CONFIG/config.json"
+          docker info
+          case "$TDS_VERSION" in
+            2008*|2012*|2014*|2016*)
+              IMAGE="mcr.microsoft.com/mssql/server:2017-latest"
+              ;;
+            *)
+              IMAGE="mcr.microsoft.com/mssql/server:${TDS_VERSION}"
+              ;;
+          esac
+          docker pull "$IMAGE"
       - name: Bootstrap validated SQL Server fixture
         env:
           USE_DOCKER: "1"

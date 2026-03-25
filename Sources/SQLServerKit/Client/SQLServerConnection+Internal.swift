@@ -13,6 +13,7 @@ extension SQLServerConnection {
             let sql = "USE \(Self.escapeIdentifier(database));"
             return self.runBatch(sql).map { _ in
                 self.setCurrentDatabase(database)
+                self.logger.debug("Database context changed to \(database)")
             }
         }
         return fut.withTestTimeoutIfEnabled(on: self.eventLoop)
@@ -63,7 +64,8 @@ extension SQLServerConnection {
                         number: Int32(token.number),
                         message: token.messageText,
                         state: token.state,
-                        severity: token.classValue
+                        severity: token.classValue,
+                        lineNumber: token.lineNumber
                     ))
                 }
             }
