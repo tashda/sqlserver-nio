@@ -52,6 +52,7 @@ CLAUDE.md
 Tests/SETUP.md
 Docs/
 Debug/
+!Sources/SQLServerTDS/Debug/PromiseTracker.swift
 
 # One-off debug/test scripts
 debug_*.swift
