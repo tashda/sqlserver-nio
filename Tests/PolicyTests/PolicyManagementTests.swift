@@ -93,6 +93,7 @@ final class PolicyManagementTests: XCTestCase, @unchecked Sendable {
         let originalEnabled = policy.isEnabled
 
         // Toggle: disable then re-enable (or vice versa)
+        // PBM stored procedures may not be available on all editions
         do {
             if originalEnabled {
                 try await client.policy.disablePolicy(name: policy.name)
@@ -117,6 +118,10 @@ final class PolicyManagementTests: XCTestCase, @unchecked Sendable {
                 try? await client.policy.enablePolicy(name: policy.name)
             } else {
                 try? await client.policy.disablePolicy(name: policy.name)
+            }
+            let msg = "\(error)"
+            if msg.contains("Could not find stored procedure") || msg.contains("sp_syspolicy") {
+                throw XCTSkip("Policy-Based Management stored procedures not available: \(error)")
             }
             throw error
         }
