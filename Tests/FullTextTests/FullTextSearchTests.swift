@@ -83,14 +83,18 @@ final class FullTextSearchTests: XCTestCase, @unchecked Sendable {
     // MARK: - Catalog Create & Drop
 
     func testCreateAndDropCatalog() async throws {
-        // Only create if no catalogs exist (to avoid conflicts on shared servers)
+        // FTS cannot operate in master/tempdb/model — skip if we're connected to one of those
+        let currentDB = try await client.query("SELECT DB_NAME() AS db").first?.column("db")?.string ?? "master"
+        if ["master", "tempdb", "model"].contains(currentDB.lowercased()) {
+            throw XCTSkip("Full-Text Search cannot be used in \(currentDB) database")
+        }
+
         let existing: [SQLServerFullTextCatalog]
         do {
             existing = try await withTimeout(operationTimeout) {
                 try await self.client.fullText.listCatalogs()
             }
         } catch {
-            // Full-Text Search may not be installed on this SQL Server instance
             throw XCTSkip("Full-Text Search not available: \(error)")
         }
 

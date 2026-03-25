@@ -86,8 +86,9 @@ final class PolicyManagementTests: XCTestCase, @unchecked Sendable {
             throw XCTSkip("Policy-Based Management not available: \(error)")
         }
 
-        guard let policy = policies.first else {
-            throw XCTSkip("No policies exist on this instance to test enable/disable")
+        // Skip on-demand policies (execution_mode 0) — they can't be toggled
+        guard let policy = policies.first(where: { $0.executionMode != 0 }) else {
+            throw XCTSkip("No policies with non-on-demand execution mode exist")
         }
 
         let originalEnabled = policy.isEnabled
