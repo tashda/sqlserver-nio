@@ -44,7 +44,7 @@ final class EffectivePermissionTests: SecurityTestBase, @unchecked Sendable {
         try await securityClient.createUser(name: userName, type: .withoutLogin)
         usersToDrop.append(userName)
 
-        try await securityClient.grantPermission(permission: .select, on: "dbo.\(tableName)", to: userName)
+        try await securityClient.grantPermission(permission: .select, on: tableName, to: userName)
 
         let perms = try await securityClient.listObjectPermissions(schema: "dbo", object: tableName)
         XCTAssertFalse(perms.isEmpty, "Should return at least the granted SELECT permission")

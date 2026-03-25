@@ -31,12 +31,13 @@ public final class SQLServerAuditClient: @unchecked Sendable {
         SELECT a.audit_id, a.name,
                ISNULL(s.status_desc, 'STOPPED') AS status_desc,
                a.type_desc AS destination,
-               a.audit_file_path AS file_path,
-               a.max_file_size, a.max_rollover_files,
+               f.log_file_path AS file_path,
+               f.max_file_size, f.max_rollover_files,
                a.queue_delay, a.on_failure_desc,
                CONVERT(varchar(30), a.create_date, 126) AS create_date
         FROM sys.server_audits AS a
         LEFT JOIN sys.dm_server_audit_status AS s ON s.audit_id = a.audit_id
+        LEFT JOIN sys.server_file_audits AS f ON f.audit_id = a.audit_id
         ORDER BY a.name
         """
         let rows = try await client.query(sql)

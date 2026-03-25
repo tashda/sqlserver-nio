@@ -142,7 +142,9 @@ final class SQLServerServiceBrokerClientTests: XCTestCase, @unchecked Sendable {
                 let types = try await self.client.serviceBroker.listMessageTypes(database: db)
                 let found = types.first(where: { $0.name == name })
                 XCTAssertNotNil(found)
-                XCTAssertEqual(found?.validation, "WELL_FORMED_XML")
+                // Some versions return XML, others WELL_FORMED_XML
+                let validation = found?.validation ?? ""
+                XCTAssertTrue(validation == "WELL_FORMED_XML" || validation == "XML", "Unexpected validation: \(validation)")
 
                 try await self.client.serviceBroker.dropMessageType(database: db, name: name)
             }
