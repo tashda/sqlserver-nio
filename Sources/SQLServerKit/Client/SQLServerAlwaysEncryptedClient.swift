@@ -28,9 +28,15 @@ public final class SQLServerAlwaysEncryptedClient: @unchecked Sendable {
     /// Lists all column master keys in the current database.
     @available(macOS 12.0, *)
     public func listColumnMasterKeys() async throws -> [ColumnMasterKeyInfo] {
+        // allow_enclave_computations was added in SQL Server 2019
+        let hasEnclaveColumn = (try? await client.query(
+            "SELECT TOP 0 allow_enclave_computations FROM sys.column_master_keys"
+        )) != nil
+
+        let enclaveCol = hasEnclaveColumn ? "allow_enclave_computations" : "CAST(0 AS BIT) AS allow_enclave_computations"
         let sql = """
         SELECT name, key_store_provider_name, key_path,
-               allow_enclave_computations,
+               \(enclaveCol),
                CONVERT(varchar(30), create_date, 126) AS create_date
         FROM sys.column_master_keys
         ORDER BY name
