@@ -81,14 +81,15 @@ extension SQLServerAdministrationClient {
         SELECT
             lssd.secondary_id,
             lssd.secondary_database,
-            lssd.primary_server,
-            lssd.primary_database,
+            ls.primary_server,
+            ls.primary_database,
             lssd.restore_delay,
             lssd.restore_mode,
             lssd.disconnect_users,
             CONVERT(VARCHAR(23), lssd.last_restored_date, 121) AS last_restored_date,
             COALESCE(lssd.last_restored_file, '') AS last_restored_file
         FROM msdb.dbo.log_shipping_secondary_databases lssd
+        JOIN msdb.dbo.log_shipping_secondary ls ON lssd.secondary_id = ls.secondary_id
         WHERE lssd.secondary_database = N'\(escapedName)'
         """
 

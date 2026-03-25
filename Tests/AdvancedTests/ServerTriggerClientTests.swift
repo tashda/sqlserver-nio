@@ -40,7 +40,6 @@ final class SQLServerServerTriggerClientTests: XCTestCase, @unchecked Sendable {
 
                 // Create a DDL trigger
                 let createSQL = """
-                USE [\(db)];
                 CREATE TRIGGER [\(triggerName)] ON DATABASE
                 FOR CREATE_TABLE
                 AS
@@ -48,7 +47,9 @@ final class SQLServerServerTriggerClientTests: XCTestCase, @unchecked Sendable {
                     PRINT 'Table created'
                 END
                 """
-                _ = try await self.client.execute(createSQL)
+                try await self.client.withDatabase(db) { connection in
+                    _ = try await connection.execute(createSQL)
+                }
 
                 // List database DDL triggers
                 var triggers = try await self.client.triggers.listDatabaseDDLTriggers(database: db)

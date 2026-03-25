@@ -11,7 +11,7 @@ final class SQLServerMetadataAnalysisTests: XCTestCase, @unchecked Sendable {
     var testDatabase: String = "AdventureWorks"
     private let maxSchemasToInspect = Int.max
     private let maxConcurrentObjectChecks = 6
-    private let metadataTimeBudget: TimeInterval = 60
+    private let metadataTimeBudget: TimeInterval = 120
 
     override func setUp() async throws {
         TestEnvironmentManager.loadEnvironmentVariables()

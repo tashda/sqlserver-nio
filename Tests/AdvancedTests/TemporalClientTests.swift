@@ -35,8 +35,8 @@ final class SQLServerTemporalClientTests: XCTestCase, @unchecked Sendable {
                 XCTAssertNotNil(found, "Expected to find created temporal table")
                 XCTAssertEqual(found?.schema, "dbo")
                 XCTAssertFalse(found?.historyTable.isEmpty ?? true, "Expected history table name")
-                XCTAssertEqual(found?.periodStartColumn, "SysStartTime")
-                XCTAssertEqual(found?.periodEndColumn, "SysEndTime")
+                XCTAssertEqual(found?.periodStartColumn, "ValidFrom")
+                XCTAssertEqual(found?.periodEndColumn, "ValidTo")
             }
         } catch let e as SQLServerError {
             if case .connectionClosed = e { throw XCTSkip("Connection closed during temporal client test") }
@@ -90,8 +90,8 @@ final class SQLServerTemporalClientTests: XCTestCase, @unchecked Sendable {
                 XCTAssertTrue(found?.isSystemVersioned ?? false, "Expected isSystemVersioned = true")
                 XCTAssertEqual(found?.temporalType, 2)
                 XCTAssertNotNil(found?.historyTableName)
-                XCTAssertEqual(found?.periodStartColumn, "SysStartTime")
-                XCTAssertEqual(found?.periodEndColumn, "SysEndTime")
+                XCTAssertEqual(found?.periodStartColumn, "ValidFrom")
+                XCTAssertEqual(found?.periodEndColumn, "ValidTo")
 
                 // Find the history table
                 let historyTable = tables.first(where: { $0.isHistoryTable && $0.name.contains(table) })
@@ -150,13 +150,14 @@ final class SQLServerTemporalClientTests: XCTestCase, @unchecked Sendable {
                 let table = "ap_\(UUID().uuidString.prefix(6))"
 
                 // Create a plain table with a primary key
-                _ = try await self.client.execute("""
-                USE [\(db)];
-                CREATE TABLE [dbo].[\(table)] (
-                    id INT NOT NULL PRIMARY KEY,
-                    name NVARCHAR(100)
-                )
-                """)
+                try await withDbConnection(client: self.client, database: db) { connection in
+                    _ = try await connection.execute("""
+                    CREATE TABLE [dbo].[\(table)] (
+                        id INT NOT NULL PRIMARY KEY,
+                        name NVARCHAR(100)
+                    )
+                    """)
+                }
 
                 // Add period columns and enable versioning via API
                 try await self.client.temporal.addPeriodColumnsAndEnableVersioning(

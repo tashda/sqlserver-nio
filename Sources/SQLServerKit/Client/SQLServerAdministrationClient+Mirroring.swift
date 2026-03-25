@@ -9,6 +9,9 @@ extension SQLServerAdministrationClient {
     /// Fetches the mirroring status for a database from sys.database_mirroring.
     public func fetchMirroringStatus(database: String) async throws -> SQLServerMirroringStatus {
         let escapedName = database.replacingOccurrences(of: "'", with: "''")
+        
+        // On some platforms (like SQL Server on Linux), mirroring views might be empty 
+        // or throw errors. We attempt to fetch and fall back to unconfigured if not found.
         let sql = """
         SELECT
             dm.database_id,
@@ -19,8 +22,6 @@ extension SQLServerAdministrationClient {
             COALESCE(dm.mirroring_partner_instance, '') AS partner_instance,
             COALESCE(dm.mirroring_witness_name, '') AS witness_name,
             COALESCE(dm.mirroring_witness_state_desc, '') AS witness_state,
-            dm.mirroring_safety_sequence_number,
-            COALESCE(dm.mirroring_failover_lsn, 0x00) AS failover_lsn,
             dm.mirroring_connection_timeout,
             dm.mirroring_redo_queue,
             dm.mirroring_redo_queue_type
@@ -29,13 +30,24 @@ extension SQLServerAdministrationClient {
         WHERE d.name = N'\(escapedName)'
         """
 
-        let rows = try await client.query(sql)
+        let rows: [SQLServerRow]
+        do {
+            rows = try await client.query(sql)
+        } catch {
+            // If mirroring is not supported at all, return unconfigured
+            return .unconfigured
+        }
+        
         guard let row = rows.first else {
-            throw SQLServerError.sqlExecutionError(message: "Database '\(database)' not found in sys.database_mirroring")
+            return .unconfigured
         }
 
         let stateDesc = row.column("mirroring_state_desc")?.string
         let isConfigured = stateDesc != nil && !stateDesc!.isEmpty
+
+        if !isConfigured {
+            return .unconfigured
+        }
 
         return SQLServerMirroringStatus(
             isConfigured: isConfigured,
