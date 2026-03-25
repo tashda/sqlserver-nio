@@ -131,7 +131,7 @@ final class BatchExecutionTests: StandardTestBase, @unchecked Sendable {
     // MARK: - Streaming Batch Execution
 
     func testStreamBatchesEvents() async throws {
-        let (_, stream) = try await client.streamBatches([
+        let (connection, stream) = try await client.streamBatches([
             "SELECT 1 AS a",
             "SELECT 2 AS b"
         ])
@@ -152,6 +152,9 @@ final class BatchExecutionTests: StandardTestBase, @unchecked Sendable {
         XCTAssertEqual(batchStartCount, 2)
         XCTAssertEqual(batchCompleteCount, 2)
         XCTAssertEqual(batchFailCount, 0)
+        
+        // Keep connection alive
+        _ = connection
     }
 
     // MARK: - Multiple Result Sets Within a Batch
@@ -261,7 +264,7 @@ final class BatchExecutionTests: StandardTestBase, @unchecked Sendable {
     // MARK: - Streaming
 
     func testStreamBatchesContinueOnError() async throws {
-        let (_, stream) = try await client.streamBatches([
+        let (connection, stream) = try await client.streamBatches([
             "SELECT 1 AS a",
             "INVALID SQL HERE",
             "SELECT 3 AS c"
@@ -280,5 +283,8 @@ final class BatchExecutionTests: StandardTestBase, @unchecked Sendable {
 
         XCTAssertEqual(batchCompleteCount, 2, "Two batches should complete successfully")
         XCTAssertEqual(batchFailCount, 1, "One batch should fail")
+        
+        // Keep connection alive
+        _ = connection
     }
 }

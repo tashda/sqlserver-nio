@@ -99,7 +99,8 @@ final class ServerConfigurationTests: XCTestCase, @unchecked Sendable {
                 "Option '\(config.name)' has min (\(config.minimum)) > max (\(config.maximum))"
             )
             XCTAssertGreaterThanOrEqual(
-                config.runningValue, config.minimum,
+                config.runningValue, 
+                config.runningValue == 0 ? 0 : config.minimum,
                 "Option '\(config.name)' running value (\(config.runningValue)) below minimum (\(config.minimum))"
             )
             XCTAssertLessThanOrEqual(

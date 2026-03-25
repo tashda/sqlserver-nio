@@ -102,6 +102,22 @@ public struct SQLServerMirroringStatus: Sendable {
     /// Redo queue type description.
     public let redoQueueType: String?
 
+    public static var unconfigured: SQLServerMirroringStatus {
+        SQLServerMirroringStatus(
+            isConfigured: false,
+            stateDescription: nil,
+            roleDescription: nil,
+            safetyLevelDescription: nil,
+            partnerName: "",
+            partnerInstance: "",
+            witnessName: "",
+            witnessStateDescription: "",
+            connectionTimeout: nil,
+            redoQueue: nil,
+            redoQueueType: nil
+        )
+    }
+
     public init(
         isConfigured: Bool,
         stateDescription: String?,
