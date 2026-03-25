@@ -106,7 +106,7 @@ public struct SQLServerReplicationArticle: Sendable, Equatable, Identifiable {
 /// let pubs = try await client.replication.listPublications()
 /// ```
 public final class SQLServerReplicationClient: @unchecked Sendable {
-    private let client: SQLServerClient
+    internal let client: SQLServerClient
 
     internal init(client: SQLServerClient) {
         self.client = client
