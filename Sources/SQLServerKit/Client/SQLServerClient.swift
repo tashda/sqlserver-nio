@@ -248,10 +248,32 @@ public final class SQLServerClient: @unchecked Sendable {
         }
         if already { return }
 
-        while true {
-            let pending = stateLock.withLock { inFlightOperations }
-            if pending == 0 { break }
-            try await Task.sleep(nanoseconds: 10_000_000)
+        // Wait for in-flight operations (including connection close/invalidate)
+        // using the drain waiter pattern instead of busy-polling.
+        let needsDrain: Bool = stateLock.withLock { inFlightOperations > 0 }
+        if needsDrain {
+            let loop = eventLoopGroup.next()
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                let p = loop.makePromise(of: Void.self)
+                self.stateLock.withLock { self.drainWaiters.append(p) }
+                p.futureResult.whenComplete { result in
+                    switch result {
+                    case .success: continuation.resume()
+                    case .failure(let error): continuation.resume(throwing: error)
+                    }
+                }
+                // Re-check: operations may have completed between our check and
+                // adding the waiter, so drain immediately if already at zero.
+                let stillPending: Bool = self.stateLock.withLock { self.inFlightOperations > 0 }
+                if !stillPending {
+                    var toComplete: [EventLoopPromise<Void>] = []
+                    self.stateLock.withLock {
+                        toComplete = self.drainWaiters
+                        self.drainWaiters.removeAll(keepingCapacity: false)
+                    }
+                    toComplete.forEach { $0.succeed(()) }
+                }
+            }
         }
 
         try await pool.shutdownGracefully().get()
@@ -332,22 +354,12 @@ public final class SQLServerClient: @unchecked Sendable {
                         loop.makeFailedFuture(retryError)
                     }
                 }
+                // Track the FULL withConnection lifecycle (including connection
+                // close/invalidate) so shutdownGracefully() cannot proceed while
+                // connections are still being returned to the pool.
                 let op: EventLoopFuture<Result> = probe.flatMap {
                     self.stateLock.withLock { self.inFlightOperations += 1 }
-                    let userFuture = operation(sqlConnection)
-                    let bridge = loop.makePromise(of: Result.self)
-                    userFuture.whenComplete { result in
-                        var toComplete: [EventLoopPromise<Void>] = []
-                        self.stateLock.withLock {
-                            self.inFlightOperations = max(0, self.inFlightOperations - 1)
-                            if self.inFlightOperations == 0 && self._isShutdown {
-                                toComplete = self.drainWaiters; self.drainWaiters.removeAll(keepingCapacity: false)
-                            }
-                        }
-                        toComplete.forEach { $0.succeed(()) }
-                        bridge.completeWith(result)
-                    }
-                    return bridge.futureResult
+                    return operation(sqlConnection)
                 }
                 return op.flatMap { value in
                     sqlConnection.close().map { value }
@@ -363,6 +375,15 @@ public final class SQLServerClient: @unchecked Sendable {
                             loop.makeFailedFuture(normalized)
                         }
                     }
+                }.always { _ in
+                    var toComplete: [EventLoopPromise<Void>] = []
+                    self.stateLock.withLock {
+                        self.inFlightOperations = max(0, self.inFlightOperations - 1)
+                        if self.inFlightOperations == 0 && self._isShutdown {
+                            toComplete = self.drainWaiters; self.drainWaiters.removeAll(keepingCapacity: false)
+                        }
+                    }
+                    toComplete.forEach { $0.succeed(()) }
                 }
             }
         }
