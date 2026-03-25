@@ -245,6 +245,147 @@ public final class SQLServerReplicationClient: @unchecked Sendable {
         }
     }
 
+    // MARK: - Publication Management
+
+    /// Creates a new replication publication using `sp_addpublication`.
+    ///
+    /// - Parameters:
+    ///   - name: The publication name.
+    ///   - type: The publication type (transactional, snapshot, or merge).
+    ///   - database: The database to create the publication in. If `nil`, uses the current database.
+    @available(macOS 12.0, *)
+    public func createPublication(
+        name: String,
+        type: SQLServerPublicationType,
+        database: String? = nil
+    ) async throws {
+        let escaped = name.replacingOccurrences(of: "'", with: "''")
+        let typeValue: String = switch type {
+        case .transactional: "transactional"
+        case .snapshot: "snapshot"
+        case .merge: "merge"
+        }
+        var sql = ""
+        if let db = database {
+            let escapedDB = db.replacingOccurrences(of: "'", with: "''")
+            sql += "USE [\(escapedDB)];\n"
+        }
+        sql += "EXEC sp_addpublication @publication = N'\(escaped)', @type = N'\(typeValue)'"
+        _ = try await client.query(sql)
+    }
+
+    /// Drops a replication publication using `sp_droppublication`.
+    ///
+    /// - Parameter name: The publication name to drop.
+    @available(macOS 12.0, *)
+    public func dropPublication(name: String) async throws {
+        let escaped = name.replacingOccurrences(of: "'", with: "''")
+        let sql = "EXEC sp_droppublication @publication = N'\(escaped)'"
+        _ = try await client.query(sql)
+    }
+
+    // MARK: - Article Management
+
+    /// Adds an article to a publication using `sp_addarticle`.
+    ///
+    /// - Parameters:
+    ///   - publicationName: The publication to add the article to.
+    ///   - table: The source table name.
+    ///   - schema: The source table schema (defaults to `dbo`).
+    @available(macOS 12.0, *)
+    public func addArticle(
+        publicationName: String,
+        table: String,
+        schema: String = "dbo"
+    ) async throws {
+        let escapedPub = publicationName.replacingOccurrences(of: "'", with: "''")
+        let escapedTable = table.replacingOccurrences(of: "'", with: "''")
+        let escapedSchema = schema.replacingOccurrences(of: "'", with: "''")
+        let sql = """
+        EXEC sp_addarticle
+            @publication = N'\(escapedPub)',
+            @article = N'\(escapedTable)',
+            @source_table = N'\(escapedTable)',
+            @source_owner = N'\(escapedSchema)',
+            @type = N'logbased'
+        """
+        _ = try await client.query(sql)
+    }
+
+    /// Removes an article from a publication using `sp_droparticle`.
+    ///
+    /// - Parameters:
+    ///   - publicationName: The publication to remove the article from.
+    ///   - table: The article/table name to remove.
+    ///   - schema: The source table schema (defaults to `dbo`).
+    @available(macOS 12.0, *)
+    public func removeArticle(
+        publicationName: String,
+        table: String,
+        schema: String = "dbo"
+    ) async throws {
+        let escapedPub = publicationName.replacingOccurrences(of: "'", with: "''")
+        let escapedTable = table.replacingOccurrences(of: "'", with: "''")
+        let sql = """
+        EXEC sp_droparticle
+            @publication = N'\(escapedPub)',
+            @article = N'\(escapedTable)'
+        """
+        _ = try await client.query(sql)
+    }
+
+    // MARK: - Subscription Management
+
+    /// Creates a push subscription to a publication using `sp_addsubscription`.
+    ///
+    /// - Parameters:
+    ///   - publicationName: The publication to subscribe to.
+    ///   - subscriberServer: The subscriber server name.
+    ///   - subscriberDB: The subscriber database name.
+    @available(macOS 12.0, *)
+    public func createSubscription(
+        publicationName: String,
+        subscriberServer: String,
+        subscriberDB: String
+    ) async throws {
+        let escapedPub = publicationName.replacingOccurrences(of: "'", with: "''")
+        let escapedServer = subscriberServer.replacingOccurrences(of: "'", with: "''")
+        let escapedDB = subscriberDB.replacingOccurrences(of: "'", with: "''")
+        let sql = """
+        EXEC sp_addsubscription
+            @publication = N'\(escapedPub)',
+            @subscriber = N'\(escapedServer)',
+            @destination_db = N'\(escapedDB)'
+        """
+        _ = try await client.query(sql)
+    }
+
+    /// Drops a subscription from a publication using `sp_dropsubscription`.
+    ///
+    /// - Parameters:
+    ///   - publicationName: The publication name.
+    ///   - subscriberServer: The subscriber server name.
+    ///   - subscriberDB: The subscriber database name.
+    @available(macOS 12.0, *)
+    public func dropSubscription(
+        publicationName: String,
+        subscriberServer: String,
+        subscriberDB: String
+    ) async throws {
+        let escapedPub = publicationName.replacingOccurrences(of: "'", with: "''")
+        let escapedServer = subscriberServer.replacingOccurrences(of: "'", with: "''")
+        let escapedDB = subscriberDB.replacingOccurrences(of: "'", with: "''")
+        let sql = """
+        EXEC sp_dropsubscription
+            @publication = N'\(escapedPub)',
+            @subscriber = N'\(escapedServer)',
+            @destination_db = N'\(escapedDB)'
+        """
+        _ = try await client.query(sql)
+    }
+
+    // MARK: - Articles Query
+
     /// Lists articles in a specific publication.
     @available(macOS 12.0, *)
     public func listArticles(publicationName: String) async throws -> [SQLServerReplicationArticle] {
