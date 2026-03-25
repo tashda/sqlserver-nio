@@ -42,7 +42,7 @@ final class QueryStoreWaitStatsTests: XCTestCase, @unchecked Sendable {
     func testWaitStatsReturnsArray() async throws {
         // Query Store may not be enabled on all databases.
         // Use a database that likely has Query Store enabled, or skip gracefully.
-        let database = TestEnvironmentManager.testDatabase ?? "master"
+        let database = env("TDS_AW_DATABASE") ?? "master"
 
         do {
             // planId 1 is arbitrary — may not exist, but the API should still return an empty array
