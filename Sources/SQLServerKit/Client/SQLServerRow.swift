@@ -103,7 +103,7 @@ public struct SQLServerRow: Sendable {
 
             default:
                 // Unknown type / UDT — check hierarchyid/spatial, then string fallback
-                if let udtInfo = (metadata as? TDSTokens.ColMetadataToken.ColumnData)?.udtInfo {
+                if let udtInfo = metadata.udtInfo {
                     let typeName = udtInfo.typeName
                     if typeName.caseInsensitiveCompare("hierarchyid") == .orderedSame,
                        let bytes = tdsData.bytes,

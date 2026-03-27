@@ -60,10 +60,10 @@ jobs:
           TDS_LOAD_ADVENTUREWORKS: "1"
           TDS_AW_DATABASE: "AdventureWorks"
         run: |
-          output=$(swift run --package-path . sqlserver-test-fixture --require-adventureworks)
+          output=$(swift test --filter SQLServerFixtureBootstrapTests 2>&1)
           echo "$output"
           {
-            echo "### SQL Server fixture"
+            echo "### SQL Server fixture bootstrap"
             echo ""
             echo '```'
             echo "$output"
@@ -135,10 +135,10 @@ jobs:
           TDS_LOAD_ADVENTUREWORKS: "1"
           TDS_AW_DATABASE: "AdventureWorks"
         run: |
-          output=$(swift run --package-path . sqlserver-test-fixture --require-adventureworks)
+          output=$(swift test --filter SQLServerFixtureBootstrapTests 2>&1)
           echo "$output"
           {
-            echo "### SQL Server fixture"
+            echo "### SQL Server fixture bootstrap"
             echo ""
             echo '```'
             echo "$output"

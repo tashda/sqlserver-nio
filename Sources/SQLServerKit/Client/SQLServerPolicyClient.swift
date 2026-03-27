@@ -113,7 +113,7 @@ public final class SQLServerPolicyClient: @unchecked Sendable {
     public func enablePolicy(name: String) async throws {
         let escaped = name.replacingOccurrences(of: "'", with: "''")
         let sql = "EXEC msdb.dbo.sp_syspolicy_update_policy @name = N'\(escaped)', @is_enabled = 1;"
-        try await client.execute(sql)
+        _ = try await client.execute(sql)
     }
 
     /// Disables a policy.
@@ -121,7 +121,7 @@ public final class SQLServerPolicyClient: @unchecked Sendable {
     public func disablePolicy(name: String) async throws {
         let escaped = name.replacingOccurrences(of: "'", with: "''")
         let sql = "EXEC msdb.dbo.sp_syspolicy_update_policy @name = N'\(escaped)', @is_enabled = 0;"
-        try await client.execute(sql)
+        _ = try await client.execute(sql)
     }
 
     // MARK: - Execution
@@ -131,6 +131,6 @@ public final class SQLServerPolicyClient: @unchecked Sendable {
     public func evaluatePolicy(name: String) async throws {
         let escaped = name.replacingOccurrences(of: "'", with: "''")
         let sql = "EXEC msdb.dbo.sp_syspolicy_execute_policy @policy_name = N'\(escaped)';"
-        try await client.execute(sql)
+        _ = try await client.execute(sql)
     }
 }

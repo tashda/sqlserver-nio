@@ -13,9 +13,6 @@ let package = Package(
         .library(
             name: "SQLServerKitTesting",
             targets: ["SQLServerKitTesting"]),
-        .executable(
-            name: "sqlserver-test-fixture",
-            targets: ["SQLServerFixtureTool"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0"),
@@ -70,11 +67,6 @@ let package = Package(
                 "SQLServerKitTesting",
             ],
             path: "Sources/SQLServerKitXCTestSupport"
-        ),
-        .executableTarget(
-            name: "SQLServerFixtureTool",
-            dependencies: ["SQLServerKitTesting"],
-            path: "Sources/SQLServerFixtureTool"
         ),
         .testTarget(
             name: "SQLServerKitTests",

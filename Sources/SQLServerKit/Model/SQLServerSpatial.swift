@@ -52,9 +52,7 @@ public struct SQLServerSpatial: Sendable, Equatable {
         
         let hasZ = (serializationProps & 0x01) != 0
         let hasM = (serializationProps & 0x02) != 0
-        let isValid = (serializationProps & 0x04) != 0
         let isSinglePoint = (serializationProps & 0x08) != 0
-        let isSingleLineSegment = (serializationProps & 0x10) != 0
         let isWholeGlobe = (serializationProps & 0x20) != 0
         
         if isWholeGlobe {
@@ -80,7 +78,16 @@ public struct SQLServerSpatial: Sendable, Equatable {
             points.append(Point(x: x, y: y))
         }
         
-        // Skip Z/M values for now to avoid over-complicating (but they are there if hasZ/hasM)
+        if hasZ {
+            let zBytes = Int(numberOfPoints) * MemoryLayout<UInt64>.size
+            guard buffer.readableBytes >= zBytes else { return nil }
+            buffer.moveReaderIndex(forwardBy: zBytes)
+        }
+        if hasM {
+            let mBytes = Int(numberOfPoints) * MemoryLayout<UInt64>.size
+            guard buffer.readableBytes >= mBytes else { return nil }
+            buffer.moveReaderIndex(forwardBy: mBytes)
+        }
         
         guard let numberOfFigures = buffer.readInteger(endianness: .little, as: Int32.self) else {
             return SQLServerSpatial(srid: srid, type: .point, points: points)

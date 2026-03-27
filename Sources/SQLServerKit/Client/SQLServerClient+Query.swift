@@ -82,7 +82,17 @@ extension SQLServerClient {
         if #available(macOS 12.0, *) {
             promise.completeWithTask {
                 do {
-                    return try await self.executeSeparateBatches(sqlStatements)
+                    let batchResult = try await self.executeBatches(sqlStatements)
+                    var results: [SQLServerExecutionResult] = []
+                    for single in batchResult.batchResults {
+                        if let error = single.error {
+                            throw error
+                        }
+                        if let result = single.result {
+                            results.append(result)
+                        }
+                    }
+                    return results
                 } catch {
                     if error.localizedDescription.contains("Already closed") {
                         throw SQLServerError.connectionClosed
