@@ -49,6 +49,23 @@ AGENT.md
 AGENTS.md
 GEMINI.md
 CLAUDE.md
+agent.md
+agents.md
+gemini.md
+claude.md
+
+# AI agent outputs
+*_ANALYSIS.md
+*_PLAN.md
+*_GAP.md
+*_REPORT.md
+*_SPEC.md
+*_TODO.md
+*_VIOLATIONS.md
+*_FIXTURES.md
+.planning/
+TASKS/
+
 Tests/SETUP.md
 Docs/
 # Debug directories (except production PromiseTracker)
