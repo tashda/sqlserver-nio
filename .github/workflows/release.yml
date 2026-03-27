@@ -37,7 +37,7 @@ jobs:
 
       - name: Generate Release Notes
         run: |
-          python3 scripts/generate_release_notes.py \
+          python3 .github/scripts/generate_release_notes.py \
             --repo-key sqlserver-nio \
             --repo-name sqlserver-nio \
             --new-tag "${{ steps.version.outputs.tag }}" \
