@@ -22,6 +22,18 @@ extension SQLServerAgentOperations {
         run("EXEC msdb.dbo.sp_delete_alert @name = N'\(Self.escapeLiteral(name))';").map { _ in () }
     }
 
+    internal func updateAlert(name: String, newName: String? = nil, severity: Int? = nil, messageId: Int? = nil, databaseName: String? = nil, eventDescriptionKeyword: String? = nil, enabled: Bool? = nil) -> EventLoopFuture<Void> {
+        var sql = "EXEC msdb.dbo.sp_update_alert @name = N'\(Self.escapeLiteral(name))'"
+        if let newName { sql += ", @new_name = N'\(Self.escapeLiteral(newName))'" }
+        if let severity { sql += ", @severity = \(severity)" }
+        if let messageId { sql += ", @message_id = \(messageId)" }
+        if let databaseName { sql += ", @database_name = N'\(Self.escapeLiteral(databaseName))'" }
+        if let eventDescriptionKeyword { sql += ", @event_description_keyword = N'\(Self.escapeLiteral(eventDescriptionKeyword))'" }
+        if let enabled { sql += ", @enabled = \(enabled ? 1 : 0)" }
+        sql += ";"
+        return run(sql).map { _ in () }
+    }
+
     internal func enableAlert(name: String, enabled: Bool) -> EventLoopFuture<Void> {
         run("EXEC msdb.dbo.sp_update_alert @name = N'\(Self.escapeLiteral(name))', @enabled = \(enabled ? 1 : 0);").map { _ in () }
     }
@@ -32,10 +44,17 @@ extension SQLServerAgentOperations {
     }
 
     internal func listAlerts() -> EventLoopFuture<[SQLServerAgentAlertInfo]> {
-        run("SELECT name, severity, message_id, enabled FROM msdb.dbo.sysalerts ORDER BY name;").map { rows in
+        run("SELECT name, severity, message_id, database_name, event_description_keyword, enabled FROM msdb.dbo.sysalerts ORDER BY name;").map { rows in
             rows.compactMap { row in
                 guard let name = row.column("name")?.string else { return nil }
-                return SQLServerAgentAlertInfo(name: name, severity: row.column("severity")?.int, messageId: row.column("message_id")?.int, enabled: (row.column("enabled")?.int ?? 0) != 0)
+                return SQLServerAgentAlertInfo(
+                    name: name,
+                    severity: row.column("severity")?.int,
+                    messageId: row.column("message_id")?.int,
+                    databaseName: row.column("database_name")?.string,
+                    eventDescriptionKeyword: row.column("event_description_keyword")?.string,
+                    enabled: (row.column("enabled")?.int ?? 0) != 0
+                )
             }
         }
     }

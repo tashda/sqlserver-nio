@@ -41,6 +41,38 @@ extension SQLServerAgentOperations {
         }
     }
 
+    internal func revokeProxyFromSubsystem(proxyName: String, subsystem: String) -> EventLoopFuture<Void> {
+        run("EXEC msdb.dbo.sp_revoke_proxy_from_subsystem @proxy_name = N'\(Self.escapeLiteral(proxyName))', @subsystem_name = N'\(Self.escapeLiteral(subsystem))';").map { _ in () }
+    }
+
+    internal func listProxySubsystems(proxyName: String) -> EventLoopFuture<[String]> {
+        let sql = """
+        SELECT s.subsystem_name
+        FROM msdb.dbo.sysproxysubsystem AS ps
+        JOIN msdb.dbo.sysproxies AS p ON ps.proxy_id = p.proxy_id
+        JOIN msdb.dbo.syssubsystems AS s ON ps.subsystem_id = s.subsystem_id
+        WHERE p.name = N'\(Self.escapeLiteral(proxyName))'
+        ORDER BY s.subsystem_name;
+        """
+        return run(sql).map { rows in
+            rows.compactMap { $0.column("subsystem_name")?.string }
+        }
+    }
+
+    internal func listProxyLogins(proxyName: String) -> EventLoopFuture<[String]> {
+        let sql = """
+        SELECT sp.name AS login_name
+        FROM msdb.dbo.sysproxylogin AS pl
+        JOIN msdb.dbo.sysproxies AS p ON pl.proxy_id = p.proxy_id
+        JOIN master.sys.server_principals AS sp ON pl.sid = sp.sid
+        WHERE p.name = N'\(Self.escapeLiteral(proxyName))'
+        ORDER BY sp.name;
+        """
+        return run(sql).map { rows in
+            rows.compactMap { $0.column("login_name")?.string }
+        }
+    }
+
     internal func listProxies() -> EventLoopFuture<[SQLServerAgentProxyInfo]> {
         let sql = """
         SELECT p.name, c.name AS credential_name, p.enabled

@@ -259,6 +259,11 @@ extension SQLServerAgentOperations {
     }
 
     @available(macOS 12.0, *)
+    public func updateAlert(name: String, newName: String? = nil, severity: Int? = nil, messageId: Int? = nil, databaseName: String? = nil, eventDescriptionKeyword: String? = nil, enabled: Bool? = nil) async throws {
+        _ = try await updateAlert(name: name, newName: newName, severity: severity, messageId: messageId, databaseName: databaseName, eventDescriptionKeyword: eventDescriptionKeyword, enabled: enabled).get()
+    }
+
+    @available(macOS 12.0, *)
     public func deleteAlert(name: String) async throws {
         _ = try await deleteAlert(name: name).get()
     }
@@ -323,6 +328,21 @@ extension SQLServerAgentOperations {
     @available(macOS 12.0, *)
     public func grantProxyToSubsystem(proxyName: String, subsystem: String) async throws {
         _ = try await grantProxyToSubsystem(proxyName: proxyName, subsystem: subsystem).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func revokeProxyFromSubsystem(proxyName: String, subsystem: String) async throws {
+        _ = try await revokeProxyFromSubsystem(proxyName: proxyName, subsystem: subsystem).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func listProxySubsystems(proxyName: String) async throws -> [String] {
+        try await listProxySubsystems(proxyName: proxyName).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func listProxyLogins(proxyName: String) async throws -> [String] {
+        try await listProxyLogins(proxyName: proxyName).get()
     }
 
     @available(macOS 12.0, *)
