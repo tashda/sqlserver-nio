@@ -72,12 +72,18 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
 
     /// Rebuilds all indexes on a table.
     @available(macOS 12.0, *)
-    public func rebuildIndexes(schema: String, table: String) async throws -> SQLServerMaintenanceResult {
+    public func rebuildIndexes(schema: String, table: String, database: String? = nil) async throws -> SQLServerMaintenanceResult {
         let escapedSchema = schema.replacingOccurrences(of: "]", with: "]]")
         let escapedTable = table.replacingOccurrences(of: "]", with: "]]")
         let sql = "ALTER INDEX ALL ON [\(escapedSchema)].[\(escapedTable)] REBUILD"
         do {
-            _ = try await client.execute(sql)
+            if let database {
+                _ = try await client.withDatabase(database) { connection in
+                    try await connection.execute(sql).get()
+                }
+            } else {
+                _ = try await client.execute(sql)
+            }
             return SQLServerMaintenanceResult(
                 operation: "Rebuild Indexes",
                 messages: ["All indexes on [\(schema)].[\(table)] rebuilt successfully."],
@@ -95,13 +101,19 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
 
     /// Rebuilds a specific index on a table.
     @available(macOS 12.0, *)
-    public func rebuildIndex(schema: String, table: String, name: String) async throws -> SQLServerMaintenanceResult {
+    public func rebuildIndex(schema: String, table: String, name: String, database: String? = nil) async throws -> SQLServerMaintenanceResult {
         let escapedSchema = schema.replacingOccurrences(of: "]", with: "]]")
         let escapedTable = table.replacingOccurrences(of: "]", with: "]]")
         let escapedName = name.replacingOccurrences(of: "]", with: "]]")
         let sql = "ALTER INDEX [\(escapedName)] ON [\(escapedSchema)].[\(escapedTable)] REBUILD"
         do {
-            _ = try await client.execute(sql)
+            if let database {
+                _ = try await client.withDatabase(database) { connection in
+                    try await connection.execute(sql).get()
+                }
+            } else {
+                _ = try await client.execute(sql)
+            }
             return SQLServerMaintenanceResult(
                 operation: "Rebuild Index",
                 messages: ["Index [\(name)] on [\(schema)].[\(table)] rebuilt successfully."],
@@ -121,12 +133,18 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
 
     /// Updates statistics on a table.
     @available(macOS 12.0, *)
-    public func updateStatistics(schema: String, table: String) async throws -> SQLServerMaintenanceResult {
+    public func updateStatistics(schema: String, table: String, database: String? = nil) async throws -> SQLServerMaintenanceResult {
         let escapedSchema = schema.replacingOccurrences(of: "]", with: "]]")
         let escapedTable = table.replacingOccurrences(of: "]", with: "]]")
         let sql = "UPDATE STATISTICS [\(escapedSchema)].[\(escapedTable)]"
         do {
-            _ = try await client.execute(sql)
+            if let database {
+                _ = try await client.withDatabase(database) { connection in
+                    try await connection.execute(sql).get()
+                }
+            } else {
+                _ = try await client.execute(sql)
+            }
             return SQLServerMaintenanceResult(
                 operation: "Update Statistics",
                 messages: ["Statistics on [\(schema)].[\(table)] updated successfully."],
@@ -144,13 +162,19 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
 
     /// Updates statistics on a specific index.
     @available(macOS 12.0, *)
-    public func updateIndexStatistics(schema: String, table: String, index: String) async throws -> SQLServerMaintenanceResult {
+    public func updateIndexStatistics(schema: String, table: String, index: String, database: String? = nil) async throws -> SQLServerMaintenanceResult {
         let escapedSchema = schema.replacingOccurrences(of: "]", with: "]]")
         let escapedTable = table.replacingOccurrences(of: "]", with: "]]")
         let escapedIndex = index.replacingOccurrences(of: "]", with: "]]")
         let sql = "UPDATE STATISTICS [\(escapedSchema)].[\(escapedTable)] [\(escapedIndex)] WITH FULLSCAN"
         do {
-            _ = try await client.execute(sql)
+            if let database {
+                _ = try await client.withDatabase(database) { connection in
+                    try await connection.execute(sql).get()
+                }
+            } else {
+                _ = try await client.execute(sql)
+            }
             return SQLServerMaintenanceResult(
                 operation: "Update Statistics",
                 messages: ["Statistics on index [\(index)] for [\(schema)].[\(table)] updated successfully."],
@@ -275,13 +299,19 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
 
     /// Reorganizes a specific index on a table (lighter than rebuild).
     @available(macOS 12.0, *)
-    public func reorganizeIndex(schema: String, table: String, name: String) async throws -> SQLServerMaintenanceResult {
+    public func reorganizeIndex(schema: String, table: String, name: String, database: String? = nil) async throws -> SQLServerMaintenanceResult {
         let escapedSchema = schema.replacingOccurrences(of: "]", with: "]]")
         let escapedTable = table.replacingOccurrences(of: "]", with: "]]")
         let escapedName = name.replacingOccurrences(of: "]", with: "]]")
         let sql = "ALTER INDEX [\(escapedName)] ON [\(escapedSchema)].[\(escapedTable)] REORGANIZE"
         do {
-            _ = try await client.execute(sql)
+            if let database {
+                _ = try await client.withDatabase(database) { connection in
+                    try await connection.execute(sql).get()
+                }
+            } else {
+                _ = try await client.execute(sql)
+            }
             return SQLServerMaintenanceResult(
                 operation: "Reorganize Index",
                 messages: ["Index [\(name)] on [\(schema)].[\(table)] reorganized successfully."],
@@ -299,12 +329,18 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
 
     /// Reorganizes all indexes on a table (lighter than rebuild).
     @available(macOS 12.0, *)
-    public func reorganizeIndexes(schema: String, table: String) async throws -> SQLServerMaintenanceResult {
+    public func reorganizeIndexes(schema: String, table: String, database: String? = nil) async throws -> SQLServerMaintenanceResult {
         let escapedSchema = schema.replacingOccurrences(of: "]", with: "]]")
         let escapedTable = table.replacingOccurrences(of: "]", with: "]]")
         let sql = "ALTER INDEX ALL ON [\(escapedSchema)].[\(escapedTable)] REORGANIZE"
         do {
-            _ = try await client.execute(sql)
+            if let database {
+                _ = try await client.withDatabase(database) { connection in
+                    try await connection.execute(sql).get()
+                }
+            } else {
+                _ = try await client.execute(sql)
+            }
             return SQLServerMaintenanceResult(
                 operation: "Reorganize Indexes",
                 messages: ["All indexes on [\(schema)].[\(table)] reorganized successfully."],
@@ -414,9 +450,9 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
 
     /// Retrieves health and configuration status for the current database.
     @available(macOS 12.0, *)
-    public func getDatabaseHealth() async throws -> SQLServerDatabaseHealth {
+    public func getDatabaseHealth(database: String? = nil) async throws -> SQLServerDatabaseHealth {
         let sql = """
-        SELECT 
+        SELECT
             d.name,
             SUSER_SNAME(d.owner_sid) AS [owner],
             d.create_date,
@@ -430,8 +466,15 @@ public final class SQLServerMaintenanceClient: @unchecked Sendable {
         WHERE d.database_id = DB_ID()
         GROUP BY d.name, d.owner_sid, d.create_date, d.recovery_model_desc, d.state_desc, d.compatibility_level, d.collation_name;
         """
-        
-        let rows = try await client.query(sql)
+
+        let rows: [SQLServerRow]
+        if let database {
+            rows = try await client.withDatabase(database) { connection in
+                try await connection.query(sql).get()
+            }
+        } else {
+            rows = try await client.query(sql)
+        }
         guard let row = rows.first else {
             throw SQLServerError.sqlExecutionError(message: "Could not retrieve health stats for database.")
         }

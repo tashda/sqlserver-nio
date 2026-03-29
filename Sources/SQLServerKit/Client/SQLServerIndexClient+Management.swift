@@ -19,11 +19,16 @@ extension SQLServerIndexClient {
 
     @available(macOS 12.0, *)
     @discardableResult
-    public func dropIndex(name: String, table: String, schema: String = "dbo") async throws -> [SQLServerStreamMessage] {
+    public func dropIndex(name: String, table: String, schema: String = "dbo", database: String? = nil) async throws -> [SQLServerStreamMessage] {
         let escapedIndexName = SQLServerSQL.escapeIdentifier(name)
         let escapedTableName = SQLServerSQL.escapeIdentifier(table)
         let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
-        let fullTableName = "\(schemaPrefix)\(escapedTableName)"
+        let fullTableName: String
+        if let database {
+            fullTableName = "\(SQLServerSQL.escapeIdentifier(database)).\(schemaPrefix)\(escapedTableName)"
+        } else {
+            fullTableName = "\(schemaPrefix)\(escapedTableName)"
+        }
 
         let sql = "DROP INDEX \(escapedIndexName) ON \(fullTableName)"
         let result = try await client.execute(sql)
@@ -147,10 +152,15 @@ extension SQLServerIndexClient {
 
     @available(macOS 12.0, *)
     @discardableResult
-    public func rebuildAllIndexes(table: String, schema: String = "dbo") async throws -> [SQLServerStreamMessage] {
+    public func rebuildAllIndexes(table: String, schema: String = "dbo", database: String? = nil) async throws -> [SQLServerStreamMessage] {
         let escapedTableName = SQLServerSQL.escapeIdentifier(table)
         let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
-        let fullTableName = "\(schemaPrefix)\(escapedTableName)"
+        let fullTableName: String
+        if let database {
+            fullTableName = "\(SQLServerSQL.escapeIdentifier(database)).\(schemaPrefix)\(escapedTableName)"
+        } else {
+            fullTableName = "\(schemaPrefix)\(escapedTableName)"
+        }
 
         let sql = "ALTER INDEX ALL ON \(fullTableName) REBUILD"
         let result = try await client.execute(sql)
@@ -159,10 +169,15 @@ extension SQLServerIndexClient {
 
     @available(macOS 12.0, *)
     @discardableResult
-    public func reorganizeAllIndexes(table: String, schema: String = "dbo") async throws -> [SQLServerStreamMessage] {
+    public func reorganizeAllIndexes(table: String, schema: String = "dbo", database: String? = nil) async throws -> [SQLServerStreamMessage] {
         let escapedTableName = SQLServerSQL.escapeIdentifier(table)
         let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
-        let fullTableName = "\(schemaPrefix)\(escapedTableName)"
+        let fullTableName: String
+        if let database {
+            fullTableName = "\(SQLServerSQL.escapeIdentifier(database)).\(schemaPrefix)\(escapedTableName)"
+        } else {
+            fullTableName = "\(schemaPrefix)\(escapedTableName)"
+        }
 
         let sql = "ALTER INDEX ALL ON \(fullTableName) REORGANIZE"
         let result = try await client.execute(sql)
