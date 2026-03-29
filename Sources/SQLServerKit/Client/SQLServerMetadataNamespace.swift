@@ -325,6 +325,54 @@ public final class SQLServerMetadataNamespace: @unchecked Sendable {
         }
     }
 
+    // MARK: - Sequences
+
+    @available(macOS 12.0, *)
+    public func listSequences(
+        database: String? = nil,
+        schema: String? = nil,
+        includeComments: Bool = false
+    ) async throws -> [SequenceMetadata] {
+        try await client.withConnection { connection in
+            try await connection.listSequences(database: database, schema: schema, includeComments: includeComments)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func sequenceDetails(
+        database: String? = nil,
+        schema: String,
+        name: String
+    ) async throws -> SequenceMetadata? {
+        try await client.withConnection { connection in
+            try await connection.sequenceDetails(database: database, schema: schema, name: name)
+        }
+    }
+
+    // MARK: - User-Defined Types
+
+    @available(macOS 12.0, *)
+    public func listUserTypes(
+        database: String? = nil,
+        schema: String? = nil,
+        includeComments: Bool = false
+    ) async throws -> [UserTypeMetadata] {
+        try await client.withConnection { connection in
+            try await connection.listUserTypes(database: database, schema: schema, includeComments: includeComments)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    public func userTypeDetails(
+        database: String? = nil,
+        schema: String,
+        name: String
+    ) async throws -> UserTypeMetadata? {
+        try await client.withConnection { connection in
+            try await connection.userTypeDetails(database: database, schema: schema, name: name)
+        }
+    }
+
     // MARK: - Routines
 
     @available(macOS 12.0, *)

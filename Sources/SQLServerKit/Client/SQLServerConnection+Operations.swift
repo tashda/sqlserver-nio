@@ -135,6 +135,26 @@ extension SQLServerConnection {
     }
 
     @available(macOS 12.0, *)
+    public func listSequences(database: String? = nil, schema: String? = nil, includeComments: Bool = false) async throws -> [SequenceMetadata] {
+        try await listSequences(database: database, schema: schema, includeComments: includeComments).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func sequenceDetails(database: String? = nil, schema: String, name: String) async throws -> SequenceMetadata? {
+        try await sequenceDetails(database: database, schema: schema, name: name).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func listUserTypes(database: String? = nil, schema: String? = nil, includeComments: Bool = false) async throws -> [UserTypeMetadata] {
+        try await listUserTypes(database: database, schema: schema, includeComments: includeComments).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func userTypeDetails(database: String? = nil, schema: String, name: String) async throws -> UserTypeMetadata? {
+        try await userTypeDetails(database: database, schema: schema, name: name).get()
+    }
+
+    @available(macOS 12.0, *)
     public func listObjectDefinitions(_ identifiers: [SQLServerMetadataObjectIdentifier]) async throws -> [ObjectDefinition] {
         try await listObjectDefinitions(identifiers).get()
     }
@@ -234,6 +254,22 @@ extension SQLServerConnection {
 
     internal func listSynonyms(database: String? = nil, schema: String? = nil, includeComments: Bool = false) -> EventLoopFuture<[SynonymMetadata]> {
         metadataClient.listSynonyms(database: database, schema: schema, includeComments: includeComments)
+    }
+
+    internal func listSequences(database: String? = nil, schema: String? = nil, includeComments: Bool = false) -> EventLoopFuture<[SequenceMetadata]> {
+        metadataClient.listSequences(database: database, schema: schema, includeComments: includeComments)
+    }
+
+    internal func sequenceDetails(database: String? = nil, schema: String, name: String) -> EventLoopFuture<SequenceMetadata?> {
+        metadataClient.sequenceDetails(database: database, schema: schema, name: name)
+    }
+
+    internal func listUserTypes(database: String? = nil, schema: String? = nil, includeComments: Bool = false) -> EventLoopFuture<[UserTypeMetadata]> {
+        metadataClient.listUserTypes(database: database, schema: schema, includeComments: includeComments)
+    }
+
+    internal func userTypeDetails(database: String? = nil, schema: String, name: String) -> EventLoopFuture<UserTypeMetadata?> {
+        metadataClient.userTypeDetails(database: database, schema: schema, name: name)
     }
 
     internal func listObjectDefinitions(_ identifiers: [SQLServerMetadataObjectIdentifier]) -> EventLoopFuture<[ObjectDefinition]> {
