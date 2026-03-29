@@ -99,13 +99,13 @@ final class RowLevelSecurityTests: SecurityTestBase, @unchecked Sendable {
         let policyName = "rls_mp_pol_\(UUID().uuidString.prefix(8))"
 
         // Create tables
-        try await adminClient.executeUpdate("CREATE TABLE dbo.\(tableName1) (id INT, tenant_id INT)")
+        _ = try await client.execute("CREATE TABLE dbo.\(tableName1) (id INT, tenant_id INT)")
         tablesToDrop.append(tableName1)
-        try await adminClient.executeUpdate("CREATE TABLE dbo.\(tableName2) (id INT, tenant_id INT)")
+        _ = try await client.execute("CREATE TABLE dbo.\(tableName2) (id INT, tenant_id INT)")
         tablesToDrop.append(tableName2)
 
         // Create predicate function
-        try await adminClient.executeUpdate("""
+        _ = try await client.execute("""
         CREATE FUNCTION dbo.\(funcName)(@tenant_id INT)
         RETURNS TABLE
         WITH SCHEMABINDING
@@ -115,7 +115,7 @@ final class RowLevelSecurityTests: SecurityTestBase, @unchecked Sendable {
         defer {
             Task {
                 try? await securityClient.dropSecurityPolicy(name: policyName, schema: "dbo")
-                try? await adminClient.executeUpdate("DROP FUNCTION IF EXISTS dbo.\(funcName)")
+                _ = try? await client.execute("DROP FUNCTION IF EXISTS dbo.\(funcName)")
             }
         }
 
@@ -174,12 +174,12 @@ final class RowLevelSecurityTests: SecurityTestBase, @unchecked Sendable {
         let funcName = "rls_add_fn_\(UUID().uuidString.prefix(8))"
         let policyName = "rls_add_pol_\(UUID().uuidString.prefix(8))"
 
-        try await adminClient.executeUpdate("CREATE TABLE dbo.\(tableName1) (id INT, tenant_id INT)")
+        _ = try await client.execute("CREATE TABLE dbo.\(tableName1) (id INT, tenant_id INT)")
         tablesToDrop.append(tableName1)
-        try await adminClient.executeUpdate("CREATE TABLE dbo.\(tableName2) (id INT, tenant_id INT)")
+        _ = try await client.execute("CREATE TABLE dbo.\(tableName2) (id INT, tenant_id INT)")
         tablesToDrop.append(tableName2)
 
-        try await adminClient.executeUpdate("""
+        _ = try await client.execute("""
         CREATE FUNCTION dbo.\(funcName)(@tenant_id INT)
         RETURNS TABLE
         WITH SCHEMABINDING
@@ -189,7 +189,7 @@ final class RowLevelSecurityTests: SecurityTestBase, @unchecked Sendable {
         defer {
             Task {
                 try? await securityClient.dropSecurityPolicy(name: policyName, schema: "dbo")
-                try? await adminClient.executeUpdate("DROP FUNCTION IF EXISTS dbo.\(funcName)")
+                _ = try? await client.execute("DROP FUNCTION IF EXISTS dbo.\(funcName)")
             }
         }
 
@@ -227,12 +227,12 @@ final class RowLevelSecurityTests: SecurityTestBase, @unchecked Sendable {
         let funcName = "rls_drp_fn_\(UUID().uuidString.prefix(8))"
         let policyName = "rls_drp_pol_\(UUID().uuidString.prefix(8))"
 
-        try await adminClient.executeUpdate("CREATE TABLE dbo.\(tableName1) (id INT, tenant_id INT)")
+        _ = try await client.execute("CREATE TABLE dbo.\(tableName1) (id INT, tenant_id INT)")
         tablesToDrop.append(tableName1)
-        try await adminClient.executeUpdate("CREATE TABLE dbo.\(tableName2) (id INT, tenant_id INT)")
+        _ = try await client.execute("CREATE TABLE dbo.\(tableName2) (id INT, tenant_id INT)")
         tablesToDrop.append(tableName2)
 
-        try await adminClient.executeUpdate("""
+        _ = try await client.execute("""
         CREATE FUNCTION dbo.\(funcName)(@tenant_id INT)
         RETURNS TABLE
         WITH SCHEMABINDING
@@ -242,7 +242,7 @@ final class RowLevelSecurityTests: SecurityTestBase, @unchecked Sendable {
         defer {
             Task {
                 try? await securityClient.dropSecurityPolicy(name: policyName, schema: "dbo")
-                try? await adminClient.executeUpdate("DROP FUNCTION IF EXISTS dbo.\(funcName)")
+                _ = try? await client.execute("DROP FUNCTION IF EXISTS dbo.\(funcName)")
             }
         }
 

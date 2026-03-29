@@ -170,7 +170,7 @@ public final class ShowPlanXMLParser: NSObject, XMLParserDelegate, @unchecked Se
 
     // MARK: - XMLParserDelegate
 
-    func parser(
+    public func parser(
         _ parser: XMLParser,
         didStartElement elementName: String,
         namespaceURI: String?,
@@ -362,7 +362,7 @@ public final class ShowPlanXMLParser: NSObject, XMLParserDelegate, @unchecked Se
         }
     }
 
-    func parser(
+    public func parser(
         _ parser: XMLParser,
         didEndElement elementName: String,
         namespaceURI: String?,
@@ -453,7 +453,7 @@ public final class ShowPlanXMLParser: NSObject, XMLParserDelegate, @unchecked Se
         }
     }
 
-    func parser(_ parser: XMLParser, parseErrorOccurred parseError: Error) {
+    public func parser(_ parser: XMLParser, parseErrorOccurred parseError: Error) {
         self.parseError = ShowPlanParseError.invalidXML(parseError.localizedDescription)
     }
 }
