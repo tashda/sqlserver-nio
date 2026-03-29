@@ -18,10 +18,6 @@ public final class SQLServerAuditClient: @unchecked Sendable {
         self.client = client
     }
 
-    private static func escapeIdentifier(_ identifier: String) -> String {
-        "[\(identifier.replacingOccurrences(of: "]", with: "]]"))]"
-    }
-
     // MARK: - Server Audits
 
     /// Lists all server audits.
@@ -63,7 +59,7 @@ public final class SQLServerAuditClient: @unchecked Sendable {
     /// Creates a new server audit.
     @available(macOS 12.0, *)
     public func createServerAudit(name: String, destination: AuditDestination, options: ServerAuditOptions? = nil) async throws {
-        let escapedName = Self.escapeIdentifier(name)
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
         var sql = "CREATE SERVER AUDIT \(escapedName) TO \(destination.rawValue)"
         if destination == .file, let path = options?.filePath {
             let escapedPath = path.replacingOccurrences(of: "'", with: "''")
@@ -85,7 +81,7 @@ public final class SQLServerAuditClient: @unchecked Sendable {
     /// Enables or disables a server audit.
     @available(macOS 12.0, *)
     public func setAuditState(name: String, enabled: Bool) async throws {
-        let escapedName = Self.escapeIdentifier(name)
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
         let state = enabled ? "ON" : "OFF"
         _ = try await client.execute("ALTER SERVER AUDIT \(escapedName) WITH (STATE = \(state))")
     }
@@ -93,7 +89,7 @@ public final class SQLServerAuditClient: @unchecked Sendable {
     /// Drops a server audit.
     @available(macOS 12.0, *)
     public func dropServerAudit(name: String) async throws {
-        let escapedName = Self.escapeIdentifier(name)
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
         _ = try await client.execute("DROP SERVER AUDIT \(escapedName)")
     }
 
@@ -143,8 +139,8 @@ public final class SQLServerAuditClient: @unchecked Sendable {
     /// Creates a server audit specification.
     @available(macOS 12.0, *)
     public func createServerAuditSpecification(name: String, auditName: String, actions: [String]) async throws {
-        let escapedName = Self.escapeIdentifier(name)
-        let escapedAudit = Self.escapeIdentifier(auditName)
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
+        let escapedAudit = SQLServerSQL.escapeIdentifier(auditName)
         var sql = "CREATE SERVER AUDIT SPECIFICATION \(escapedName) FOR SERVER AUDIT \(escapedAudit)"
         for action in actions {
             sql += " ADD (\(action))"
@@ -155,7 +151,7 @@ public final class SQLServerAuditClient: @unchecked Sendable {
     /// Enables or disables a server audit specification.
     @available(macOS 12.0, *)
     public func setServerAuditSpecificationState(name: String, enabled: Bool) async throws {
-        let escapedName = Self.escapeIdentifier(name)
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
         let state = enabled ? "ON" : "OFF"
         _ = try await client.execute("ALTER SERVER AUDIT SPECIFICATION \(escapedName) WITH (STATE = \(state))")
     }
@@ -163,7 +159,7 @@ public final class SQLServerAuditClient: @unchecked Sendable {
     /// Drops a server audit specification.
     @available(macOS 12.0, *)
     public func dropServerAuditSpecification(name: String) async throws {
-        let escapedName = Self.escapeIdentifier(name)
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
         _ = try await client.execute("DROP SERVER AUDIT SPECIFICATION \(escapedName)")
     }
 
@@ -219,8 +215,8 @@ public final class SQLServerAuditClient: @unchecked Sendable {
     /// Creates a database audit specification.
     @available(macOS 12.0, *)
     public func createDatabaseAuditSpecification(name: String, auditName: String, actions: [String]) async throws {
-        let escapedName = Self.escapeIdentifier(name)
-        let escapedAudit = Self.escapeIdentifier(auditName)
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
+        let escapedAudit = SQLServerSQL.escapeIdentifier(auditName)
         var sql = "CREATE DATABASE AUDIT SPECIFICATION \(escapedName) FOR SERVER AUDIT \(escapedAudit)"
         for action in actions {
             sql += " ADD (\(action))"
@@ -231,7 +227,7 @@ public final class SQLServerAuditClient: @unchecked Sendable {
     /// Enables or disables a database audit specification.
     @available(macOS 12.0, *)
     public func setDatabaseAuditSpecificationState(name: String, enabled: Bool) async throws {
-        let escapedName = Self.escapeIdentifier(name)
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
         let state = enabled ? "ON" : "OFF"
         _ = try await client.execute("ALTER DATABASE AUDIT SPECIFICATION \(escapedName) WITH (STATE = \(state))")
     }
@@ -239,7 +235,7 @@ public final class SQLServerAuditClient: @unchecked Sendable {
     /// Drops a database audit specification.
     @available(macOS 12.0, *)
     public func dropDatabaseAuditSpecification(name: String) async throws {
-        let escapedName = Self.escapeIdentifier(name)
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
         _ = try await client.execute("DROP DATABASE AUDIT SPECIFICATION \(escapedName)")
     }
 

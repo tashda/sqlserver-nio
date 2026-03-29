@@ -97,8 +97,8 @@ extension SQLServerAdministrationClient {
             throw SQLServerError.sqlExecutionError(message: "No data files found for database '\(sourceDatabase)'")
         }
 
-        let escapedSnap = Self.escapeIdentifier(name)
-        let escapedSourceId = Self.escapeIdentifier(sourceDatabase)
+        let escapedSnap = SQLServerSQL.escapeIdentifier(name)
+        let escapedSourceId = SQLServerSQL.escapeIdentifier(sourceDatabase)
 
         let fileSpecs = fileRows.map { row in
             let logicalName = row.column("logical_name")?.string ?? ""
@@ -148,7 +148,7 @@ extension SQLServerAdministrationClient {
             throw SQLServerError.sqlExecutionError(message: "Snapshot '\(snapshotName)' not found or is not a database snapshot")
         }
 
-        let escapedSourceId = Self.escapeIdentifier(sourceName)
+        let escapedSourceId = SQLServerSQL.escapeIdentifier(sourceName)
         let sql = "RESTORE DATABASE \(escapedSourceId) FROM DATABASE_SNAPSHOT = N'\(escapedSnap)'"
         let result = try await client.execute(sql)
         return result.messages
@@ -158,7 +158,7 @@ extension SQLServerAdministrationClient {
     @available(macOS 12.0, *)
     @discardableResult
     public func dropSnapshot(name: String) async throws -> [SQLServerStreamMessage] {
-        let escaped = Self.escapeIdentifier(name)
+        let escaped = SQLServerSQL.escapeIdentifier(name)
         let result = try await client.execute("DROP DATABASE \(escaped)")
         return result.messages
     }

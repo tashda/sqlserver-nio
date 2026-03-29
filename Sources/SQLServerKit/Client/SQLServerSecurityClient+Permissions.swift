@@ -29,8 +29,8 @@ extension SQLServerSecurityClient {
         to principal: String,
         withGrantOption: Bool = false
     ) async throws {
-        let escapedObject = Self.escapeIdentifier(object)
-        let escapedPrincipal = Self.escapeIdentifier(principal)
+        let escapedObject = SQLServerSQL.escapeIdentifier(object)
+        let escapedPrincipal = SQLServerSQL.escapeIdentifier(principal)
         
         var sql = "GRANT \(permission.rawValue) ON \(escapedObject) TO \(escapedPrincipal)"
         
@@ -66,8 +66,8 @@ extension SQLServerSecurityClient {
         from principal: String,
         cascadeOption: Bool = false
     ) async throws {
-        let escapedObject = Self.escapeIdentifier(object)
-        let escapedPrincipal = Self.escapeIdentifier(principal)
+        let escapedObject = SQLServerSQL.escapeIdentifier(object)
+        let escapedPrincipal = SQLServerSQL.escapeIdentifier(principal)
         
         var sql = "REVOKE \(permission.rawValue) ON \(escapedObject) FROM \(escapedPrincipal)"
         
@@ -101,8 +101,8 @@ extension SQLServerSecurityClient {
         on object: String,
         to principal: String
     ) async throws {
-        let escapedObject = Self.escapeIdentifier(object)
-        let escapedPrincipal = Self.escapeIdentifier(principal)
+        let escapedObject = SQLServerSQL.escapeIdentifier(object)
+        let escapedPrincipal = SQLServerSQL.escapeIdentifier(principal)
         
         let sql = "DENY \(permission.rawValue) ON \(escapedObject) TO \(escapedPrincipal)"
         _ = try await exec(sql)
@@ -159,19 +159,19 @@ extension SQLServerSecurityClient {
                     _ = nameOptional
                     break
                 case .schema(let schema):
-                    targetClause = "SCHEMA::\(Self.escapeIdentifier(schema))"
+                    targetClause = "SCHEMA::\(SQLServerSQL.escapeIdentifier(schema))"
                 case .object(let oid):
-                    targetClause = "OBJECT::\(Self.escapeIdentifier(oid.schema)).\(Self.escapeIdentifier(oid.name))"
+                    targetClause = "OBJECT::\(SQLServerSQL.escapeIdentifier(oid.schema)).\(SQLServerSQL.escapeIdentifier(oid.name))"
                 case .column(let oid, let columns):
                     // Column list goes after permission token
                     if !columns.isEmpty {
-                        let cols = columns.map { Self.escapeIdentifier($0) }.joined(separator: ",")
+                        let cols = columns.map { SQLServerSQL.escapeIdentifier($0) }.joined(separator: ",")
                         sql += " (\(cols))"
                     }
-                    targetClause = "OBJECT::\(Self.escapeIdentifier(oid.schema)).\(Self.escapeIdentifier(oid.name))"
+                    targetClause = "OBJECT::\(SQLServerSQL.escapeIdentifier(oid.schema)).\(SQLServerSQL.escapeIdentifier(oid.name))"
                 }
                 if let target = targetClause { sql += " ON \(target)" }
-                sql += " \(kind == "REVOKE" ? "FROM" : "TO") \(Self.escapeIdentifier(principal))"
+                sql += " \(kind == "REVOKE" ? "FROM" : "TO") \(SQLServerSQL.escapeIdentifier(principal))"
                 if kind == "GRANT", let wgo = withGrantOption, wgo { sql += " WITH GRANT OPTION" }
                 if kind == "REVOKE", let c = cascade, c { sql += " CASCADE" }
                 _ = try await self.exec(sql)

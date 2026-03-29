@@ -8,7 +8,7 @@ extension SQLServerAdministrationClient {
 
     /// Fetches FILESTREAM options for a database from sys.database_filestream_options.
     public func fetchFilestreamOptions(database: String) async throws -> SQLServerFilestreamOptions {
-        let escapedDb = Self.escapeIdentifier(database)
+        let escapedDb = SQLServerSQL.escapeIdentifier(database)
         let sql = """
         USE \(escapedDb);
         SELECT
@@ -40,7 +40,7 @@ extension SQLServerAdministrationClient {
         database: String,
         directoryName: String
     ) async throws -> [SQLServerStreamMessage] {
-        let escapedDb = Self.escapeIdentifier(database)
+        let escapedDb = SQLServerSQL.escapeIdentifier(database)
         let escapedDir = directoryName.replacingOccurrences(of: "'", with: "''")
         let sql = "ALTER DATABASE \(escapedDb) SET FILESTREAM (DIRECTORY_NAME = N'\(escapedDir)')"
         let result = try await client.execute(sql)
@@ -53,7 +53,7 @@ extension SQLServerAdministrationClient {
         database: String,
         access: SQLServerFilestreamAccessLevel
     ) async throws -> [SQLServerStreamMessage] {
-        let escapedDb = Self.escapeIdentifier(database)
+        let escapedDb = SQLServerSQL.escapeIdentifier(database)
         let sql = "ALTER DATABASE \(escapedDb) SET FILESTREAM (NON_TRANSACTED_ACCESS = \(access.rawValue))"
         let result = try await client.execute(sql)
         return result.messages

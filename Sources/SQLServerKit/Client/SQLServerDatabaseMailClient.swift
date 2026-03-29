@@ -238,10 +238,6 @@ public final class SQLServerDatabaseMailClient: @unchecked Sendable {
         try await client.execute(sql)
     }
 
-    func escapeLiteral(_ literal: String) -> String {
-        literal.replacingOccurrences(of: "'", with: "''")
-    }
-
     // MARK: - Feature Status
 
     /// Returns whether the Database Mail XPs feature is enabled on the server.

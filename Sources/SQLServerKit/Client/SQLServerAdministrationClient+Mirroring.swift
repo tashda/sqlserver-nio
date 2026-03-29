@@ -71,7 +71,7 @@ extension SQLServerAdministrationClient {
         database: String,
         partnerAddress: String
     ) async throws -> [SQLServerStreamMessage] {
-        let escapedDb = Self.escapeIdentifier(database)
+        let escapedDb = SQLServerSQL.escapeIdentifier(database)
         let escapedAddr = partnerAddress.replacingOccurrences(of: "'", with: "''")
         let sql = "ALTER DATABASE \(escapedDb) SET PARTNER = N'\(escapedAddr)'"
         let result = try await client.execute(sql)
@@ -85,7 +85,7 @@ extension SQLServerAdministrationClient {
         database: String,
         witnessAddress: String
     ) async throws -> [SQLServerStreamMessage] {
-        let escapedDb = Self.escapeIdentifier(database)
+        let escapedDb = SQLServerSQL.escapeIdentifier(database)
         let escapedAddr = witnessAddress.replacingOccurrences(of: "'", with: "''")
         let sql = "ALTER DATABASE \(escapedDb) SET WITNESS = N'\(escapedAddr)'"
         let result = try await client.execute(sql)
@@ -97,7 +97,7 @@ extension SQLServerAdministrationClient {
     public func removeMirroringWitness(
         database: String
     ) async throws -> [SQLServerStreamMessage] {
-        let escapedDb = Self.escapeIdentifier(database)
+        let escapedDb = SQLServerSQL.escapeIdentifier(database)
         let sql = "ALTER DATABASE \(escapedDb) SET WITNESS OFF"
         let result = try await client.execute(sql)
         return result.messages
@@ -109,7 +109,7 @@ extension SQLServerAdministrationClient {
     public func failoverMirroring(
         database: String
     ) async throws -> [SQLServerStreamMessage] {
-        let escapedDb = Self.escapeIdentifier(database)
+        let escapedDb = SQLServerSQL.escapeIdentifier(database)
         let sql = "ALTER DATABASE \(escapedDb) SET PARTNER FAILOVER"
         let result = try await client.execute(sql)
         return result.messages
@@ -120,7 +120,7 @@ extension SQLServerAdministrationClient {
     public func pauseMirroring(
         database: String
     ) async throws -> [SQLServerStreamMessage] {
-        let escapedDb = Self.escapeIdentifier(database)
+        let escapedDb = SQLServerSQL.escapeIdentifier(database)
         let sql = "ALTER DATABASE \(escapedDb) SET PARTNER SUSPEND"
         let result = try await client.execute(sql)
         return result.messages
@@ -131,7 +131,7 @@ extension SQLServerAdministrationClient {
     public func resumeMirroring(
         database: String
     ) async throws -> [SQLServerStreamMessage] {
-        let escapedDb = Self.escapeIdentifier(database)
+        let escapedDb = SQLServerSQL.escapeIdentifier(database)
         let sql = "ALTER DATABASE \(escapedDb) SET PARTNER RESUME"
         let result = try await client.execute(sql)
         return result.messages
@@ -142,7 +142,7 @@ extension SQLServerAdministrationClient {
     public func removeMirroring(
         database: String
     ) async throws -> [SQLServerStreamMessage] {
-        let escapedDb = Self.escapeIdentifier(database)
+        let escapedDb = SQLServerSQL.escapeIdentifier(database)
         let sql = "ALTER DATABASE \(escapedDb) SET PARTNER OFF"
         let result = try await client.execute(sql)
         return result.messages
@@ -154,7 +154,7 @@ extension SQLServerAdministrationClient {
         database: String,
         level: SQLServerMirroringSafetyLevel
     ) async throws -> [SQLServerStreamMessage] {
-        let escapedDb = Self.escapeIdentifier(database)
+        let escapedDb = SQLServerSQL.escapeIdentifier(database)
         let sql = "ALTER DATABASE \(escapedDb) SET PARTNER SAFETY \(level.rawValue)"
         let result = try await client.execute(sql)
         return result.messages
@@ -166,7 +166,7 @@ extension SQLServerAdministrationClient {
         database: String,
         seconds: Int
     ) async throws -> [SQLServerStreamMessage] {
-        let escapedDb = Self.escapeIdentifier(database)
+        let escapedDb = SQLServerSQL.escapeIdentifier(database)
         let sql = "ALTER DATABASE \(escapedDb) SET PARTNER TIMEOUT \(seconds)"
         let result = try await client.execute(sql)
         return result.messages

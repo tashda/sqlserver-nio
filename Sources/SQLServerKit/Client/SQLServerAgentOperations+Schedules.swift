@@ -19,7 +19,7 @@ extension SQLServerAgentOperations {
         freqRelativeInterval: Int? = nil,
         freqRecurrenceFactor: Int? = nil
     ) -> EventLoopFuture<Void> {
-        var sql = "EXEC msdb.dbo.sp_add_schedule @schedule_name = N'\(Self.escapeLiteral(scheduleName))', @enabled = \(enabled ? 1 : 0), @freq_type = \(freqType), @freq_interval = \(freqInterval)"
+        var sql = "EXEC msdb.dbo.sp_add_schedule @schedule_name = N'\(SQLServerSQL.escapeLiteral(scheduleName))', @enabled = \(enabled ? 1 : 0), @freq_type = \(freqType), @freq_interval = \(freqInterval)"
         if let v = activeStartDate { sql += ", @active_start_date = \(v)" }
         if let v = activeStartTime { sql += ", @active_start_time = \(v)" }
         if let v = activeEndDate { sql += ", @active_end_date = \(v)" }
@@ -33,17 +33,17 @@ extension SQLServerAgentOperations {
     }
 
     internal func attachSchedule(scheduleName: String, toJob jobName: String) -> EventLoopFuture<Void> {
-        let sql = "EXEC msdb.dbo.sp_attach_schedule @job_name = N'\(Self.escapeLiteral(jobName))', @schedule_name = N'\(Self.escapeLiteral(scheduleName))';"
+        let sql = "EXEC msdb.dbo.sp_attach_schedule @job_name = N'\(SQLServerSQL.escapeLiteral(jobName))', @schedule_name = N'\(SQLServerSQL.escapeLiteral(scheduleName))';"
         return run(sql).map { _ in () }
     }
 
     internal func detachSchedule(scheduleName: String, fromJob jobName: String) -> EventLoopFuture<Void> {
-        let sql = "EXEC msdb.dbo.sp_detach_schedule @job_name = N'\(Self.escapeLiteral(jobName))', @schedule_name = N'\(Self.escapeLiteral(scheduleName))';"
+        let sql = "EXEC msdb.dbo.sp_detach_schedule @job_name = N'\(SQLServerSQL.escapeLiteral(jobName))', @schedule_name = N'\(SQLServerSQL.escapeLiteral(scheduleName))';"
         return run(sql).map { _ in () }
     }
 
     internal func deleteSchedule(named scheduleName: String) -> EventLoopFuture<Void> {
-        let sql = "EXEC msdb.dbo.sp_delete_schedule @schedule_name = N'\(Self.escapeLiteral(scheduleName))';"
+        let sql = "EXEC msdb.dbo.sp_delete_schedule @schedule_name = N'\(SQLServerSQL.escapeLiteral(scheduleName))';"
         return run(sql).map { _ in () }
     }
 
@@ -60,8 +60,8 @@ extension SQLServerAgentOperations {
         freqRelativeInterval: Int? = nil,
         freqRecurrenceFactor: Int? = nil
     ) -> EventLoopFuture<Void> {
-        var sql = "EXEC msdb.dbo.sp_update_schedule @schedule_name = N'\(Self.escapeLiteral(name))'"
-        if let v = newName { sql += ", @new_name = N'\(Self.escapeLiteral(v))'" }
+        var sql = "EXEC msdb.dbo.sp_update_schedule @schedule_name = N'\(SQLServerSQL.escapeLiteral(name))'"
+        if let v = newName { sql += ", @new_name = N'\(SQLServerSQL.escapeLiteral(v))'" }
         if let v = enabled { sql += ", @enabled = \(v ? 1 : 0)" }
         if let v = freqType { sql += ", @freq_type = \(v)" }
         if let v = freqInterval { sql += ", @freq_interval = \(v)" }
@@ -83,7 +83,7 @@ extension SQLServerAgentOperations {
             FROM msdb.dbo.sysschedules AS sc
             INNER JOIN msdb.dbo.sysjobschedules AS js ON js.schedule_id = sc.schedule_id
             INNER JOIN msdb.dbo.sysjobs AS j ON j.job_id = js.job_id
-            WHERE j.name = N'\(Self.escapeLiteral(jobName))'
+            WHERE j.name = N'\(SQLServerSQL.escapeLiteral(jobName))'
             ORDER BY sc.name;
             """
         } else {

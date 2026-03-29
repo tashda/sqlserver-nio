@@ -20,7 +20,7 @@ extension SQLServerConnection {
         if primaryKeyColumns.isEmpty {
             primaryKeyConstraint = ""
         } else {
-            let keys = primaryKeyColumns.map { escapeIdentifier($0) }.joined(separator: ", ")
+            let keys = primaryKeyColumns.map { SQLServerSQL.escapeIdentifier($0) }.joined(separator: ", ")
             primaryKeyConstraint = ", CONSTRAINT [PK_\(name)] PRIMARY KEY (\(keys))"
         }
 
@@ -44,13 +44,13 @@ extension SQLServerConnection {
         let boundary = boundaryOnRight ? "RIGHT" : "LEFT"
         let valueList = values.joined(separator: ", ")
         _ = try await execute(
-            "CREATE PARTITION FUNCTION \(escapeIdentifier(name)) (\(dataType.toSqlString())) AS RANGE \(boundary) FOR VALUES (\(valueList));"
+            "CREATE PARTITION FUNCTION \(SQLServerSQL.escapeIdentifier(name)) (\(dataType.toSqlString())) AS RANGE \(boundary) FOR VALUES (\(valueList));"
         )
     }
 
     @available(macOS 12.0, *)
     public func dropPartitionFunction(name: String) async throws {
-        _ = try await execute("DROP PARTITION FUNCTION \(escapeIdentifier(name));")
+        _ = try await execute("DROP PARTITION FUNCTION \(SQLServerSQL.escapeIdentifier(name));")
     }
 
     @available(macOS 12.0, *)
@@ -60,13 +60,13 @@ extension SQLServerConnection {
         allTo filegroup: String = "PRIMARY"
     ) async throws {
         _ = try await execute(
-            "CREATE PARTITION SCHEME \(escapeIdentifier(name)) AS PARTITION \(escapeIdentifier(functionName)) ALL TO (\(escapeIdentifier(filegroup)));"
+            "CREATE PARTITION SCHEME \(SQLServerSQL.escapeIdentifier(name)) AS PARTITION \(SQLServerSQL.escapeIdentifier(functionName)) ALL TO (\(SQLServerSQL.escapeIdentifier(filegroup)));"
         )
     }
 
     @available(macOS 12.0, *)
     public func dropPartitionScheme(name: String) async throws {
-        _ = try await execute("DROP PARTITION SCHEME \(escapeIdentifier(name));")
+        _ = try await execute("DROP PARTITION SCHEME \(SQLServerSQL.escapeIdentifier(name));")
     }
 
     @available(macOS 12.0, *)
@@ -90,7 +90,7 @@ extension SQLServerConnection {
         if primaryKeyColumns.isEmpty {
             primaryKeyConstraint = ""
         } else {
-            let keys = primaryKeyColumns.map { escapeIdentifier($0) }.joined(separator: ", ")
+            let keys = primaryKeyColumns.map { SQLServerSQL.escapeIdentifier($0) }.joined(separator: ", ")
             primaryKeyConstraint = ", CONSTRAINT [PK_\(name)] PRIMARY KEY CLUSTERED (\(keys))"
         }
 
@@ -98,7 +98,7 @@ extension SQLServerConnection {
         CREATE TABLE \(qualifiedTableName(name: name, schema: schema, database: database)) (
           \(columnStrings.joined(separator: ", "))
           \(primaryKeyConstraint)
-        ) ON \(escapeIdentifier(partitionScheme))(\(escapeIdentifier(partitionColumn)))
+        ) ON \(SQLServerSQL.escapeIdentifier(partitionScheme))(\(SQLServerSQL.escapeIdentifier(partitionColumn)))
         """
         _ = try await execute(sql)
     }
@@ -114,11 +114,11 @@ extension SQLServerConnection {
     ) async throws {
         var sql = """
         CREATE TABLE \(qualifiedTableName(name: name, schema: schema, database: database)) (
-            \(escapeIdentifier(primaryKeyColumn)) \(primaryKeyType.toSqlString()) NOT NULL,
+            \(SQLServerSQL.escapeIdentifier(primaryKeyColumn)) \(primaryKeyType.toSqlString()) NOT NULL,
             [ValidFrom] DATETIME2(7) GENERATED ALWAYS AS ROW START NOT NULL,
             [ValidTo] DATETIME2(7) GENERATED ALWAYS AS ROW END NOT NULL,
             PERIOD FOR SYSTEM_TIME ([ValidFrom], [ValidTo]),
-            CONSTRAINT [PK_\(name)] PRIMARY KEY CLUSTERED (\(escapeIdentifier(primaryKeyColumn)))
+            CONSTRAINT [PK_\(name)] PRIMARY KEY CLUSTERED (\(SQLServerSQL.escapeIdentifier(primaryKeyColumn)))
         ) WITH (SYSTEM_VERSIONING = ON
         """
         if let historyTableName, !historyTableName.isEmpty {
@@ -231,7 +231,7 @@ extension SQLServerConnection {
             throw SQLServerError.invalidArgument("insertRow requires at least one value")
         }
         let ordered = values.keys.sorted()
-        let columns = ordered.map { escapeIdentifier($0) }.joined(separator: ", ")
+        let columns = ordered.map { SQLServerSQL.escapeIdentifier($0) }.joined(separator: ", ")
         let literals = ordered.compactMap { values[$0]?.sqlLiteral() }.joined(separator: ", ")
         let result = try await execute("INSERT INTO \(qualifiedTableName(name: table, schema: schema, database: database)) (\(columns)) VALUES (\(literals))")
         return Int(result.totalRowCount)
@@ -257,7 +257,7 @@ extension SQLServerConnection {
                 throw SQLServerError.invalidArgument("Row \(index) has \(row.count) values but \(columns.count) columns were specified")
             }
         }
-        let columnList = columns.map { escapeIdentifier($0) }.joined(separator: ", ")
+        let columnList = columns.map { SQLServerSQL.escapeIdentifier($0) }.joined(separator: ", ")
         let valueRows = values.map { row in
             "(" + row.map { $0.sqlLiteral() }.joined(separator: ", ") + ")"
         }.joined(separator: ", ")
@@ -279,7 +279,7 @@ extension SQLServerConnection {
         }
         let setClause = assignments.keys.sorted().compactMap { key -> String? in
             guard let value = assignments[key] else { return nil }
-            return "\(escapeIdentifier(key)) = \(value.sqlLiteral())"
+            return "\(SQLServerSQL.escapeIdentifier(key)) = \(value.sqlLiteral())"
         }.joined(separator: ", ")
         let result = try await execute("UPDATE \(qualifiedTableName(name: table, schema: schema, database: database)) SET \(setClause) WHERE \(predicate)")
         return Int(result.totalRowCount)
@@ -316,7 +316,7 @@ extension SQLServerConnection {
     ) async throws {
         let sql = """
         ALTER TABLE \(qualifiedTableName(name: table, schema: schema, database: nil))
-        ADD CONSTRAINT \(escapeIdentifier(name))
+        ADD CONSTRAINT \(SQLServerSQL.escapeIdentifier(name))
         CHECK (\(expression))
         """
         _ = try await execute(sql)
@@ -334,10 +334,10 @@ extension SQLServerConnection {
             throw SQLServerError.invalidArgument("At least one column is required for primary key constraint")
         }
         let clusterType = clustered ? "CLUSTERED" : "NONCLUSTERED"
-        let columnList = columns.map(escapeIdentifier).joined(separator: ", ")
+        let columnList = columns.map(SQLServerSQL.escapeIdentifier).joined(separator: ", ")
         let sql = """
         ALTER TABLE \(qualifiedTableName(name: table, schema: schema, database: nil))
-        ADD CONSTRAINT \(escapeIdentifier(name))
+        ADD CONSTRAINT \(SQLServerSQL.escapeIdentifier(name))
         PRIMARY KEY \(clusterType) (\(columnList))
         """
         _ = try await execute(sql)
@@ -349,7 +349,7 @@ extension SQLServerConnection {
         table: String,
         schema: String = "dbo"
     ) async throws {
-        let sql = "ALTER TABLE \(qualifiedTableName(name: table, schema: schema, database: nil)) DROP CONSTRAINT \(escapeIdentifier(name))"
+        let sql = "ALTER TABLE \(qualifiedTableName(name: table, schema: schema, database: nil)) DROP CONSTRAINT \(SQLServerSQL.escapeIdentifier(name))"
         _ = try await execute(sql)
     }
 
@@ -370,13 +370,13 @@ extension SQLServerConnection {
 
     @available(macOS 12.0, *)
     public func setSnapshotIsolation(database: String, enabled: Bool) async throws {
-        let escapedDatabase = escapeIdentifier(database)
+        let escapedDatabase = SQLServerSQL.escapeIdentifier(database)
         let state = enabled ? "ON" : "OFF"
         _ = try await execute("ALTER DATABASE \(escapedDatabase) SET ALLOW_SNAPSHOT_ISOLATION \(state)")
     }
 
     private func sqlString(for column: SQLServerColumnDefinition) throws -> String {
-        let name = escapeIdentifier(column.name)
+        let name = SQLServerSQL.escapeIdentifier(column.name)
         switch column.definition {
         case .computed(let expression, let persisted):
             return "\(name) AS (\(expression))\(persisted ? " PERSISTED" : "")"
@@ -432,12 +432,8 @@ extension SQLServerConnection {
 
     private func qualifiedTableName(name: String, schema: String, database: String?) -> String {
         if let database, !database.isEmpty {
-            return "\(escapeIdentifier(database)).\(escapeIdentifier(schema)).\(escapeIdentifier(name))"
+            return "\(SQLServerSQL.escapeIdentifier(database)).\(SQLServerSQL.escapeIdentifier(schema)).\(SQLServerSQL.escapeIdentifier(name))"
         }
-        return "\(escapeIdentifier(schema)).\(escapeIdentifier(name))"
-    }
-
-    private func escapeIdentifier(_ identifier: String) -> String {
-        "[\(identifier.replacingOccurrences(of: "]", with: "]]"))]"
+        return "\(SQLServerSQL.escapeIdentifier(schema)).\(SQLServerSQL.escapeIdentifier(name))"
     }
 }

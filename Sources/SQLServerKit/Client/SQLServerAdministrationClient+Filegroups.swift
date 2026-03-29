@@ -9,7 +9,7 @@ extension SQLServerAdministrationClient {
     /// Fetches all filegroups for a database from sys.filegroups.
     /// Must be executed in the context of the target database.
     public func listFilegroups(database: String) async throws -> [SQLServerFilegroup] {
-        let escapedDb = Self.escapeIdentifier(database)
+        let escapedDb = SQLServerSQL.escapeIdentifier(database)
         let sql = """
         USE \(escapedDb);
         SELECT
@@ -45,8 +45,8 @@ extension SQLServerAdministrationClient {
         database: String,
         name: String
     ) async throws -> [SQLServerStreamMessage] {
-        let escapedDb = Self.escapeIdentifier(database)
-        let escapedFG = Self.escapeIdentifier(name)
+        let escapedDb = SQLServerSQL.escapeIdentifier(database)
+        let escapedFG = SQLServerSQL.escapeIdentifier(name)
         let sql = "ALTER DATABASE \(escapedDb) ADD FILEGROUP \(escapedFG)"
         let result = try await client.execute(sql)
         return result.messages
@@ -58,8 +58,8 @@ extension SQLServerAdministrationClient {
         database: String,
         name: String
     ) async throws -> [SQLServerStreamMessage] {
-        let escapedDb = Self.escapeIdentifier(database)
-        let escapedFG = Self.escapeIdentifier(name)
+        let escapedDb = SQLServerSQL.escapeIdentifier(database)
+        let escapedFG = SQLServerSQL.escapeIdentifier(name)
         let sql = "ALTER DATABASE \(escapedDb) ADD FILEGROUP \(escapedFG) CONTAINS MEMORY_OPTIMIZED_DATA"
         let result = try await client.execute(sql)
         return result.messages
@@ -72,8 +72,8 @@ extension SQLServerAdministrationClient {
         filegroup: String,
         readOnly: Bool
     ) async throws -> [SQLServerStreamMessage] {
-        let escapedDb = Self.escapeIdentifier(database)
-        let escapedFG = Self.escapeIdentifier(filegroup)
+        let escapedDb = SQLServerSQL.escapeIdentifier(database)
+        let escapedFG = SQLServerSQL.escapeIdentifier(filegroup)
         let mode = readOnly ? "READONLY" : "READWRITE"
         let sql = "ALTER DATABASE \(escapedDb) MODIFY FILEGROUP \(escapedFG) \(mode)"
         let result = try await client.execute(sql)
@@ -86,8 +86,8 @@ extension SQLServerAdministrationClient {
         database: String,
         filegroup: String
     ) async throws -> [SQLServerStreamMessage] {
-        let escapedDb = Self.escapeIdentifier(database)
-        let escapedFG = Self.escapeIdentifier(filegroup)
+        let escapedDb = SQLServerSQL.escapeIdentifier(database)
+        let escapedFG = SQLServerSQL.escapeIdentifier(filegroup)
         let sql = "ALTER DATABASE \(escapedDb) MODIFY FILEGROUP \(escapedFG) DEFAULT"
         let result = try await client.execute(sql)
         return result.messages
@@ -99,8 +99,8 @@ extension SQLServerAdministrationClient {
         database: String,
         filegroup: String
     ) async throws -> [SQLServerStreamMessage] {
-        let escapedDb = Self.escapeIdentifier(database)
-        let escapedFG = Self.escapeIdentifier(filegroup)
+        let escapedDb = SQLServerSQL.escapeIdentifier(database)
+        let escapedFG = SQLServerSQL.escapeIdentifier(filegroup)
         let sql = "ALTER DATABASE \(escapedDb) REMOVE FILEGROUP \(escapedFG)"
         let result = try await client.execute(sql)
         return result.messages
@@ -113,9 +113,9 @@ extension SQLServerAdministrationClient {
         oldName: String,
         newName: String
     ) async throws -> [SQLServerStreamMessage] {
-        let escapedDb = Self.escapeIdentifier(database)
-        let escapedOld = Self.escapeIdentifier(oldName)
-        let escapedNew = Self.escapeIdentifier(newName)
+        let escapedDb = SQLServerSQL.escapeIdentifier(database)
+        let escapedOld = SQLServerSQL.escapeIdentifier(oldName)
+        let escapedNew = SQLServerSQL.escapeIdentifier(newName)
         let sql = "ALTER DATABASE \(escapedDb) MODIFY FILEGROUP \(escapedOld) NAME = \(escapedNew)"
         let result = try await client.execute(sql)
         return result.messages

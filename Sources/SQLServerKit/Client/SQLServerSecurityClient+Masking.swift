@@ -38,9 +38,9 @@ extension SQLServerSecurityClient {
     /// Adds a dynamic data mask to a column.
     @available(macOS 12.0, *)
     public func addMask(schema: String, table: String, column: String, function: MaskFunction) async throws {
-        let escapedSchema = Self.escapeIdentifier(schema)
-        let escapedTable = Self.escapeIdentifier(table)
-        let escapedColumn = Self.escapeIdentifier(column)
+        let escapedSchema = SQLServerSQL.escapeIdentifier(schema)
+        let escapedTable = SQLServerSQL.escapeIdentifier(table)
+        let escapedColumn = SQLServerSQL.escapeIdentifier(column)
         let sql = "ALTER TABLE \(escapedSchema).\(escapedTable) ALTER COLUMN \(escapedColumn) ADD MASKED WITH (FUNCTION = '\(function.sqlExpression)')"
         _ = try await exec(sql)
     }
@@ -48,9 +48,9 @@ extension SQLServerSecurityClient {
     /// Removes a dynamic data mask from a column.
     @available(macOS 12.0, *)
     public func dropMask(schema: String, table: String, column: String) async throws {
-        let escapedSchema = Self.escapeIdentifier(schema)
-        let escapedTable = Self.escapeIdentifier(table)
-        let escapedColumn = Self.escapeIdentifier(column)
+        let escapedSchema = SQLServerSQL.escapeIdentifier(schema)
+        let escapedTable = SQLServerSQL.escapeIdentifier(table)
+        let escapedColumn = SQLServerSQL.escapeIdentifier(column)
         let sql = "ALTER TABLE \(escapedSchema).\(escapedTable) ALTER COLUMN \(escapedColumn) DROP MASKED"
         _ = try await exec(sql)
     }
@@ -58,14 +58,14 @@ extension SQLServerSecurityClient {
     /// Grants UNMASK permission to a principal.
     @available(macOS 12.0, *)
     public func grantUnmask(to principal: String) async throws {
-        let escapedPrincipal = Self.escapeIdentifier(principal)
+        let escapedPrincipal = SQLServerSQL.escapeIdentifier(principal)
         _ = try await exec("GRANT UNMASK TO \(escapedPrincipal)")
     }
 
     /// Revokes UNMASK permission from a principal.
     @available(macOS 12.0, *)
     public func revokeUnmask(from principal: String) async throws {
-        let escapedPrincipal = Self.escapeIdentifier(principal)
+        let escapedPrincipal = SQLServerSQL.escapeIdentifier(principal)
         _ = try await exec("REVOKE UNMASK FROM \(escapedPrincipal)")
     }
 }

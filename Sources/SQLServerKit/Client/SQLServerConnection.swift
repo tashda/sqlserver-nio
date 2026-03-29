@@ -139,11 +139,6 @@ public final class SQLServerConnection: @unchecked Sendable {
         logger: Logger = Logger(label: "tds.sqlserver.connection")
     ) -> EventLoopFuture<SQLServerConnection> {
         @Sendable
-        func escapeIdentifier(_ identifier: String) -> String {
-            identifier.replacingOccurrences(of: "]", with: "]]")
-        }
-
-        @Sendable
         func attempt(_ cfg: Configuration) -> EventLoopFuture<SQLServerConnection> {
             let loginConfiguration = TDSLoginConfiguration(
                 serverName: cfg.hostname,
@@ -189,7 +184,7 @@ public final class SQLServerConnection: @unchecked Sendable {
                         )
                         return connection.login(configuration: masterLogin)
                             .flatMap {
-                                connection.rawSql("USE [\(escapeIdentifier(cfg.login.database))];")
+                                connection.rawSql("USE \(SQLServerSQL.escapeIdentifier(cfg.login.database));")
                             }
                             .map { _ in connection }
                             .flatMapError { fallbackError in

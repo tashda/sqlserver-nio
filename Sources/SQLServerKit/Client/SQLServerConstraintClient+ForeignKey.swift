@@ -49,17 +49,17 @@ extension SQLServerConstraintClient {
             throw SQLServerError.invalidArgument("Number of columns must match number of referenced columns")
         }
         
-        let escapedConstraintName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedConstraintName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
         
-        let escapedReferencedTableName = Self.escapeIdentifier(referencedTable)
-        let referencedSchemaPrefix = referencedSchema != "dbo" ? "\(Self.escapeIdentifier(referencedSchema))." : ""
+        let escapedReferencedTableName = SQLServerSQL.escapeIdentifier(referencedTable)
+        let referencedSchemaPrefix = referencedSchema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(referencedSchema))." : ""
         let fullReferencedTableName = "\(referencedSchemaPrefix)\(escapedReferencedTableName)"
         
-        let columnList = columns.map { Self.escapeIdentifier($0) }.joined(separator: ", ")
-        let referencedColumnList = referencedColumns.map { Self.escapeIdentifier($0) }.joined(separator: ", ")
+        let columnList = columns.map { SQLServerSQL.escapeIdentifier($0) }.joined(separator: ", ")
+        let referencedColumnList = referencedColumns.map { SQLServerSQL.escapeIdentifier($0) }.joined(separator: ", ")
         
         var sql = """
         ALTER TABLE \(fullTableName)
@@ -101,9 +101,9 @@ extension SQLServerConstraintClient {
     
     @available(macOS 12.0, *)
     public func dropForeignKey(name: String, table: String, schema: String = "dbo") async throws {
-        let escapedConstraintName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedConstraintName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
         
         let sql = "ALTER TABLE \(fullTableName) DROP CONSTRAINT \(escapedConstraintName)"

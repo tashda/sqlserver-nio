@@ -9,8 +9,4 @@ public final class SQLServerConstraintClient: @unchecked Sendable {
     public init(client: SQLServerClient) {
         self.client = client
     }
-    
-    internal static func escapeIdentifier(_ identifier: String) -> String {
-        "[\(identifier.replacingOccurrences(of: "]", with: "]]"))]"
-    }
 }

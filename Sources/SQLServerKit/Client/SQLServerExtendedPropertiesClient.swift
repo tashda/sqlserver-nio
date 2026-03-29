@@ -86,15 +86,15 @@ public final class SQLServerExtendedPropertiesClient: @unchecked Sendable {
     /// Lists all extended properties for the given target object.
     @available(macOS 12.0, *)
     public func list(target: ExtendedPropertyTarget) async throws -> [SQLServerExtendedProperty] {
-        let level2TypeArg = target.level2Type.map { "'\(Self.escapeLiteral($0))'" } ?? "NULL"
-        let level2NameArg = target.level2Name.map { "'\(Self.escapeLiteral($0))'" } ?? "NULL"
+        let level2TypeArg = target.level2Type.map { "'\(SQLServerSQL.escapeLiteral($0))'" } ?? "NULL"
+        let level2NameArg = target.level2Name.map { "'\(SQLServerSQL.escapeLiteral($0))'" } ?? "NULL"
 
         let sql = """
         SELECT objname, name, CAST(value AS NVARCHAR(MAX)) AS value
         FROM fn_listextendedproperty(
             NULL,
-            'SCHEMA', '\(Self.escapeLiteral(target.schema))',
-            '\(Self.escapeLiteral(target.level1Type))', '\(Self.escapeLiteral(target.level1Name))',
+            'SCHEMA', '\(SQLServerSQL.escapeLiteral(target.schema))',
+            '\(SQLServerSQL.escapeLiteral(target.level1Type))', '\(SQLServerSQL.escapeLiteral(target.level1Name))',
             \(level2TypeArg), \(level2NameArg)
         )
         ORDER BY name
@@ -115,8 +115,8 @@ public final class SQLServerExtendedPropertiesClient: @unchecked Sendable {
         SELECT objname, name, CAST(value AS NVARCHAR(MAX)) AS value
         FROM fn_listextendedproperty(
             NULL,
-            'SCHEMA', '\(Self.escapeLiteral(schema))',
-            'TABLE', '\(Self.escapeLiteral(table))',
+            'SCHEMA', '\(SQLServerSQL.escapeLiteral(schema))',
+            'TABLE', '\(SQLServerSQL.escapeLiteral(table))',
             'COLUMN', NULL
         )
         ORDER BY objname, name
@@ -140,14 +140,14 @@ public final class SQLServerExtendedPropertiesClient: @unchecked Sendable {
     public func add(name: String, value: String, target: ExtendedPropertyTarget) async throws {
         var sql = """
         EXEC sp_addextendedproperty
-            @name = N'\(Self.escapeLiteral(name))',
-            @value = N'\(Self.escapeLiteral(value))',
-            @level0type = N'SCHEMA', @level0name = N'\(Self.escapeLiteral(target.schema))',
-            @level1type = N'\(Self.escapeLiteral(target.level1Type))', @level1name = N'\(Self.escapeLiteral(target.level1Name))'
+            @name = N'\(SQLServerSQL.escapeLiteral(name))',
+            @value = N'\(SQLServerSQL.escapeLiteral(value))',
+            @level0type = N'SCHEMA', @level0name = N'\(SQLServerSQL.escapeLiteral(target.schema))',
+            @level1type = N'\(SQLServerSQL.escapeLiteral(target.level1Type))', @level1name = N'\(SQLServerSQL.escapeLiteral(target.level1Name))'
         """
 
         if let l2Type = target.level2Type, let l2Name = target.level2Name {
-            sql += ",\n    @level2type = N'\(Self.escapeLiteral(l2Type))', @level2name = N'\(Self.escapeLiteral(l2Name))'"
+            sql += ",\n    @level2type = N'\(SQLServerSQL.escapeLiteral(l2Type))', @level2name = N'\(SQLServerSQL.escapeLiteral(l2Name))'"
         }
 
         _ = try await client.execute(sql)
@@ -160,14 +160,14 @@ public final class SQLServerExtendedPropertiesClient: @unchecked Sendable {
     public func update(name: String, value: String, target: ExtendedPropertyTarget) async throws {
         var sql = """
         EXEC sp_updateextendedproperty
-            @name = N'\(Self.escapeLiteral(name))',
-            @value = N'\(Self.escapeLiteral(value))',
-            @level0type = N'SCHEMA', @level0name = N'\(Self.escapeLiteral(target.schema))',
-            @level1type = N'\(Self.escapeLiteral(target.level1Type))', @level1name = N'\(Self.escapeLiteral(target.level1Name))'
+            @name = N'\(SQLServerSQL.escapeLiteral(name))',
+            @value = N'\(SQLServerSQL.escapeLiteral(value))',
+            @level0type = N'SCHEMA', @level0name = N'\(SQLServerSQL.escapeLiteral(target.schema))',
+            @level1type = N'\(SQLServerSQL.escapeLiteral(target.level1Type))', @level1name = N'\(SQLServerSQL.escapeLiteral(target.level1Name))'
         """
 
         if let l2Type = target.level2Type, let l2Name = target.level2Name {
-            sql += ",\n    @level2type = N'\(Self.escapeLiteral(l2Type))', @level2name = N'\(Self.escapeLiteral(l2Name))'"
+            sql += ",\n    @level2type = N'\(SQLServerSQL.escapeLiteral(l2Type))', @level2name = N'\(SQLServerSQL.escapeLiteral(l2Name))'"
         }
 
         _ = try await client.execute(sql)
@@ -180,13 +180,13 @@ public final class SQLServerExtendedPropertiesClient: @unchecked Sendable {
     public func drop(name: String, target: ExtendedPropertyTarget) async throws {
         var sql = """
         EXEC sp_dropextendedproperty
-            @name = N'\(Self.escapeLiteral(name))',
-            @level0type = N'SCHEMA', @level0name = N'\(Self.escapeLiteral(target.schema))',
-            @level1type = N'\(Self.escapeLiteral(target.level1Type))', @level1name = N'\(Self.escapeLiteral(target.level1Name))'
+            @name = N'\(SQLServerSQL.escapeLiteral(name))',
+            @level0type = N'SCHEMA', @level0name = N'\(SQLServerSQL.escapeLiteral(target.schema))',
+            @level1type = N'\(SQLServerSQL.escapeLiteral(target.level1Type))', @level1name = N'\(SQLServerSQL.escapeLiteral(target.level1Name))'
         """
 
         if let l2Type = target.level2Type, let l2Name = target.level2Name {
-            sql += ",\n    @level2type = N'\(Self.escapeLiteral(l2Type))', @level2name = N'\(Self.escapeLiteral(l2Name))'"
+            sql += ",\n    @level2type = N'\(SQLServerSQL.escapeLiteral(l2Type))', @level2name = N'\(SQLServerSQL.escapeLiteral(l2Name))'"
         }
 
         _ = try await client.execute(sql)
@@ -210,7 +210,7 @@ public final class SQLServerExtendedPropertiesClient: @unchecked Sendable {
     /// Lists extended properties for a database user (class = 4, database principal).
     @available(macOS 12.0, *)
     public func listForUser(name: String) async throws -> [SQLServerExtendedProperty] {
-        let escaped = Self.escapeLiteral(name)
+        let escaped = SQLServerSQL.escapeLiteral(name)
         let sql = """
         SELECT ep.name, CAST(ep.value AS NVARCHAR(MAX)) AS value
         FROM sys.extended_properties ep
@@ -231,9 +231,9 @@ public final class SQLServerExtendedPropertiesClient: @unchecked Sendable {
     public func addForUser(userName: String, name: String, value: String) async throws {
         let sql = """
         EXEC sp_addextendedproperty
-            @name = N'\(Self.escapeLiteral(name))',
-            @value = N'\(Self.escapeLiteral(value))',
-            @level0type = N'USER', @level0name = N'\(Self.escapeLiteral(userName))'
+            @name = N'\(SQLServerSQL.escapeLiteral(name))',
+            @value = N'\(SQLServerSQL.escapeLiteral(value))',
+            @level0type = N'USER', @level0name = N'\(SQLServerSQL.escapeLiteral(userName))'
         """
         _ = try await client.execute(sql)
     }
@@ -243,9 +243,9 @@ public final class SQLServerExtendedPropertiesClient: @unchecked Sendable {
     public func updateForUser(userName: String, name: String, value: String) async throws {
         let sql = """
         EXEC sp_updateextendedproperty
-            @name = N'\(Self.escapeLiteral(name))',
-            @value = N'\(Self.escapeLiteral(value))',
-            @level0type = N'USER', @level0name = N'\(Self.escapeLiteral(userName))'
+            @name = N'\(SQLServerSQL.escapeLiteral(name))',
+            @value = N'\(SQLServerSQL.escapeLiteral(value))',
+            @level0type = N'USER', @level0name = N'\(SQLServerSQL.escapeLiteral(userName))'
         """
         _ = try await client.execute(sql)
     }
@@ -255,8 +255,8 @@ public final class SQLServerExtendedPropertiesClient: @unchecked Sendable {
     public func dropForUser(userName: String, name: String) async throws {
         let sql = """
         EXEC sp_dropextendedproperty
-            @name = N'\(Self.escapeLiteral(name))',
-            @level0type = N'USER', @level0name = N'\(Self.escapeLiteral(userName))'
+            @name = N'\(SQLServerSQL.escapeLiteral(name))',
+            @level0type = N'USER', @level0name = N'\(SQLServerSQL.escapeLiteral(userName))'
         """
         _ = try await client.execute(sql)
     }
@@ -274,7 +274,4 @@ public final class SQLServerExtendedPropertiesClient: @unchecked Sendable {
 
     // MARK: - Helpers
 
-    private static func escapeLiteral(_ value: String) -> String {
-        value.replacingOccurrences(of: "'", with: "''")
-    }
 }

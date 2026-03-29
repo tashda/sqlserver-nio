@@ -117,16 +117,16 @@ public final class SQLServerLinkedServersClient: @unchecked Sendable {
     ) -> EventLoopFuture<Void> {
         var sql = """
             EXEC sp_addlinkedserver
-                @server = N'\(escapeLiteral(name))',
-                @srvproduct = N'\(escapeLiteral(product))',
-                @provider = N'\(escapeLiteral(provider))',
-                @datasrc = N'\(escapeLiteral(dataSource))'
+                @server = N'\(SQLServerSQL.escapeLiteral(name))',
+                @srvproduct = N'\(SQLServerSQL.escapeLiteral(product))',
+                @provider = N'\(SQLServerSQL.escapeLiteral(provider))',
+                @datasrc = N'\(SQLServerSQL.escapeLiteral(dataSource))'
         """
         if let catalog {
-            sql += ", @catalog = N'\(escapeLiteral(catalog))'"
+            sql += ", @catalog = N'\(SQLServerSQL.escapeLiteral(catalog))'"
         }
         if let providerString {
-            sql += ", @provstr = N'\(escapeLiteral(providerString))'"
+            sql += ", @provstr = N'\(SQLServerSQL.escapeLiteral(providerString))'"
         }
         sql += ";"
         return exec(sql: sql).map { _ in () }
@@ -135,7 +135,7 @@ public final class SQLServerLinkedServersClient: @unchecked Sendable {
     // MARK: - Drop Linked Server
 
     internal func dropLinkedServer(name: String, dropLogins: Bool = true) -> EventLoopFuture<Void> {
-        var sql = "EXEC sp_dropserver @server = N'\(escapeLiteral(name))'"
+        var sql = "EXEC sp_dropserver @server = N'\(SQLServerSQL.escapeLiteral(name))'"
         if dropLogins {
             sql += ", @droplogins = 'droplogins'"
         }
@@ -151,13 +151,13 @@ public final class SQLServerLinkedServersClient: @unchecked Sendable {
         remoteUser: String? = nil,
         remotePassword: String? = nil
     ) -> EventLoopFuture<Void> {
-        var sql = "EXEC sp_addlinkedsrvlogin @rmtsrvname = N'\(escapeLiteral(serverName))'"
+        var sql = "EXEC sp_addlinkedsrvlogin @rmtsrvname = N'\(SQLServerSQL.escapeLiteral(serverName))'"
         sql += ", @useself = N'\(usesSelf ? "True" : "False")'"
         if let remoteUser {
-            sql += ", @rmtuser = N'\(escapeLiteral(remoteUser))'"
+            sql += ", @rmtuser = N'\(SQLServerSQL.escapeLiteral(remoteUser))'"
         }
         if let remotePassword {
-            sql += ", @rmtpassword = N'\(escapeLiteral(remotePassword))'"
+            sql += ", @rmtpassword = N'\(SQLServerSQL.escapeLiteral(remotePassword))'"
         }
         sql += ";"
         return exec(sql: sql).map { _ in () }
@@ -168,7 +168,7 @@ public final class SQLServerLinkedServersClient: @unchecked Sendable {
     internal func testConnection(name: String) -> EventLoopFuture<Bool> {
         let sql = """
             BEGIN TRY
-                EXEC sp_testlinkedserver N'\(escapeLiteral(name))';
+                EXEC sp_testlinkedserver N'\(SQLServerSQL.escapeLiteral(name))';
                 SELECT CAST(1 AS bit) AS success;
             END TRY
             BEGIN CATCH
@@ -248,7 +248,4 @@ public final class SQLServerLinkedServersClient: @unchecked Sendable {
         }
     }
 
-    private func escapeLiteral(_ literal: String) -> String {
-        literal.replacingOccurrences(of: "'", with: "''")
-    }
 }

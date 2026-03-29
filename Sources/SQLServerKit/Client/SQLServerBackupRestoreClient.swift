@@ -427,7 +427,7 @@ public final class SQLServerBackupRestoreClient: @unchecked Sendable {
     /// Queries `sys.database_files` joined with `sys.filegroups`.
     @available(macOS 12.0, *)
     public func listDatabaseFiles(database: String) async throws -> [SQLServerDatabaseFileInfo] {
-        let db = SQLServerAdministrationClient.escapeIdentifier(database)
+        let db = SQLServerSQL.escapeIdentifier(database)
         let sql = """
         USE \(db);
         SELECT
@@ -467,7 +467,7 @@ public final class SQLServerBackupRestoreClient: @unchecked Sendable {
     /// Call this before restoring over an active database.
     @available(macOS 12.0, *)
     public func closeConnections(database: String) async throws {
-        let db = SQLServerAdministrationClient.escapeIdentifier(database)
+        let db = SQLServerSQL.escapeIdentifier(database)
         let sql = "ALTER DATABASE \(db) SET SINGLE_USER WITH ROLLBACK IMMEDIATE;"
         _ = try await client.execute(sql)
     }
@@ -475,7 +475,7 @@ public final class SQLServerBackupRestoreClient: @unchecked Sendable {
     /// Restores a database to MULTI_USER mode after a restore operation.
     @available(macOS 12.0, *)
     public func restoreMultiUser(database: String) async throws {
-        let db = SQLServerAdministrationClient.escapeIdentifier(database)
+        let db = SQLServerSQL.escapeIdentifier(database)
         let sql = "ALTER DATABASE \(db) SET MULTI_USER;"
         _ = try await client.execute(sql)
     }
@@ -483,7 +483,7 @@ public final class SQLServerBackupRestoreClient: @unchecked Sendable {
     // MARK: - SQL Building
 
     private func buildBackupSQL(_ options: SQLServerBackupOptions) -> String {
-        let db = SQLServerAdministrationClient.escapeIdentifier(options.database)
+        let db = SQLServerSQL.escapeIdentifier(options.database)
 
         var header: String
         switch options.backupType {
@@ -594,7 +594,7 @@ public final class SQLServerBackupRestoreClient: @unchecked Sendable {
     }
 
     private func buildRestoreSQL(_ options: SQLServerRestoreOptions) -> String {
-        let db = SQLServerAdministrationClient.escapeIdentifier(options.database)
+        let db = SQLServerSQL.escapeIdentifier(options.database)
         let path = options.diskPath.replacingOccurrences(of: "'", with: "''")
 
         let header = "RESTORE DATABASE \(db) FROM DISK = N'\(path)'"

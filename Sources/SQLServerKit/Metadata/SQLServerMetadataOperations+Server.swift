@@ -27,7 +27,7 @@ extension SQLServerMetadataOperations {
 
     @available(macOS 12.0, *)
     public func databaseState(name: String) async throws -> DatabaseMetadata {
-        let sql = "SELECT name, state_desc FROM sys.databases WITH (NOLOCK) WHERE name = N'\(Self.escapeLiteral(name))'"
+        let sql = "SELECT name, state_desc FROM sys.databases WITH (NOLOCK) WHERE name = N'\(SQLServerSQL.escapeLiteral(name))'"
         let rows = try await queryExecutor(sql).get()
         guard let row = rows.first, let dbName = row.column("name")?.string else {
             throw SQLServerError.databaseDoesNotExist(name)
@@ -232,7 +232,7 @@ extension SQLServerMetadataOperations {
                     }
                 return lobFuture.and(temporalFuture).map { lob, temporal in
 
-                func ident(_ name: String) -> String { "[\(Self.escapeIdentifier(name))]" }
+                func ident(_ name: String) -> String { "\(SQLServerSQL.escapeIdentifier(name))" }
                 func qualified(_ s: String, _ n: String) -> String { "\(ident(s)).\(ident(n))" }
 
                 func formatType(_ c: DetailedColumn) -> String {
@@ -340,7 +340,7 @@ extension SQLServerMetadataOperations {
 
                 let dbPreamble: String = {
                     if let db = self.effectiveDatabase(database), !db.isEmpty {
-                        return "USE [\(Self.escapeIdentifier(db))]\nGO\n"
+                        return "USE \(SQLServerSQL.escapeIdentifier(db))\nGO\n"
                     }
                     return ""
                 }()
@@ -431,14 +431,14 @@ extension SQLServerMetadataOperations {
     }
 
     private func listCheckConstraints(database: String?, schema: String, table: String) -> EventLoopFuture<[CheckConstraintInfo]> {
-        let dbPrefix = effectiveDatabase(database).map { "[\(Self.escapeIdentifier($0))]." } ?? ""
+        let dbPrefix = effectiveDatabase(database).map { "\(SQLServerSQL.escapeIdentifier($0))." } ?? ""
         let sql = """
         SELECT ck.name, CAST(ck.definition AS NVARCHAR(4000)) AS definition
         FROM \(dbPrefix)sys.check_constraints AS ck
         JOIN \(dbPrefix)sys.tables AS t ON ck.parent_object_id = t.object_id
         JOIN \(dbPrefix)sys.schemas AS s ON t.schema_id = s.schema_id
-        WHERE s.name = N'\(Self.escapeLiteral(schema))'
-          AND t.name = N'\(Self.escapeLiteral(table))'
+        WHERE s.name = N'\(SQLServerSQL.escapeLiteral(schema))'
+          AND t.name = N'\(SQLServerSQL.escapeLiteral(table))'
         ORDER BY ck.name;
         """
         return queryExecutor(sql).map { rows in
@@ -450,7 +450,7 @@ extension SQLServerMetadataOperations {
     }
 
     private func fetchTableFilegroup(database: String?, schema: String, table: String) -> EventLoopFuture<String?> {
-        let dbPrefix = effectiveDatabase(database).map { "[\(Self.escapeIdentifier($0))]." } ?? ""
+        let dbPrefix = effectiveDatabase(database).map { "\(SQLServerSQL.escapeIdentifier($0))." } ?? ""
         let sql = """
         SELECT TOP 1 ds.name AS data_space_name, ps.name AS partition_scheme_name,
                STRING_AGG(CASE WHEN ic.partition_ordinal > 0 THEN c.name ELSE NULL END, ',') WITHIN GROUP (ORDER BY ic.partition_ordinal) AS partition_columns
@@ -461,8 +461,8 @@ extension SQLServerMetadataOperations {
         LEFT JOIN \(dbPrefix)sys.columns AS c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
         JOIN \(dbPrefix)sys.data_spaces AS ds ON ds.data_space_id = i.data_space_id
         LEFT JOIN \(dbPrefix)sys.partition_schemes AS ps ON ps.data_space_id = i.data_space_id
-        WHERE s.name = N'\(Self.escapeLiteral(schema))'
-          AND t.name = N'\(Self.escapeLiteral(table))'
+        WHERE s.name = N'\(SQLServerSQL.escapeLiteral(schema))'
+          AND t.name = N'\(SQLServerSQL.escapeLiteral(table))'
         GROUP BY ds.name, ps.name
         ORDER BY CASE WHEN ps.name IS NULL THEN 1 ELSE 0 END, ds.name;
         """
@@ -472,11 +472,11 @@ extension SQLServerMetadataOperations {
             let scheme = row.column("partition_scheme_name")?.string
             let partitionColumns = row.column("partition_columns")?.string?.split(separator: ",").map(String.init) ?? []
             if let scheme, !scheme.isEmpty {
-                let cols = partitionColumns.map { "[\(Self.escapeIdentifier($0))]" }.joined(separator: ", ")
-                return "ON [\(Self.escapeIdentifier(scheme))](\(cols))"
+                let cols = partitionColumns.map { "\(SQLServerSQL.escapeIdentifier($0))" }.joined(separator: ", ")
+                return "ON \(SQLServerSQL.escapeIdentifier(scheme))(\(cols))"
             }
             if let dataSpace, !dataSpace.isEmpty {
-                return "ON [\(Self.escapeIdentifier(dataSpace))]"
+                return "ON \(SQLServerSQL.escapeIdentifier(dataSpace))"
             }
             return nil
         }
@@ -508,7 +508,7 @@ extension SQLServerMetadataOperations {
     }
 
     private func fetchDetailedColumns(database: String?, schema: String, table: String) -> EventLoopFuture<[DetailedColumn]> {
-        let dbPrefix = effectiveDatabase(database).map { "[\(Self.escapeIdentifier($0))]." } ?? ""
+        let dbPrefix = effectiveDatabase(database).map { "\(SQLServerSQL.escapeIdentifier($0))." } ?? ""
         let sql = """
         SELECT
             c.column_id,
@@ -535,8 +535,8 @@ extension SQLServerMetadataOperations {
         LEFT JOIN \(dbPrefix)sys.computed_columns AS cc ON cc.object_id = c.object_id AND cc.column_id = c.column_id
         LEFT JOIN \(dbPrefix)sys.identity_columns AS ic ON ic.object_id = c.object_id AND ic.column_id = c.column_id
         LEFT JOIN \(dbPrefix)sys.default_constraints AS dc ON dc.parent_object_id = c.object_id AND dc.parent_column_id = c.column_id
-        WHERE s.name = N'\(Self.escapeLiteral(schema))'
-          AND t.name = N'\(Self.escapeLiteral(table))'
+        WHERE s.name = N'\(SQLServerSQL.escapeLiteral(schema))'
+          AND t.name = N'\(SQLServerSQL.escapeLiteral(table))'
         ORDER BY c.column_id;
         """
 
@@ -582,7 +582,7 @@ extension SQLServerMetadataOperations {
     }
 
     private func fetchLobAndFilestreamStorage(database: String?, schema: String, table: String) -> EventLoopFuture<LobFilestreamInfo> {
-        let dbPrefix = effectiveDatabase(database).map { "[\(Self.escapeIdentifier($0))]." } ?? ""
+        let dbPrefix = effectiveDatabase(database).map { "\(SQLServerSQL.escapeIdentifier($0))." } ?? ""
         let lobSQL = """
         SELECT TOP 1 ds.name AS lob_data_space
         FROM \(dbPrefix)sys.objects AS o
@@ -590,8 +590,8 @@ extension SQLServerMetadataOperations {
         JOIN \(dbPrefix)sys.partitions AS p ON p.object_id = o.object_id
         JOIN \(dbPrefix)sys.allocation_units AS au ON au.container_id = p.hobt_id
         JOIN \(dbPrefix)sys.data_spaces AS ds ON ds.data_space_id = au.data_space_id
-        WHERE s.name = N'\(Self.escapeLiteral(schema))'
-          AND o.name = N'\(Self.escapeLiteral(table))'
+        WHERE s.name = N'\(SQLServerSQL.escapeLiteral(schema))'
+          AND o.name = N'\(SQLServerSQL.escapeLiteral(table))'
           AND au.type IN (2)
         ORDER BY ds.name;
         """
@@ -601,14 +601,14 @@ extension SQLServerMetadataOperations {
         JOIN \(dbPrefix)sys.schemas AS s ON s.schema_id = t.schema_id
         JOIN \(dbPrefix)sys.data_spaces AS ds ON ds.data_space_id = t.filestream_data_space_id
         WHERE t.filestream_data_space_id IS NOT NULL
-          AND s.name = N'\(Self.escapeLiteral(schema))'
-          AND t.name = N'\(Self.escapeLiteral(table))';
+          AND s.name = N'\(SQLServerSQL.escapeLiteral(schema))'
+          AND t.name = N'\(SQLServerSQL.escapeLiteral(table))';
         """
         let lobFuture = queryExecutor(lobSQL).map { rows in
-            rows.first?.column("lob_data_space")?.string.map { "TEXTIMAGE_ON [\(Self.escapeIdentifier($0))]" }
+            rows.first?.column("lob_data_space")?.string.map { "TEXTIMAGE_ON \(SQLServerSQL.escapeIdentifier($0))" }
         }
         let fsFuture = queryExecutor(filestreamSQL).map { rows in
-            rows.first?.column("filestream_data_space")?.string.map { "FILESTREAM_ON [\(Self.escapeIdentifier($0))]" }
+            rows.first?.column("filestream_data_space")?.string.map { "FILESTREAM_ON \(SQLServerSQL.escapeIdentifier($0))" }
         }
         return lobFuture.and(fsFuture).map { LobFilestreamInfo(textImageClause: $0.0, filestreamClause: $0.1) }
     }
@@ -620,7 +620,7 @@ extension SQLServerMetadataOperations {
     }
 
     private func fetchTemporalAndMemoryOptions(database: String?, schema: String, table: String) -> EventLoopFuture<TemporalAndMemoryOptions> {
-        let dbPrefix = effectiveDatabase(database).map { "[\(Self.escapeIdentifier($0))]." } ?? ""
+        let dbPrefix = effectiveDatabase(database).map { "\(SQLServerSQL.escapeIdentifier($0))." } ?? ""
         let sql = """
         SELECT
             t.temporal_type,
@@ -636,8 +636,8 @@ extension SQLServerMetadataOperations {
         LEFT JOIN \(dbPrefix)sys.tables AS ht ON ht.object_id = t.history_table_id
         LEFT JOIN \(dbPrefix)sys.schemas AS hs ON hs.schema_id = ht.schema_id
         LEFT JOIN \(dbPrefix)sys.periods AS p ON p.object_id = t.object_id
-        WHERE s.name = N'\(Self.escapeLiteral(schema))'
-          AND t.name = N'\(Self.escapeLiteral(table))';
+        WHERE s.name = N'\(SQLServerSQL.escapeLiteral(schema))'
+          AND t.name = N'\(SQLServerSQL.escapeLiteral(table))';
         """
 
         @Sendable
@@ -648,8 +648,8 @@ extension SQLServerMetadataOperations {
             FROM \(dbPrefix)sys.columns AS c
             JOIN \(dbPrefix)sys.tables AS t ON t.object_id = c.object_id
             JOIN \(dbPrefix)sys.schemas AS s ON s.schema_id = t.schema_id
-            WHERE s.name = N'\(Self.escapeLiteral(schema))'
-              AND t.name = N'\(Self.escapeLiteral(table))'
+            WHERE s.name = N'\(SQLServerSQL.escapeLiteral(schema))'
+              AND t.name = N'\(SQLServerSQL.escapeLiteral(table))'
               AND c.column_id = \(columnID);
             """
             return queryExecutor(query).map { $0.first?.column("name")?.string }
@@ -680,14 +680,14 @@ extension SQLServerMetadataOperations {
                 .map { startName, endName in
                     let periodClause: String?
                     if let startName, let endName {
-                        periodClause = "PERIOD FOR SYSTEM_TIME ([\(Self.escapeIdentifier(startName))], [\(Self.escapeIdentifier(endName))])"
+                        periodClause = "PERIOD FOR SYSTEM_TIME (\(SQLServerSQL.escapeIdentifier(startName)), \(SQLServerSQL.escapeIdentifier(endName)))"
                     } else {
                         periodClause = nil
                     }
 
                     var systemVersioning = "SYSTEM_VERSIONING = ON"
                     if let historySchema, let historyTable, !historySchema.isEmpty, !historyTable.isEmpty {
-                        systemVersioning += " (HISTORY_TABLE = [\(Self.escapeIdentifier(historySchema))].[\(Self.escapeIdentifier(historyTable))])"
+                        systemVersioning += " (HISTORY_TABLE = \(SQLServerSQL.escapeIdentifier(historySchema)).\(SQLServerSQL.escapeIdentifier(historyTable)))"
                     }
 
                     return TemporalAndMemoryOptions(
@@ -711,7 +711,7 @@ extension SQLServerMetadataOperations {
     }
 
     private func fetchTableScriptingIndexDetails(database: String?, schema: String, object: String) -> EventLoopFuture<[IndexDetail]> {
-        let dbPrefix = effectiveDatabase(database).map { "[\(Self.escapeIdentifier($0))]." } ?? ""
+        let dbPrefix = effectiveDatabase(database).map { "\(SQLServerSQL.escapeIdentifier($0))." } ?? ""
         let sql = """
         SELECT
             i.name AS index_name,
@@ -746,8 +746,8 @@ extension SQLServerMetadataOperations {
             FROM \(dbPrefix)sys.partitions AS p
             WHERE p.object_id = i.object_id AND p.index_id = i.index_id
         ) AS pcomp
-        WHERE s.name = N'\(Self.escapeLiteral(schema))'
-          AND o.name = N'\(Self.escapeLiteral(object))'
+        WHERE s.name = N'\(SQLServerSQL.escapeLiteral(schema))'
+          AND o.name = N'\(SQLServerSQL.escapeLiteral(object))'
           AND i.index_id > 0
           AND i.is_hypothetical = 0
         ORDER BY i.name, ic.is_included_column, ic.key_ordinal, ic.index_column_id;
@@ -825,13 +825,13 @@ extension SQLServerMetadataOperations {
             func buildStorage(from partial: Partial) -> String? {
                 if let scheme = partial.partitionSchemeName, !scheme.isEmpty {
                     if !partial.partitionColumns.isEmpty {
-                        let cols = partial.partitionColumns.map { "[\(Self.escapeIdentifier($0))]" }.joined(separator: ", ")
-                        return "ON [\(Self.escapeIdentifier(scheme))](\(cols))"
+                        let cols = partial.partitionColumns.map { "\(SQLServerSQL.escapeIdentifier($0))" }.joined(separator: ", ")
+                        return "ON \(SQLServerSQL.escapeIdentifier(scheme))(\(cols))"
                     }
-                    return "ON [\(Self.escapeIdentifier(scheme))]"
+                    return "ON \(SQLServerSQL.escapeIdentifier(scheme))"
                 }
                 if let dataSpace = partial.dataSpaceName, !dataSpace.isEmpty {
-                    return "ON [\(Self.escapeIdentifier(dataSpace))]"
+                    return "ON \(SQLServerSQL.escapeIdentifier(dataSpace))"
                 }
                 return nil
             }

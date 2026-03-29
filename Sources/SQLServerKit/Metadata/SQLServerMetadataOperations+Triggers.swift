@@ -17,8 +17,8 @@ extension SQLServerMetadataOperations {
         let commentJoin = includeComments ? "LEFT JOIN \(qualified(database, object: "sys.extended_properties")) AS ep WITH (NOLOCK) ON ep.class = 1 AND ep.major_id = tr.object_id AND ep.minor_id = 0 AND ep.name = N'MS_Description'" : ""
 
         var sql = "SELECT schema_name = s.name, table_name = o.name, trigger_name = tr.name, tr.is_instead_of_trigger, tr.is_disabled, definition = \(definitionSelect)\(commentSelect) FROM \(qualified(database, object: "sys.triggers")) tr WITH (NOLOCK) JOIN \(qualified(database, object: "sys.objects")) o WITH (NOLOCK) ON tr.parent_id = o.object_id AND o.type IN ('U','V') JOIN \(qualified(database, object: "sys.schemas")) s WITH (NOLOCK) ON o.schema_id = s.schema_id \(moduleJoin) \(commentJoin) WHERE tr.parent_class = 1"
-        if let schema { sql += " AND s.name = N'\(SQLServerMetadataOperations.escapeLiteral(schema))'" }
-        if let table { sql += " AND o.name = N'\(SQLServerMetadataOperations.escapeLiteral(table))'" }
+        if let schema { sql += " AND s.name = N'\(SQLServerSQL.escapeLiteral(schema))'" }
+        if let table { sql += " AND o.name = N'\(SQLServerSQL.escapeLiteral(table))'" }
         sql += " ORDER BY s.name, o.name, tr.name;"
 
         return queryExecutor(sql).map { rows in
@@ -30,7 +30,7 @@ extension SQLServerMetadataOperations {
     }
 
     internal func fetchObjectIndexDetails(database: String?, schema: String, object: String) -> EventLoopFuture<[(name: String, isUnique: Bool, isClustered: Bool, indexType: Int, filterDefinition: String?, optionClause: String?, storageClause: String?, columns: [IndexColumnMetadata])]> {
-        let dbPrefix = effectiveDatabase(database).map { "[\(SQLServerMetadataOperations.escapeIdentifier($0))]." } ?? ""
+        let dbPrefix = effectiveDatabase(database).map { "\(SQLServerSQL.escapeIdentifier($0))." } ?? ""
         let sql = """
         SELECT
             i.name AS index_name,
@@ -65,8 +65,8 @@ extension SQLServerMetadataOperations {
             FROM \(dbPrefix)sys.partitions AS p
             WHERE p.object_id = i.object_id AND p.index_id = i.index_id
         ) AS pcomp
-        WHERE s.name = N'\(SQLServerMetadataOperations.escapeLiteral(schema))'
-          AND o.name = N'\(SQLServerMetadataOperations.escapeLiteral(object))'
+        WHERE s.name = N'\(SQLServerSQL.escapeLiteral(schema))'
+          AND o.name = N'\(SQLServerSQL.escapeLiteral(object))'
           AND i.index_id > 0
           AND i.is_hypothetical = 0
         ORDER BY i.name, ic.is_included_column, ic.key_ordinal, ic.index_column_id;
@@ -144,13 +144,13 @@ extension SQLServerMetadataOperations {
             func buildStorage(from partial: Partial) -> String? {
                 if let scheme = partial.partitionSchemeName, !scheme.isEmpty {
                     if !partial.partitionColumns.isEmpty {
-                        let cols = partial.partitionColumns.map { "[\(SQLServerMetadataOperations.escapeIdentifier($0))]" }.joined(separator: ", ")
-                        return "ON [\(SQLServerMetadataOperations.escapeIdentifier(scheme))](\(cols))"
+                        let cols = partial.partitionColumns.map { "\(SQLServerSQL.escapeIdentifier($0))" }.joined(separator: ", ")
+                        return "ON \(SQLServerSQL.escapeIdentifier(scheme))(\(cols))"
                     }
-                    return "ON [\(SQLServerMetadataOperations.escapeIdentifier(scheme))]"
+                    return "ON \(SQLServerSQL.escapeIdentifier(scheme))"
                 }
                 if let dataSpace = partial.dataSpaceName, !dataSpace.isEmpty {
-                    return "ON [\(SQLServerMetadataOperations.escapeIdentifier(dataSpace))]"
+                    return "ON \(SQLServerSQL.escapeIdentifier(dataSpace))"
                 }
                 return nil
             }

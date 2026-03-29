@@ -97,8 +97,8 @@ public final class SQLServerRoutineClient: @unchecked Sendable {
         body: String,
         options: RoutineOptions = RoutineOptions()
     ) async throws {
-        let escapedName = Self.escapeIdentifier(name)
-        let schemaPrefix = options.schema != "dbo" ? "\(Self.escapeIdentifier(options.schema))." : ""
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
+        let schemaPrefix = options.schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(options.schema))." : ""
         let fullName = "\(schemaPrefix)\(escapedName)"
         
         var sql = "CREATE PROCEDURE \(fullName)"
@@ -146,8 +146,8 @@ public final class SQLServerRoutineClient: @unchecked Sendable {
     
     @available(macOS 12.0, *)
     public func dropStoredProcedure(name: String, schema: String = "dbo") async throws {
-        let escapedName = Self.escapeIdentifier(name)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullName = "\(schemaPrefix)\(escapedName)"
         
         let sql = "DROP PROCEDURE \(fullName)"
@@ -178,8 +178,8 @@ public final class SQLServerRoutineClient: @unchecked Sendable {
         body: String,
         options: RoutineOptions = RoutineOptions()
     ) async throws {
-        let escapedName = Self.escapeIdentifier(name)
-        let schemaPrefix = options.schema != "dbo" ? "\(Self.escapeIdentifier(options.schema))." : ""
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
+        let schemaPrefix = options.schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(options.schema))." : ""
         let fullName = "\(schemaPrefix)\(escapedName)"
         
         var sql = "ALTER PROCEDURE \(fullName)"
@@ -241,8 +241,8 @@ public final class SQLServerRoutineClient: @unchecked Sendable {
         body: String,
         options: RoutineOptions = RoutineOptions()
     ) async throws {
-        let escapedName = Self.escapeIdentifier(name)
-        let schemaPrefix = options.schema != "dbo" ? "\(Self.escapeIdentifier(options.schema))." : ""
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
+        let schemaPrefix = options.schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(options.schema))." : ""
         let fullName = "\(schemaPrefix)\(escapedName)"
         
         var sql = "CREATE FUNCTION \(fullName)"
@@ -301,8 +301,8 @@ public final class SQLServerRoutineClient: @unchecked Sendable {
         body: String,
         options: RoutineOptions = RoutineOptions()
     ) async throws {
-        let escapedName = Self.escapeIdentifier(name)
-        let schemaPrefix = options.schema != "dbo" ? "\(Self.escapeIdentifier(options.schema))." : ""
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
+        let schemaPrefix = options.schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(options.schema))." : ""
         let fullName = "\(schemaPrefix)\(escapedName)"
         
         var sql = "CREATE FUNCTION \(fullName)"
@@ -325,7 +325,7 @@ public final class SQLServerRoutineClient: @unchecked Sendable {
         
         // Add table definition
         let columnStrings = tableDefinition.map { column in
-            "\(Self.escapeIdentifier(column.name)) \(column.dataType.toSqlString())"
+            "\(SQLServerSQL.escapeIdentifier(column.name)) \(column.dataType.toSqlString())"
         }
         sql += "\nRETURNS \(returnTableVariable) TABLE\n(\n    \(columnStrings.joined(separator: ",\n    "))\n)"
         
@@ -379,8 +379,8 @@ public final class SQLServerRoutineClient: @unchecked Sendable {
     
     @available(macOS 12.0, *)
     public func dropFunction(name: String, schema: String = "dbo") async throws {
-        let escapedName = Self.escapeIdentifier(name)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullName = "\(schemaPrefix)\(escapedName)"
         
         let sql = "DROP FUNCTION \(fullName)"
@@ -417,11 +417,6 @@ public final class SQLServerRoutineClient: @unchecked Sendable {
         let result = try await client.queryScalar(sql, as: Int.self)
         return (result ?? 0) > 0
     }
-    
-    private static func escapeIdentifier(_ identifier: String) -> String {
-        "[\(identifier.replacingOccurrences(of: "]", with: "]]"))]"
-    }
-    
     private static func buildOptionClause(from options: RoutineOptions, allowRecompile: Bool) -> String? {
         var parts: [String] = []
         if options.withEncryption {

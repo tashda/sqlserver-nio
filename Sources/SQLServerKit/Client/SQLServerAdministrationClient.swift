@@ -66,8 +66,4 @@ public final class SQLServerAdministrationClient: @unchecked Sendable {
     public func listServerRoles() async throws -> [SQLServerRoleInfo] {
         try await listServerRoles().get()
     }
-
-    internal static func escapeIdentifier(_ identifier: String) -> String {
-        "[\(identifier.replacingOccurrences(of: "]", with: "]]"))]"
-    }
 }

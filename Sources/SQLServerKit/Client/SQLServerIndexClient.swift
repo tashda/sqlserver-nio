@@ -13,9 +13,9 @@ public final class SQLServerIndexClient: @unchecked Sendable {
     // MARK: - Index Creation
     
     internal func dropIndexIfExistsSQL(name: String, table: String, schema: String) -> String {
-        let escapedIndexName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedIndexName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
         return """
         IF EXISTS (
@@ -57,9 +57,9 @@ public final class SQLServerIndexClient: @unchecked Sendable {
         filter: String? = nil,
         dropIfExists: Bool = false
     ) async throws {
-        let escapedIndexName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedIndexName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
 
         if dropIfExists {
@@ -77,12 +77,12 @@ public final class SQLServerIndexClient: @unchecked Sendable {
         var sql = "CREATE NONCLUSTERED INDEX \(escapedIndexName) ON \(fullTableName)"
         
         let keyColumnList = keyColumns.map { column in
-            "\(Self.escapeIdentifier(column.name)) \(column.sortDirection.rawValue)"
+            "\(SQLServerSQL.escapeIdentifier(column.name)) \(column.sortDirection.rawValue)"
         }.joined(separator: ", ")
         sql += " (\(keyColumnList))"
         
         if !includedColumns.isEmpty {
-            let includedColumnList = includedColumns.map { Self.escapeIdentifier($0.name) }.joined(separator: ", ")
+            let includedColumnList = includedColumns.map { SQLServerSQL.escapeIdentifier($0.name) }.joined(separator: ", ")
             sql += " INCLUDE (\(includedColumnList))"
         }
         if let f = filter, !f.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -126,9 +126,9 @@ public final class SQLServerIndexClient: @unchecked Sendable {
         filter: String? = nil,
         dropIfExists: Bool = false
     ) async throws {
-        let escapedIndexName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedIndexName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
 
         if dropIfExists {
@@ -146,12 +146,12 @@ public final class SQLServerIndexClient: @unchecked Sendable {
         var sql = "CREATE UNIQUE NONCLUSTERED INDEX \(escapedIndexName) ON \(fullTableName)"
         
         let keyColumnList = keyColumns.map { column in
-            "\(Self.escapeIdentifier(column.name)) \(column.sortDirection.rawValue)"
+            "\(SQLServerSQL.escapeIdentifier(column.name)) \(column.sortDirection.rawValue)"
         }.joined(separator: ", ")
         sql += " (\(keyColumnList))"
         
         if !includedColumns.isEmpty {
-            let includedColumnList = includedColumns.map { Self.escapeIdentifier($0.name) }.joined(separator: ", ")
+            let includedColumnList = includedColumns.map { SQLServerSQL.escapeIdentifier($0.name) }.joined(separator: ", ")
             sql += " INCLUDE (\(includedColumnList))"
         }
         if let f = filter, !f.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -174,9 +174,9 @@ public final class SQLServerIndexClient: @unchecked Sendable {
         schema: String = "dbo",
         dropIfExists: Bool = false
     ) async throws {
-        let escapedIndexName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedIndexName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
 
         if dropIfExists {
@@ -187,7 +187,7 @@ public final class SQLServerIndexClient: @unchecked Sendable {
         let kind = clustered ? "CLUSTERED COLUMNSTORE" : "NONCLUSTERED COLUMNSTORE"
         var sql = "CREATE \(kind) INDEX \(escapedIndexName) ON \(fullTableName)"
         if !clustered && !columns.isEmpty {
-            let list = columns.map { Self.escapeIdentifier($0) }.joined(separator: ", ")
+            let list = columns.map { SQLServerSQL.escapeIdentifier($0) }.joined(separator: ", ")
             sql += " (\(list))"
         }
         sql += ";"
@@ -202,9 +202,9 @@ public final class SQLServerIndexClient: @unchecked Sendable {
         schema: String = "dbo",
         options: IndexOptions? = nil
     ) async throws {
-        let escapedIndexName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedIndexName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
         
         let keyColumns = columns.filter { !$0.isIncluded }
@@ -220,7 +220,7 @@ public final class SQLServerIndexClient: @unchecked Sendable {
         var sql = "CREATE CLUSTERED INDEX \(escapedIndexName) ON \(fullTableName)"
         
         let keyColumnList = keyColumns.map { column in
-            "\(Self.escapeIdentifier(column.name)) \(column.sortDirection.rawValue)"
+            "\(SQLServerSQL.escapeIdentifier(column.name)) \(column.sortDirection.rawValue)"
         }.joined(separator: ", ")
         sql += " (\(keyColumnList))"
         
@@ -268,22 +268,18 @@ public final class SQLServerIndexClient: @unchecked Sendable {
         }
         
         if let partitionScheme = options.partitionScheme {
-            let escapedPartitionScheme = Self.escapeIdentifier(partitionScheme)
+            let escapedPartitionScheme = SQLServerSQL.escapeIdentifier(partitionScheme)
             if options.partitionColumns.isEmpty {
                 sql += " ON \(escapedPartitionScheme)"
             } else {
                 let partitionColumns = options.partitionColumns
-                    .map(Self.escapeIdentifier)
+                    .map(SQLServerSQL.escapeIdentifier)
                     .joined(separator: ", ")
                 sql += " ON \(escapedPartitionScheme)(\(partitionColumns))"
             }
         } else if let fileGroup = options.fileGroup {
-            sql += " ON \(Self.escapeIdentifier(fileGroup))"
+            sql += " ON \(SQLServerSQL.escapeIdentifier(fileGroup))"
         }
         return sql
-    }
-    
-    internal static func escapeIdentifier(_ identifier: String) -> String {
-        "[\(identifier.replacingOccurrences(of: "]", with: "]]"))]"
     }
 }

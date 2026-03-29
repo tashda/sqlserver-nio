@@ -100,19 +100,12 @@ public final class SQLServerMetadataOperations: @unchecked Sendable {
             if let currentDB, resolved.caseInsensitiveCompare(currentDB) == .orderedSame {
                 return object
             }
-            return "[\(Self.escapeIdentifier(resolved))].\(object)"
+            return "\(SQLServerSQL.escapeIdentifier(resolved)).\(object)"
         } else {
             return object
         }
     }
 
-    internal static func escapeIdentifier(_ identifier: String) -> String {
-        return identifier.replacingOccurrences(of: "]", with: "]]")
-    }
-
-    internal static func escapeLiteral(_ literal: String) -> String {
-        return literal.replacingOccurrences(of: "'", with: "''")
-    }
 
     internal func timed<T: Sendable>(_ label: String, _ operation: @Sendable () -> EventLoopFuture<T>) -> EventLoopFuture<T> {
         let start = NIODeadline.now()

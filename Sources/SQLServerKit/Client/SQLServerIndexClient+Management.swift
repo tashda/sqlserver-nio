@@ -18,9 +18,9 @@ extension SQLServerIndexClient {
     
     @available(macOS 12.0, *)
     public func dropIndex(name: String, table: String, schema: String = "dbo") async throws {
-        let escapedIndexName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedIndexName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
         
         let sql = "DROP INDEX \(escapedIndexName) ON \(fullTableName)"
@@ -41,12 +41,12 @@ extension SQLServerIndexClient {
     
     @available(macOS 12.0, *)
     public func rebuildIndex(name: String, table: String, schema: String = "dbo", database: String? = nil, options: IndexOptions? = nil) async throws {
-        let escapedIndexName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedIndexName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName: String
         if let database {
-            fullTableName = "\(Self.escapeIdentifier(database)).\(schemaPrefix)\(escapedTableName)"
+            fullTableName = "\(SQLServerSQL.escapeIdentifier(database)).\(schemaPrefix)\(escapedTableName)"
         } else {
             fullTableName = "\(schemaPrefix)\(escapedTableName)"
         }
@@ -104,12 +104,12 @@ extension SQLServerIndexClient {
     
     @available(macOS 12.0, *)
     public func reorganizeIndex(name: String, table: String, schema: String = "dbo", database: String? = nil) async throws {
-        let escapedIndexName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedIndexName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName: String
         if let database {
-            fullTableName = "\(Self.escapeIdentifier(database)).\(schemaPrefix)\(escapedTableName)"
+            fullTableName = "\(SQLServerSQL.escapeIdentifier(database)).\(schemaPrefix)\(escapedTableName)"
         } else {
             fullTableName = "\(schemaPrefix)\(escapedTableName)"
         }
@@ -120,12 +120,12 @@ extension SQLServerIndexClient {
 
     @available(macOS 12.0, *)
     public func disableIndex(name: String, table: String, schema: String = "dbo", database: String? = nil) async throws {
-        let escapedIndexName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedIndexName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName: String
         if let database {
-            fullTableName = "\(Self.escapeIdentifier(database)).\(schemaPrefix)\(escapedTableName)"
+            fullTableName = "\(SQLServerSQL.escapeIdentifier(database)).\(schemaPrefix)\(escapedTableName)"
         } else {
             fullTableName = "\(schemaPrefix)\(escapedTableName)"
         }
@@ -136,8 +136,8 @@ extension SQLServerIndexClient {
 
     @available(macOS 12.0, *)
     public func rebuildAllIndexes(table: String, schema: String = "dbo") async throws {
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
 
         let sql = "ALTER INDEX ALL ON \(fullTableName) REBUILD"
@@ -146,8 +146,8 @@ extension SQLServerIndexClient {
 
     @available(macOS 12.0, *)
     public func reorganizeAllIndexes(table: String, schema: String = "dbo") async throws {
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
 
         let sql = "ALTER INDEX ALL ON \(fullTableName) REORGANIZE"
@@ -157,12 +157,12 @@ extension SQLServerIndexClient {
     /// Re-enables a disabled index by rebuilding it.
     @available(macOS 12.0, *)
     public func enableIndex(name: String, table: String, schema: String = "dbo", database: String? = nil) async throws {
-        let escapedIndexName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedIndexName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName: String
         if let database {
-            fullTableName = "\(Self.escapeIdentifier(database)).\(schemaPrefix)\(escapedTableName)"
+            fullTableName = "\(SQLServerSQL.escapeIdentifier(database)).\(schemaPrefix)\(escapedTableName)"
         } else {
             fullTableName = "\(schemaPrefix)\(escapedTableName)"
         }

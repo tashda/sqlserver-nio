@@ -34,12 +34,12 @@ extension SQLServerConstraintClient {
             throw SQLServerError.invalidArgument("At least one column is required for unique constraint")
         }
         
-        let escapedConstraintName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedConstraintName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
         
-        let columnList = columns.map { Self.escapeIdentifier($0) }.joined(separator: ", ")
+        let columnList = columns.map { SQLServerSQL.escapeIdentifier($0) }.joined(separator: ", ")
         let clusterType = clustered ? "CLUSTERED" : "NONCLUSTERED"
         
         let sql = """
@@ -65,9 +65,9 @@ extension SQLServerConstraintClient {
     
     @available(macOS 12.0, *)
     public func dropUniqueConstraint(name: String, table: String, schema: String = "dbo") async throws {
-        let escapedConstraintName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedConstraintName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
         
         let sql = "ALTER TABLE \(fullTableName) DROP CONSTRAINT \(escapedConstraintName)"
@@ -106,12 +106,12 @@ extension SQLServerConstraintClient {
             throw SQLServerError.invalidArgument("At least one column is required for primary key constraint")
         }
         
-        let escapedConstraintName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedConstraintName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
         
-        let columnList = columns.map { Self.escapeIdentifier($0) }.joined(separator: ", ")
+        let columnList = columns.map { SQLServerSQL.escapeIdentifier($0) }.joined(separator: ", ")
         let clusterType = clustered ? "CLUSTERED" : "NONCLUSTERED"
         
         let sql = """
@@ -137,9 +137,9 @@ extension SQLServerConstraintClient {
     
     @available(macOS 12.0, *)
     public func dropPrimaryKey(name: String, table: String, schema: String = "dbo") async throws {
-        let escapedConstraintName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedConstraintName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
         
         let sql = "ALTER TABLE \(fullTableName) DROP CONSTRAINT \(escapedConstraintName)"
@@ -174,10 +174,10 @@ extension SQLServerConstraintClient {
         defaultValue: String,
         schema: String = "dbo"
     ) async throws {
-        let escapedConstraintName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let escapedColumnName = Self.escapeIdentifier(column)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedConstraintName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let escapedColumnName = SQLServerSQL.escapeIdentifier(column)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
         
         let sql = """
@@ -203,9 +203,9 @@ extension SQLServerConstraintClient {
     
     @available(macOS 12.0, *)
     public func dropDefaultConstraint(name: String, table: String, schema: String = "dbo") async throws {
-        let escapedConstraintName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedConstraintName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
         
         let sql = "ALTER TABLE \(fullTableName) DROP CONSTRAINT \(escapedConstraintName)"

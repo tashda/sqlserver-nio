@@ -18,20 +18,12 @@ public final class SQLServerTemporalClient: @unchecked Sendable {
         self.client = client
     }
 
-    private static func escapeIdentifier(_ identifier: String) -> String {
-        "[\(identifier.replacingOccurrences(of: "]", with: "]]"))]"
-    }
-
-    private static func escapeLiteral(_ literal: String) -> String {
-        literal.replacingOccurrences(of: "'", with: "''")
-    }
-
     // MARK: - Temporal Tables
 
     /// Lists all system-versioned tables in a database.
     @available(macOS 12.0, *)
     public func listSystemVersionedTables(database: String) async throws -> [TemporalTableInfo] {
-        let db = Self.escapeIdentifier(database)
+        let db = SQLServerSQL.escapeIdentifier(database)
         let sql = """
         SELECT
             s.name AS schema_name,
@@ -85,11 +77,11 @@ public final class SQLServerTemporalClient: @unchecked Sendable {
         historySchema: String? = nil,
         historyTable: String? = nil
     ) async throws {
-        let db = Self.escapeIdentifier(database)
-        let qualified = "\(db).\(Self.escapeIdentifier(schema)).\(Self.escapeIdentifier(table))"
+        let db = SQLServerSQL.escapeIdentifier(database)
+        let qualified = "\(db).\(SQLServerSQL.escapeIdentifier(schema)).\(SQLServerSQL.escapeIdentifier(table))"
         var clause = "SYSTEM_VERSIONING = ON"
         if let historySchema, let historyTable {
-            let histQualified = "\(Self.escapeIdentifier(historySchema)).\(Self.escapeIdentifier(historyTable))"
+            let histQualified = "\(SQLServerSQL.escapeIdentifier(historySchema)).\(SQLServerSQL.escapeIdentifier(historyTable))"
             clause += " (HISTORY_TABLE = \(histQualified))"
         }
         let sql = "ALTER TABLE \(qualified) SET (\(clause))"
@@ -105,8 +97,8 @@ public final class SQLServerTemporalClient: @unchecked Sendable {
         schema: String,
         table: String
     ) async throws {
-        let db = Self.escapeIdentifier(database)
-        let qualified = "\(db).\(Self.escapeIdentifier(schema)).\(Self.escapeIdentifier(table))"
+        let db = SQLServerSQL.escapeIdentifier(database)
+        let qualified = "\(db).\(SQLServerSQL.escapeIdentifier(schema)).\(SQLServerSQL.escapeIdentifier(table))"
         let sql = "ALTER TABLE \(qualified) SET (SYSTEM_VERSIONING = OFF)"
         _ = try await client.execute(sql)
     }
@@ -116,7 +108,7 @@ public final class SQLServerTemporalClient: @unchecked Sendable {
     /// Lists all memory-optimized tables in a database.
     @available(macOS 12.0, *)
     public func listMemoryOptimizedTables(database: String) async throws -> [MemoryOptimizedTableInfo] {
-        let db = Self.escapeIdentifier(database)
+        let db = SQLServerSQL.escapeIdentifier(database)
         let sql = """
         SELECT
             s.name AS schema_name,
@@ -160,18 +152,18 @@ public final class SQLServerTemporalClient: @unchecked Sendable {
         historySchema: String? = nil,
         historyTable: String? = nil
     ) async throws {
-        let db = Self.escapeIdentifier(database)
-        let qualified = "\(db).\(Self.escapeIdentifier(schema)).\(Self.escapeIdentifier(table))"
-        let startCol = Self.escapeIdentifier(startColumn)
-        let endCol = Self.escapeIdentifier(endColumn)
+        let db = SQLServerSQL.escapeIdentifier(database)
+        let qualified = "\(db).\(SQLServerSQL.escapeIdentifier(schema)).\(SQLServerSQL.escapeIdentifier(table))"
+        let startCol = SQLServerSQL.escapeIdentifier(startColumn)
+        let endCol = SQLServerSQL.escapeIdentifier(endColumn)
 
         // Step 1: Add period columns
         let addColumnsSql = """
         ALTER TABLE \(qualified) ADD
             \(startCol) DATETIME2 GENERATED ALWAYS AS ROW START HIDDEN
-                CONSTRAINT [DF_\(Self.escapeLiteral(table))_\(Self.escapeLiteral(startColumn))] DEFAULT SYSUTCDATETIME() NOT NULL,
+                CONSTRAINT [DF_\(SQLServerSQL.escapeLiteral(table))_\(SQLServerSQL.escapeLiteral(startColumn))] DEFAULT SYSUTCDATETIME() NOT NULL,
             \(endCol) DATETIME2 GENERATED ALWAYS AS ROW END HIDDEN
-                CONSTRAINT [DF_\(Self.escapeLiteral(table))_\(Self.escapeLiteral(endColumn))] DEFAULT CONVERT(DATETIME2, '9999-12-31 23:59:59.9999999') NOT NULL,
+                CONSTRAINT [DF_\(SQLServerSQL.escapeLiteral(table))_\(SQLServerSQL.escapeLiteral(endColumn))] DEFAULT CONVERT(DATETIME2, '9999-12-31 23:59:59.9999999') NOT NULL,
             PERIOD FOR SYSTEM_TIME (\(startCol), \(endCol))
         """
         _ = try await client.execute(addColumnsSql)

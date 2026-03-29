@@ -15,6 +15,7 @@ public enum SQLServerError: Swift.Error, CustomStringConvertible, LocalizedError
     case deadlockDetected(message: String)
     case invalidArgument(String)
     case databaseDoesNotExist(String)
+    case notImplemented(String)
     case transient(Swift.Error)
     case unknown(Swift.Error)
 
@@ -48,6 +49,8 @@ public enum SQLServerError: Swift.Error, CustomStringConvertible, LocalizedError
             return message
         case .databaseDoesNotExist(let name):
             return "Database '\(name)' does not exist."
+        case .notImplemented(let message):
+            return message
         case .transient(let error):
             return Self.describeNIOError(error)
         case .unknown(let error):

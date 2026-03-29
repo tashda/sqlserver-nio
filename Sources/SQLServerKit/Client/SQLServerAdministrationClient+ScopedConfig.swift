@@ -9,7 +9,7 @@ extension SQLServerAdministrationClient {
     /// Fetches all database scoped configurations from sys.database_scoped_configurations.
     /// Available on SQL Server 2016+ (compatibility level 130+).
     public func listScopedConfigurations(database: String) async throws -> [SQLServerScopedConfiguration] {
-        let escapedDb = Self.escapeIdentifier(database)
+        let escapedDb = SQLServerSQL.escapeIdentifier(database)
         let sql = """
         USE \(escapedDb);
         SELECT
@@ -41,7 +41,7 @@ extension SQLServerAdministrationClient {
         name: String,
         value: String
     ) async throws -> [SQLServerStreamMessage] {
-        let escapedDb = Self.escapeIdentifier(database)
+        let escapedDb = SQLServerSQL.escapeIdentifier(database)
         // Scoped config names are not identifiers — they are keywords used directly
         let sql = """
         USE \(escapedDb);
@@ -58,7 +58,7 @@ extension SQLServerAdministrationClient {
         name: String,
         value: String
     ) async throws -> [SQLServerStreamMessage] {
-        let escapedDb = Self.escapeIdentifier(database)
+        let escapedDb = SQLServerSQL.escapeIdentifier(database)
         let sql = """
         USE \(escapedDb);
         ALTER DATABASE SCOPED CONFIGURATION FOR SECONDARY SET \(name) = \(value);

@@ -20,7 +20,7 @@ extension SQLServerAdministrationClient {
         logFileMaxSize: Int? = nil,
         logFileGrowth: Int? = nil
     ) async throws -> [SQLServerStreamMessage] {
-        let escaped = Self.escapeIdentifier(name)
+        let escaped = SQLServerSQL.escapeIdentifier(name)
         var sql = "CREATE DATABASE \(escaped)"
 
         if let collation {
@@ -79,7 +79,7 @@ extension SQLServerAdministrationClient {
     @available(macOS 12.0, *)
     @discardableResult
     public func takeDatabaseOffline(name: String) async throws -> [SQLServerStreamMessage] {
-        let escaped = Self.escapeIdentifier(name)
+        let escaped = SQLServerSQL.escapeIdentifier(name)
         let result = try await client.execute("ALTER DATABASE \(escaped) SET OFFLINE WITH ROLLBACK IMMEDIATE")
         return result.messages
     }
@@ -89,7 +89,7 @@ extension SQLServerAdministrationClient {
     @available(macOS 12.0, *)
     @discardableResult
     public func bringDatabaseOnline(name: String) async throws -> [SQLServerStreamMessage] {
-        let escaped = Self.escapeIdentifier(name)
+        let escaped = SQLServerSQL.escapeIdentifier(name)
         let result = try await client.execute("ALTER DATABASE \(escaped) SET ONLINE")
         return result.messages
     }
@@ -99,7 +99,7 @@ extension SQLServerAdministrationClient {
     @available(macOS 12.0, *)
     @discardableResult
     public func shrinkDatabase(name: String) async throws -> [SQLServerStreamMessage] {
-        let escaped = Self.escapeIdentifier(name)
+        let escaped = SQLServerSQL.escapeIdentifier(name)
         let result = try await client.execute("DBCC SHRINKDATABASE(\(escaped))")
         return result.messages
     }
@@ -109,7 +109,7 @@ extension SQLServerAdministrationClient {
     @available(macOS 12.0, *)
     @discardableResult
     public func dropDatabase(name: String, forceSingleUser: Bool = false) async throws -> [SQLServerStreamMessage] {
-        let escaped = Self.escapeIdentifier(name)
+        let escaped = SQLServerSQL.escapeIdentifier(name)
         let sql: String
         if forceSingleUser {
             sql = """
@@ -130,7 +130,7 @@ extension SQLServerAdministrationClient {
     @discardableResult
     public func setSnapshotIsolation(database name: String, enabled: Bool) async throws -> [SQLServerStreamMessage] {
         let state = enabled ? "ON" : "OFF"
-        let result = try await client.execute("ALTER DATABASE \(Self.escapeIdentifier(name)) SET ALLOW_SNAPSHOT_ISOLATION \(state)")
+        let result = try await client.execute("ALTER DATABASE \(SQLServerSQL.escapeIdentifier(name)) SET ALLOW_SNAPSHOT_ISOLATION \(state)")
         return result.messages
     }
 
@@ -342,7 +342,7 @@ extension SQLServerAdministrationClient {
         logicalFileName: String,
         option: SQLServerDatabaseFileOption
     ) async throws -> [SQLServerStreamMessage] {
-        let escapedDb = Self.escapeIdentifier(databaseName)
+        let escapedDb = SQLServerSQL.escapeIdentifier(databaseName)
         let escapedFile = logicalFileName.replacingOccurrences(of: "'", with: "''")
 
         let optionClause: String
@@ -379,7 +379,7 @@ extension SQLServerAdministrationClient {
         filegrowthMB: Int = 64,
         fileGroup: String? = nil
     ) async throws -> [SQLServerStreamMessage] {
-        let escapedDb = Self.escapeIdentifier(databaseName)
+        let escapedDb = SQLServerSQL.escapeIdentifier(databaseName)
         let escapedLogical = logicalName.replacingOccurrences(of: "'", with: "''")
         let escapedPhysical = fileName.replacingOccurrences(of: "'", with: "''")
 
@@ -399,7 +399,7 @@ extension SQLServerAdministrationClient {
         let fileSpec = clauses.joined(separator: ", ")
         let toFileGroup: String
         if let fg = fileGroup {
-            toFileGroup = " TO FILEGROUP \(Self.escapeIdentifier(fg))"
+            toFileGroup = " TO FILEGROUP \(SQLServerSQL.escapeIdentifier(fg))"
         } else {
             toFileGroup = ""
         }
@@ -421,7 +421,7 @@ extension SQLServerAdministrationClient {
         maxSizeMB: Int? = nil,
         filegrowthMB: Int = 64
     ) async throws -> [SQLServerStreamMessage] {
-        let escapedDb = Self.escapeIdentifier(databaseName)
+        let escapedDb = SQLServerSQL.escapeIdentifier(databaseName)
         let escapedLogical = logicalName.replacingOccurrences(of: "'", with: "''")
         let escapedPhysical = fileName.replacingOccurrences(of: "'", with: "''")
 
@@ -453,9 +453,9 @@ extension SQLServerAdministrationClient {
         databaseName: String,
         logicalFileName: String
     ) async throws -> [SQLServerStreamMessage] {
-        let escapedDb = Self.escapeIdentifier(databaseName)
+        let escapedDb = SQLServerSQL.escapeIdentifier(databaseName)
         let escapedFile = logicalFileName.replacingOccurrences(of: "'", with: "''")
-        let sql = "ALTER DATABASE \(escapedDb) REMOVE FILE \(Self.escapeIdentifier(escapedFile))"
+        let sql = "ALTER DATABASE \(escapedDb) REMOVE FILE \(SQLServerSQL.escapeIdentifier(escapedFile))"
         let result = try await client.execute(sql)
         return result.messages
     }
@@ -472,7 +472,7 @@ extension SQLServerAdministrationClient {
     ) async throws -> [SQLServerStreamMessage] {
         // DBCC SHRINKFILE must run in the context of the target database.
         let escapedFile = logicalFileName.replacingOccurrences(of: "'", with: "''")
-        let escapedDb = Self.escapeIdentifier(databaseName)
+        let escapedDb = SQLServerSQL.escapeIdentifier(databaseName)
         let sql = """
         USE \(escapedDb);
         DBCC SHRINKFILE(N'\(escapedFile)', \(targetSizeMB));
@@ -506,7 +506,7 @@ extension SQLServerAdministrationClient {
         name: String,
         files: [String]
     ) async throws -> [SQLServerStreamMessage] {
-        let escaped = Self.escapeIdentifier(name)
+        let escaped = SQLServerSQL.escapeIdentifier(name)
         let fileSpecs = files.map { path in
             let escapedPath = path.replacingOccurrences(of: "'", with: "''")
             return "    (FILENAME = N'\(escapedPath)')"
@@ -527,7 +527,7 @@ extension SQLServerAdministrationClient {
         name: String,
         files: [String]
     ) async throws -> [SQLServerStreamMessage] {
-        let escaped = Self.escapeIdentifier(name)
+        let escaped = SQLServerSQL.escapeIdentifier(name)
         let fileSpecs = files.map { path in
             let escapedPath = path.replacingOccurrences(of: "'", with: "''")
             return "    (FILENAME = N'\(escapedPath)')"
@@ -574,7 +574,7 @@ extension SQLServerAdministrationClient {
     @available(macOS 12.0, *)
     @discardableResult
     public func setDatabaseSingleUser(name: String, rollbackImmediate: Bool = true) async throws -> [SQLServerStreamMessage] {
-        let escaped = Self.escapeIdentifier(name)
+        let escaped = SQLServerSQL.escapeIdentifier(name)
         let rollback = rollbackImmediate ? " WITH ROLLBACK IMMEDIATE" : ""
         let result = try await client.execute("ALTER DATABASE \(escaped) SET SINGLE_USER\(rollback)")
         return result.messages
@@ -584,7 +584,7 @@ extension SQLServerAdministrationClient {
     @available(macOS 12.0, *)
     @discardableResult
     public func setDatabaseMultiUser(name: String) async throws -> [SQLServerStreamMessage] {
-        let escaped = Self.escapeIdentifier(name)
+        let escaped = SQLServerSQL.escapeIdentifier(name)
         let result = try await client.execute("ALTER DATABASE \(escaped) SET MULTI_USER")
         return result.messages
     }

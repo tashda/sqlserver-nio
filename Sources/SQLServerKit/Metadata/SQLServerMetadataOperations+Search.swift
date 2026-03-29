@@ -12,13 +12,13 @@ extension SQLServerMetadataOperations {
         scopes: MetadataSearchScope = .default
     ) -> EventLoopFuture<[MetadataSearchHit]> {
         guard scopes.rawValue != 0 else { return eventLoop.makeSucceededFuture([]) }
-        let pattern = "N'%\(SQLServerMetadataOperations.escapeLiteral(query))%' COLLATE Latin1_General_CI_AI"
+        let pattern = "N'%\(SQLServerSQL.escapeLiteral(query))%' COLLATE Latin1_General_CI_AI"
         let includeSystem = self.configuration.includeSystemSchemas
         let resolvedDatabase = effectiveDatabase(database)
-        let dbPrefix = resolvedDatabase.map { "[\(SQLServerMetadataOperations.escapeIdentifier($0))]." } ?? ""
+        let dbPrefix = resolvedDatabase.map { "\(SQLServerSQL.escapeIdentifier($0))." } ?? ""
 
         var selects: [String] = []
-        let schemaPred = schema.map { "s.name = N'\(SQLServerMetadataOperations.escapeLiteral($0))'" } ?? (includeSystem ? "1=1" : "s.name NOT IN ('sys', 'INFORMATION_SCHEMA')")
+        let schemaPred = schema.map { "s.name = N'\(SQLServerSQL.escapeLiteral($0))'" } ?? (includeSystem ? "1=1" : "s.name NOT IN ('sys', 'INFORMATION_SCHEMA')")
         
         if scopes.contains(.objectNames) {
             selects.append("SELECT s.name AS schema_name, o.name AS object_name, o.type_desc, 'name' AS match_kind, NULL AS detail FROM \(dbPrefix)sys.objects o JOIN \(dbPrefix)sys.schemas s ON o.schema_id = s.schema_id WHERE \(schemaPred) AND o.name LIKE \(pattern)")
@@ -44,8 +44,8 @@ extension SQLServerMetadataOperations {
     // MARK: - Per-Type Search
 
     public func searchTables(query: String, database: String? = nil, limit: Int = 50) -> EventLoopFuture<[TableSearchResult]> {
-        let pattern = "N'%\(SQLServerMetadataOperations.escapeLiteral(query))%'"
-        let dbPrefix = effectiveDatabase(database).map { "[\(SQLServerMetadataOperations.escapeIdentifier($0))]." } ?? ""
+        let pattern = "N'%\(SQLServerSQL.escapeLiteral(query))%'"
+        let dbPrefix = effectiveDatabase(database).map { "\(SQLServerSQL.escapeIdentifier($0))." } ?? ""
         let sql = """
             SELECT TOP \(limit)
                 TABLE_SCHEMA, TABLE_NAME
@@ -64,8 +64,8 @@ extension SQLServerMetadataOperations {
     }
 
     public func searchViews(query: String, database: String? = nil, limit: Int = 50) -> EventLoopFuture<[ViewSearchResult]> {
-        let pattern = "N'%\(SQLServerMetadataOperations.escapeLiteral(query))%'"
-        let dbPrefix = effectiveDatabase(database).map { "[\(SQLServerMetadataOperations.escapeIdentifier($0))]." } ?? ""
+        let pattern = "N'%\(SQLServerSQL.escapeLiteral(query))%'"
+        let dbPrefix = effectiveDatabase(database).map { "\(SQLServerSQL.escapeIdentifier($0))." } ?? ""
         let sql = """
             SELECT TOP \(limit)
                 TABLE_SCHEMA, TABLE_NAME,
@@ -88,8 +88,8 @@ extension SQLServerMetadataOperations {
     }
 
     public func searchFunctions(query: String, database: String? = nil, limit: Int = 50) -> EventLoopFuture<[RoutineSearchResult]> {
-        let pattern = "N'%\(SQLServerMetadataOperations.escapeLiteral(query))%'"
-        let dbPrefix = effectiveDatabase(database).map { "[\(SQLServerMetadataOperations.escapeIdentifier($0))]." } ?? ""
+        let pattern = "N'%\(SQLServerSQL.escapeLiteral(query))%'"
+        let dbPrefix = effectiveDatabase(database).map { "\(SQLServerSQL.escapeIdentifier($0))." } ?? ""
         let sql = """
             SELECT TOP \(limit)
                 ROUTINE_SCHEMA, ROUTINE_NAME,
@@ -113,8 +113,8 @@ extension SQLServerMetadataOperations {
     }
 
     public func searchProcedures(query: String, database: String? = nil, limit: Int = 50) -> EventLoopFuture<[RoutineSearchResult]> {
-        let pattern = "N'%\(SQLServerMetadataOperations.escapeLiteral(query))%'"
-        let dbPrefix = effectiveDatabase(database).map { "[\(SQLServerMetadataOperations.escapeIdentifier($0))]." } ?? ""
+        let pattern = "N'%\(SQLServerSQL.escapeLiteral(query))%'"
+        let dbPrefix = effectiveDatabase(database).map { "\(SQLServerSQL.escapeIdentifier($0))." } ?? ""
         let sql = """
             SELECT TOP \(limit)
                 s.name AS schema_name,
@@ -141,8 +141,8 @@ extension SQLServerMetadataOperations {
     }
 
     public func searchTriggers(query: String, database: String? = nil, limit: Int = 50) -> EventLoopFuture<[TriggerSearchResult]> {
-        let pattern = "N'%\(SQLServerMetadataOperations.escapeLiteral(query))%'"
-        let dbPrefix = effectiveDatabase(database).map { "[\(SQLServerMetadataOperations.escapeIdentifier($0))]." } ?? ""
+        let pattern = "N'%\(SQLServerSQL.escapeLiteral(query))%'"
+        let dbPrefix = effectiveDatabase(database).map { "\(SQLServerSQL.escapeIdentifier($0))." } ?? ""
         let sql = """
             SELECT TOP \(limit)
                 s.name AS schema_name,
@@ -177,8 +177,8 @@ extension SQLServerMetadataOperations {
     }
 
     public func searchColumns(query: String, database: String? = nil, limit: Int = 50) -> EventLoopFuture<[ColumnSearchResult]> {
-        let pattern = "N'%\(SQLServerMetadataOperations.escapeLiteral(query))%'"
-        let dbPrefix = effectiveDatabase(database).map { "[\(SQLServerMetadataOperations.escapeIdentifier($0))]." } ?? ""
+        let pattern = "N'%\(SQLServerSQL.escapeLiteral(query))%'"
+        let dbPrefix = effectiveDatabase(database).map { "\(SQLServerSQL.escapeIdentifier($0))." } ?? ""
         let sql = """
             SELECT TOP \(limit)
                 TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, DATA_TYPE
@@ -198,8 +198,8 @@ extension SQLServerMetadataOperations {
     }
 
     public func searchIndexes(query: String, database: String? = nil, limit: Int = 50) -> EventLoopFuture<[IndexSearchResult]> {
-        let pattern = "N'%\(SQLServerMetadataOperations.escapeLiteral(query))%'"
-        let dbPrefix = effectiveDatabase(database).map { "[\(SQLServerMetadataOperations.escapeIdentifier($0))]." } ?? ""
+        let pattern = "N'%\(SQLServerSQL.escapeLiteral(query))%'"
+        let dbPrefix = effectiveDatabase(database).map { "\(SQLServerSQL.escapeIdentifier($0))." } ?? ""
         let sql = """
             SELECT TOP \(limit)
                 s.name AS schema_name,
@@ -229,8 +229,8 @@ extension SQLServerMetadataOperations {
     }
 
     public func searchForeignKeys(query: String, database: String? = nil, limit: Int = 50) -> EventLoopFuture<[ForeignKeySearchResult]> {
-        let pattern = "N'%\(SQLServerMetadataOperations.escapeLiteral(query))%'"
-        let dbPrefix = effectiveDatabase(database).map { "[\(SQLServerMetadataOperations.escapeIdentifier($0))]." } ?? ""
+        let pattern = "N'%\(SQLServerSQL.escapeLiteral(query))%'"
+        let dbPrefix = effectiveDatabase(database).map { "\(SQLServerSQL.escapeIdentifier($0))." } ?? ""
         let sql = """
             SELECT TOP \(limit)
                 s.name AS schema_name,

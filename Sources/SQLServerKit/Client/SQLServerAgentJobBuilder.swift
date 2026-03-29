@@ -299,21 +299,21 @@ public final class SQLServerAgentJobBuilder: @unchecked Sendable {
     private func validate() throws {
         let trimmedJobName = jobName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedJobName.isEmpty else {
-            throw NSError(domain: "SQLServerAgentJobBuilder", code: 1, userInfo: [NSLocalizedDescriptionKey: "Job name must not be empty."])
+            throw SQLServerError.invalidArgument("Job name must not be empty.")
         }
 
         for step in steps {
             guard !step.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                throw NSError(domain: "SQLServerAgentJobBuilder", code: 2, userInfo: [NSLocalizedDescriptionKey: "Job step name must not be empty."])
+                throw SQLServerError.invalidArgument("Job step name must not be empty.")
             }
             guard !step.command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                throw NSError(domain: "SQLServerAgentJobBuilder", code: 3, userInfo: [NSLocalizedDescriptionKey: "Job step command must not be empty."])
+                throw SQLServerError.invalidArgument("Job step command must not be empty.")
             }
         }
 
         for schedule in schedules {
             guard !schedule.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                throw NSError(domain: "SQLServerAgentJobBuilder", code: 4, userInfo: [NSLocalizedDescriptionKey: "Schedule name must not be empty."])
+                throw SQLServerError.invalidArgument("Schedule name must not be empty.")
             }
         }
     }

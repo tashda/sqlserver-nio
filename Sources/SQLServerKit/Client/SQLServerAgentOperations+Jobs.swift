@@ -109,29 +109,29 @@ extension SQLServerAgentOperations {
     // MARK: - Job Control
 
     internal func startJob(named jobName: String) -> EventLoopFuture<Void> {
-        run("EXEC msdb.dbo.sp_start_job @job_name = N'\(Self.escapeLiteral(jobName))';").map { _ in () }
+        run("EXEC msdb.dbo.sp_start_job @job_name = N'\(SQLServerSQL.escapeLiteral(jobName))';").map { _ in () }
     }
 
     internal func stopJob(named jobName: String) -> EventLoopFuture<Void> {
-        run("EXEC msdb.dbo.sp_stop_job @job_name = N'\(Self.escapeLiteral(jobName))';").map { _ in () }
+        run("EXEC msdb.dbo.sp_stop_job @job_name = N'\(SQLServerSQL.escapeLiteral(jobName))';").map { _ in () }
     }
 
     internal func deleteJob(named jobName: String) -> EventLoopFuture<Void> {
-        run("EXEC msdb.dbo.sp_delete_job @job_name = N'\(Self.escapeLiteral(jobName))';").map { _ in () }
+        run("EXEC msdb.dbo.sp_delete_job @job_name = N'\(SQLServerSQL.escapeLiteral(jobName))';").map { _ in () }
     }
 
     internal func enableJob(named jobName: String, enabled: Bool) -> EventLoopFuture<Void> {
         let flag = enabled ? 1 : 0
-        return run("EXEC msdb.dbo.sp_update_job @job_name = N'\(Self.escapeLiteral(jobName))', @enabled = \(flag);").map { _ in () }
+        return run("EXEC msdb.dbo.sp_update_job @job_name = N'\(SQLServerSQL.escapeLiteral(jobName))', @enabled = \(flag);").map { _ in () }
     }
 
     internal func createJob(named jobName: String, description: String? = nil, enabled: Bool = true, ownerLoginName: String? = nil) -> EventLoopFuture<Void> {
-        var sql = "EXEC msdb.dbo.sp_add_job @job_name = N'\(Self.escapeLiteral(jobName))', @enabled = \(enabled ? 1 : 0)"
-        if let description, !description.isEmpty { sql += ", @description = N'\(Self.escapeLiteral(description))'" }
-        if let ownerLoginName, !ownerLoginName.isEmpty { sql += ", @owner_login_name = N'\(Self.escapeLiteral(ownerLoginName))'" }
+        var sql = "EXEC msdb.dbo.sp_add_job @job_name = N'\(SQLServerSQL.escapeLiteral(jobName))', @enabled = \(enabled ? 1 : 0)"
+        if let description, !description.isEmpty { sql += ", @description = N'\(SQLServerSQL.escapeLiteral(description))'" }
+        if let ownerLoginName, !ownerLoginName.isEmpty { sql += ", @owner_login_name = N'\(SQLServerSQL.escapeLiteral(ownerLoginName))'" }
         sql += ";"
         return run(sql).flatMap { (rows: [TDSRow]) -> EventLoopFuture<Void> in
-            self.run("SELECT 1 FROM msdb.dbo.sysjobs WHERE name = N'\(Self.escapeLiteral(jobName))'").flatMap { (rows: [TDSRow]) -> EventLoopFuture<Void> in
+            self.run("SELECT 1 FROM msdb.dbo.sysjobs WHERE name = N'\(SQLServerSQL.escapeLiteral(jobName))'").flatMap { (rows: [TDSRow]) -> EventLoopFuture<Void> in
                 self.addJobServer(jobName: jobName).recover { _ in () }
             }
         }.map { _ in () }
@@ -140,10 +140,10 @@ extension SQLServerAgentOperations {
     internal func updateJob(named jobName: String, newName: String? = nil, description: String? = nil, ownerLoginName: String? = nil, categoryName: String? = nil, enabled: Bool? = nil, startStepId: Int? = nil, notifyLevelEventlog: Int? = nil) -> EventLoopFuture<Void> {
         return lookupJobId(jobName: jobName).flatMap { (jobId: String) -> EventLoopFuture<Void> in
             var parts: [String] = ["@job_id = N'\(jobId)'"]
-            if let newName, !newName.isEmpty { parts.append("@new_name = N'\(Self.escapeLiteral(newName))'") }
-            if let desc = description { parts.append("@description = N'\(Self.escapeLiteral(desc))'") }
-            if let owner = ownerLoginName { parts.append("@owner_login_name = N'\(Self.escapeLiteral(owner))'") }
-            if let category = categoryName { parts.append("@category_name = N'\(Self.escapeLiteral(category))'") }
+            if let newName, !newName.isEmpty { parts.append("@new_name = N'\(SQLServerSQL.escapeLiteral(newName))'") }
+            if let desc = description { parts.append("@description = N'\(SQLServerSQL.escapeLiteral(desc))'") }
+            if let owner = ownerLoginName { parts.append("@owner_login_name = N'\(SQLServerSQL.escapeLiteral(owner))'") }
+            if let category = categoryName { parts.append("@category_name = N'\(SQLServerSQL.escapeLiteral(category))'") }
             if let enabled { parts.append("@enabled = \(enabled ? 1 : 0)") }
             if let startStepId { parts.append("@start_step_id = \(startStepId)") }
             if let notifyLevelEventlog { parts.append("@notify_level_eventlog = \(notifyLevelEventlog)") }
@@ -161,7 +161,7 @@ extension SQLServerAgentOperations {
         return lookupJobId(jobName: jobName).flatMap { (jobId: String) -> EventLoopFuture<Void> in
             var sql = "EXEC msdb.dbo.sp_update_job @job_id = N'\(jobId)', @notify_level_email = \(notifyLevel)"
             if let operatorName, !operatorName.isEmpty {
-                sql += ", @notify_email_operator_name = N'\(Self.escapeLiteral(operatorName))'"
+                sql += ", @notify_email_operator_name = N'\(SQLServerSQL.escapeLiteral(operatorName))'"
             } else {
                 sql += ", @notify_email_operator_name = NULL"
             }
@@ -171,7 +171,7 @@ extension SQLServerAgentOperations {
                 let fallback: String
                 if let operatorName, !operatorName.isEmpty {
                     fallback = """
-                    DECLARE @opId INT = (SELECT id FROM msdb.dbo.sysoperators WHERE name = N'\(Self.escapeLiteral(operatorName))');
+                    DECLARE @opId INT = (SELECT id FROM msdb.dbo.sysoperators WHERE name = N'\(SQLServerSQL.escapeLiteral(operatorName))');
                     UPDATE msdb.dbo.sysjobs
                         SET notify_level_email = \(notifyLevel),
                             notify_email_operator_id = ISNULL(@opId, 0)
@@ -193,48 +193,64 @@ extension SQLServerAgentOperations {
     // MARK: - Steps
 
     internal func addTSQLStep(jobName: String, stepName: String, command: String, database: String? = nil) -> EventLoopFuture<Void> {
-        var sql = "EXEC msdb.dbo.sp_add_jobstep @job_name = N'\(Self.escapeLiteral(jobName))', @step_name = N'\(Self.escapeLiteral(stepName))', @subsystem = N'TSQL', @command = N'\(Self.escapeLiteral(command))'"
-        if let database, !database.isEmpty { sql += ", @database_name = N'\(Self.escapeLiteral(database))'" }
+        var sql = "EXEC msdb.dbo.sp_add_jobstep @job_name = N'\(SQLServerSQL.escapeLiteral(jobName))', @step_name = N'\(SQLServerSQL.escapeLiteral(stepName))', @subsystem = N'TSQL', @command = N'\(SQLServerSQL.escapeLiteral(command))'"
+        if let database, !database.isEmpty { sql += ", @database_name = N'\(SQLServerSQL.escapeLiteral(database))'" }
         sql += ";"
         return run(sql).map { _ in () }
     }
 
     internal func updateTSQLStep(jobName: String, stepName: String, newCommand: String, database: String? = nil) -> EventLoopFuture<Void> {
         return lookupStepId(jobName: jobName, stepName: stepName).flatMap { (stepId: Int) -> EventLoopFuture<Void> in
-            var sql = "EXEC msdb.dbo.sp_update_jobstep @job_name = N'\(Self.escapeLiteral(jobName))', @step_id = \(stepId), @command = N'\(Self.escapeLiteral(newCommand))'"
-            if let database, !database.isEmpty { sql += ", @database_name = N'\(Self.escapeLiteral(database))'" }
+            var sql = "EXEC msdb.dbo.sp_update_jobstep @job_name = N'\(SQLServerSQL.escapeLiteral(jobName))', @step_id = \(stepId), @command = N'\(SQLServerSQL.escapeLiteral(newCommand))'"
+            if let database, !database.isEmpty { sql += ", @database_name = N'\(SQLServerSQL.escapeLiteral(database))'" }
             sql += ";"
             return self.run(sql).map { _ in () }
         }
     }
 
     internal func addStep(jobName: String, stepName: String, subsystem: String, command: String, database: String? = nil, proxyName: String? = nil, outputFile: String? = nil) -> EventLoopFuture<Void> {
-        var sql = "EXEC msdb.dbo.sp_add_jobstep @job_name = N'\(Self.escapeLiteral(jobName))', @step_name = N'\(Self.escapeLiteral(stepName))', @subsystem = N'\(Self.escapeLiteral(subsystem))', @command = N'\(Self.escapeLiteral(command))'"
-        if let database, !database.isEmpty { sql += ", @database_name = N'\(Self.escapeLiteral(database))'" }
-        if let proxyName, !proxyName.isEmpty { sql += ", @proxy_name = N'\(Self.escapeLiteral(proxyName))'" }
-        if let outputFile, !outputFile.isEmpty { sql += ", @output_file_name = N'\(Self.escapeLiteral(outputFile))'" }
+        var sql = "EXEC msdb.dbo.sp_add_jobstep @job_name = N'\(SQLServerSQL.escapeLiteral(jobName))', @step_name = N'\(SQLServerSQL.escapeLiteral(stepName))', @subsystem = N'\(SQLServerSQL.escapeLiteral(subsystem))', @command = N'\(SQLServerSQL.escapeLiteral(command))'"
+        if let database, !database.isEmpty { sql += ", @database_name = N'\(SQLServerSQL.escapeLiteral(database))'" }
+        if let proxyName, !proxyName.isEmpty { sql += ", @proxy_name = N'\(SQLServerSQL.escapeLiteral(proxyName))'" }
+        if let outputFile, !outputFile.isEmpty { sql += ", @output_file_name = N'\(SQLServerSQL.escapeLiteral(outputFile))'" }
         sql += ";"
         return run(sql).map { _ in () }
     }
 
     internal func deleteStep(jobName: String, stepName: String) -> EventLoopFuture<Void> {
         return lookupStepId(jobName: jobName, stepName: stepName).flatMap { (stepId: Int) -> EventLoopFuture<Void> in
-            self.run("EXEC msdb.dbo.sp_delete_jobstep @job_name = N'\(Self.escapeLiteral(jobName))', @step_id = \(stepId);").map { _ in () }
+            self.run("EXEC msdb.dbo.sp_delete_jobstep @job_name = N'\(SQLServerSQL.escapeLiteral(jobName))', @step_id = \(stepId);").map { _ in () }
         }
     }
 
-    internal func listSteps(jobName: String) -> EventLoopFuture<[(id: Int, name: String, subsystem: String, database: String?, command: String?)]> {
+    internal func listSteps(jobName: String) -> EventLoopFuture<[SQLServerAgentJobStepDetail]> {
         let sql = """
-        SELECT s.step_id, s.step_name, s.subsystem, s.database_name, s.command
+        SELECT s.step_id, s.step_name, s.subsystem, s.database_name, s.command,
+               s.on_success_action, s.on_success_step_id, s.on_fail_action, s.on_fail_step_id,
+               s.retry_attempts, s.retry_interval
         FROM msdb.dbo.sysjobsteps AS s
         INNER JOIN msdb.dbo.sysjobs AS j ON s.job_id = j.job_id
-        WHERE j.name = N'\(Self.escapeLiteral(jobName))'
+        WHERE j.name = N'\(SQLServerSQL.escapeLiteral(jobName))'
         ORDER BY s.step_id;
         """
         return run(sql).map { rows in
             rows.compactMap { row in
-                guard let stepId = row.column("step_id")?.int, let stepName = row.column("step_name")?.string, let subsystem = row.column("subsystem")?.string else { return nil }
-                return (id: stepId, name: stepName, subsystem: subsystem, database: row.column("database_name")?.string, command: row.column("command")?.string)
+                guard let stepId = row.column("step_id")?.int,
+                      let stepName = row.column("step_name")?.string,
+                      let subsystem = row.column("subsystem")?.string else { return nil }
+                return SQLServerAgentJobStepDetail(
+                    stepId: stepId,
+                    name: stepName,
+                    subsystem: subsystem,
+                    command: row.column("command")?.string,
+                    databaseName: row.column("database_name")?.string,
+                    onSuccessAction: row.column("on_success_action")?.int,
+                    onSuccessStepId: row.column("on_success_step_id")?.int,
+                    onFailureAction: row.column("on_fail_action")?.int,
+                    onFailureStepId: row.column("on_fail_step_id")?.int,
+                    retryAttempts: row.column("retry_attempts")?.int,
+                    retryIntervalMinutes: row.column("retry_interval")?.int
+                )
             }
         }
     }
@@ -243,7 +259,7 @@ extension SQLServerAgentOperations {
 
     internal func getJobHistory(jobName: String? = nil, top: Int = 100) -> EventLoopFuture<[SQLServerAgentJobHistoryDetail]> {
         var params: [String] = ["@mode = 'FULL'"]
-        if let jobName { params.append("@job_name = N'\(Self.escapeLiteral(jobName))'") }
+        if let jobName { params.append("@job_name = N'\(SQLServerSQL.escapeLiteral(jobName))'") }
         let sql = "EXEC msdb.dbo.sp_help_jobhistory \(params.joined(separator: ", "));"
         return run(sql).map { rows in
             let entries = rows.compactMap { row -> SQLServerAgentJobHistoryDetail? in

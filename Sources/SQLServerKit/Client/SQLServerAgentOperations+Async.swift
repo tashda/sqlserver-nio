@@ -105,22 +105,14 @@ extension SQLServerAgentOperations {
     }
 
     @available(macOS 12.0, *)
-    public func listSteps(jobName: String) async throws -> [(id: Int, name: String, subsystem: String, database: String?, command: String?)] {
+    public func listSteps(jobName: String) async throws -> [SQLServerAgentJobStepDetail] {
         try await listSteps(jobName: jobName).get()
     }
 
+    @available(*, deprecated, renamed: "listSteps(jobName:)")
     @available(macOS 12.0, *)
     public func getJobSteps(jobName: String) async throws -> [SQLServerAgentJobStepDetail] {
-        let steps = try await listSteps(jobName: jobName).get()
-        return steps.map { step in
-            SQLServerAgentJobStepDetail(
-                stepId: step.id,
-                name: step.name,
-                subsystem: step.subsystem,
-                command: step.command,
-                databaseName: step.database
-            )
-        }
+        try await listSteps(jobName: jobName)
     }
 
     @available(macOS 12.0, *)

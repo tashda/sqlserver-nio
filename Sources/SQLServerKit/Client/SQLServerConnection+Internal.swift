@@ -10,7 +10,7 @@ extension SQLServerConnection {
             return eventLoop.makeSucceededFuture(())
         }
         let fut = executeWithRetry(operationName: "changeDatabase") {
-            let sql = "USE \(Self.escapeIdentifier(database));"
+            let sql = "USE \(SQLServerSQL.escapeIdentifier(database));"
             return self.runBatch(sql).map { _ in
                 self.setCurrentDatabase(database)
                 self.logger.debug("Database context changed to \(database)")
@@ -122,10 +122,6 @@ extension SQLServerConnection {
     internal func setCurrentDatabase(_ database: String) {
         stateLock.withLock { _currentDatabase = database }
         metadataClient.updateDefaultDatabase(database)
-    }
-
-    internal static func escapeIdentifier(_ identifier: String) -> String {
-        return identifier.replacingOccurrences(of: "]", with: "]]")
     }
 
     internal static func equalsIgnoreCase(_ a: String, _ b: String) -> Bool {

@@ -72,8 +72,8 @@ extension SQLServerSecurityClient {
     /// Enables or disables a security policy.
     @available(macOS 12.0, *)
     public func alterSecurityPolicyState(name: String, schema: String, enabled: Bool) async throws {
-        let escapedSchema = Self.escapeIdentifier(schema)
-        let escapedName = Self.escapeIdentifier(name)
+        let escapedSchema = SQLServerSQL.escapeIdentifier(schema)
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
         let state = enabled ? "ON" : "OFF"
         _ = try await exec("ALTER SECURITY POLICY \(escapedSchema).\(escapedName) WITH (STATE = \(state))")
     }
@@ -81,8 +81,8 @@ extension SQLServerSecurityClient {
     /// Drops a security policy.
     @available(macOS 12.0, *)
     public func dropSecurityPolicy(name: String, schema: String) async throws {
-        let escapedSchema = Self.escapeIdentifier(schema)
-        let escapedName = Self.escapeIdentifier(name)
+        let escapedSchema = SQLServerSQL.escapeIdentifier(schema)
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
         _ = try await exec("DROP SECURITY POLICY \(escapedSchema).\(escapedName)")
     }
 
@@ -128,12 +128,12 @@ extension SQLServerSecurityClient {
             throw SQLServerError.invalidArgument("At least one predicate is required to create a security policy")
         }
 
-        let policyName = "\(Self.escapeIdentifier(schema)).\(Self.escapeIdentifier(name))"
+        let policyName = "\(SQLServerSQL.escapeIdentifier(schema)).\(SQLServerSQL.escapeIdentifier(name))"
 
         var predicateClauses: [String] = []
         for pred in predicates {
-            let funcName = "\(Self.escapeIdentifier(pred.functionSchema)).\(Self.escapeIdentifier(pred.functionName))"
-            let tableName = "\(Self.escapeIdentifier(pred.targetSchema)).\(Self.escapeIdentifier(pred.targetTable))"
+            let funcName = "\(SQLServerSQL.escapeIdentifier(pred.functionSchema)).\(SQLServerSQL.escapeIdentifier(pred.functionName))"
+            let tableName = "\(SQLServerSQL.escapeIdentifier(pred.targetSchema)).\(SQLServerSQL.escapeIdentifier(pred.targetTable))"
             let predicateArguments = try await predicateArgumentList(
                 functionName: pred.functionName,
                 functionSchema: pred.functionSchema
@@ -161,9 +161,9 @@ extension SQLServerSecurityClient {
         policySchema: String,
         predicate: SecurityPredicateDefinition
     ) async throws {
-        let policy = "\(Self.escapeIdentifier(policySchema)).\(Self.escapeIdentifier(policyName))"
-        let funcName = "\(Self.escapeIdentifier(predicate.functionSchema)).\(Self.escapeIdentifier(predicate.functionName))"
-        let tableName = "\(Self.escapeIdentifier(predicate.targetSchema)).\(Self.escapeIdentifier(predicate.targetTable))"
+        let policy = "\(SQLServerSQL.escapeIdentifier(policySchema)).\(SQLServerSQL.escapeIdentifier(policyName))"
+        let funcName = "\(SQLServerSQL.escapeIdentifier(predicate.functionSchema)).\(SQLServerSQL.escapeIdentifier(predicate.functionName))"
+        let tableName = "\(SQLServerSQL.escapeIdentifier(predicate.targetSchema)).\(SQLServerSQL.escapeIdentifier(predicate.targetTable))"
         let predicateArguments = try await predicateArgumentList(
             functionName: predicate.functionName,
             functionSchema: predicate.functionSchema
@@ -189,8 +189,8 @@ extension SQLServerSecurityClient {
         targetSchema: String,
         blockOperation: BlockOperation? = nil
     ) async throws {
-        let policy = "\(Self.escapeIdentifier(policySchema)).\(Self.escapeIdentifier(policyName))"
-        let tableName = "\(Self.escapeIdentifier(targetSchema)).\(Self.escapeIdentifier(targetTable))"
+        let policy = "\(SQLServerSQL.escapeIdentifier(policySchema)).\(SQLServerSQL.escapeIdentifier(policyName))"
+        let tableName = "\(SQLServerSQL.escapeIdentifier(targetSchema)).\(SQLServerSQL.escapeIdentifier(targetTable))"
         let keyword = predicateType == .filter ? "FILTER" : "BLOCK"
 
         var clause = "DROP \(keyword) PREDICATE ON \(tableName)"
@@ -219,7 +219,7 @@ extension SQLServerSecurityClient {
                 return nil
             }
             let columnName = parameterName.hasPrefix("@") ? String(parameterName.dropFirst()) : parameterName
-            return Self.escapeIdentifier(columnName)
+            return SQLServerSQL.escapeIdentifier(columnName)
         }
 
         return arguments.joined(separator: ", ")

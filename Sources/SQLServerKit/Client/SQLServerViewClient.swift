@@ -58,8 +58,8 @@ public final class SQLServerViewClient: @unchecked Sendable {
         query: String,
         options: ViewOptions = ViewOptions()
     ) async throws {
-        let escapedName = Self.escapeIdentifier(name)
-        let schemaPrefix = options.schema != "dbo" ? "\(Self.escapeIdentifier(options.schema))." : ""
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
+        let schemaPrefix = options.schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(options.schema))." : ""
         let fullName = "\(schemaPrefix)\(escapedName)"
         
         var sql = "CREATE VIEW \(fullName)"
@@ -103,8 +103,8 @@ public final class SQLServerViewClient: @unchecked Sendable {
     
     @available(macOS 12.0, *)
     public func dropView(name: String, schema: String = "dbo") async throws {
-        let escapedName = Self.escapeIdentifier(name)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullName = "\(schemaPrefix)\(escapedName)"
         
         let sql = "DROP VIEW \(fullName)"
@@ -133,8 +133,8 @@ public final class SQLServerViewClient: @unchecked Sendable {
         query: String,
         options: ViewOptions = ViewOptions()
     ) async throws {
-        let escapedName = Self.escapeIdentifier(name)
-        let schemaPrefix = options.schema != "dbo" ? "\(Self.escapeIdentifier(options.schema))." : ""
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
+        let schemaPrefix = options.schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(options.schema))." : ""
         let fullName = "\(schemaPrefix)\(escapedName)"
         
         var sql = "ALTER VIEW \(fullName)"
@@ -205,12 +205,12 @@ public final class SQLServerViewClient: @unchecked Sendable {
         try await createView(name: name, query: query, options: viewOptions)
         
         // Then create the clustered index
-        let escapedViewName = Self.escapeIdentifier(name)
-        let schemaPrefix = options.schema != "dbo" ? "\(Self.escapeIdentifier(options.schema))." : ""
+        let escapedViewName = SQLServerSQL.escapeIdentifier(name)
+        let schemaPrefix = options.schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(options.schema))." : ""
         let fullViewName = "\(schemaPrefix)\(escapedViewName)"
-        let escapedIndexName = Self.escapeIdentifier(indexName)
+        let escapedIndexName = SQLServerSQL.escapeIdentifier(indexName)
         
-        let columnList = indexColumns.map { Self.escapeIdentifier($0) }.joined(separator: ", ")
+        let columnList = indexColumns.map { SQLServerSQL.escapeIdentifier($0) }.joined(separator: ", ")
         let indexSql = """
         CREATE UNIQUE CLUSTERED INDEX \(escapedIndexName)
         ON \(fullViewName) (\(columnList))
@@ -270,15 +270,11 @@ public final class SQLServerViewClient: @unchecked Sendable {
     public func refreshIndexedView(name: String, schema: String = "dbo") async throws {
         // In SQL Server, indexed views are automatically maintained
         // This method could be used for statistics updates or other maintenance
-        let escapedName = Self.escapeIdentifier(name)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullName = "\(schemaPrefix)\(escapedName)"
         
         let sql = "UPDATE STATISTICS \(fullName)"
         _ = try await client.execute(sql)
-    }
-    
-    private static func escapeIdentifier(_ identifier: String) -> String {
-        "[\(identifier.replacingOccurrences(of: "]", with: "]]"))]"
     }
 }

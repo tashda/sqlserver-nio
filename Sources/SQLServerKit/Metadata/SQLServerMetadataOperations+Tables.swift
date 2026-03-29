@@ -40,7 +40,7 @@ extension SQLServerMetadataOperations {
         ]
 
         if let schema {
-            predicates.append("s.name = N'\(Self.escapeLiteral(schema))'")
+            predicates.append("s.name = N'\(SQLServerSQL.escapeLiteral(schema))'")
         }
 
         if !self.configuration.includeSystemSchemas {

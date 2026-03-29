@@ -324,7 +324,7 @@ extension SQLServerConnection {
 
     private func savepointIdentifier(_ name: String) -> String {
         if name.contains(" ") || name.contains("-") || name.contains(".") {
-            return Self.escapeIdentifier(name)
+            return SQLServerSQL.escapeIdentifier(name)
         }
         return name
     }

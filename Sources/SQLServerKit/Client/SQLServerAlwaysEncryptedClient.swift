@@ -19,10 +19,6 @@ public final class SQLServerAlwaysEncryptedClient: @unchecked Sendable {
         self.client = client
     }
 
-    private static func escapeIdentifier(_ identifier: String) -> String {
-        "[\(identifier.replacingOccurrences(of: "]", with: "]]"))]"
-    }
-
     // MARK: - Column Master Keys
 
     /// Lists all column master keys in the current database.
@@ -62,7 +58,7 @@ public final class SQLServerAlwaysEncryptedClient: @unchecked Sendable {
     ///   - allowEnclaveComputations: When `true`, enables secure enclave computations for this CMK (SQL Server 2019+).
     @available(macOS 12.0, *)
     public func createColumnMasterKey(name: String, keyStoreProviderName: String, keyPath: String, allowEnclaveComputations: Bool = false) async throws {
-        let escapedName = Self.escapeIdentifier(name)
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
         let escapedProvider = keyStoreProviderName.replacingOccurrences(of: "'", with: "''")
         let escapedPath = keyPath.replacingOccurrences(of: "'", with: "''")
         var sql = """
@@ -80,7 +76,7 @@ public final class SQLServerAlwaysEncryptedClient: @unchecked Sendable {
     /// Drops a column master key.
     @available(macOS 12.0, *)
     public func dropColumnMasterKey(name: String) async throws {
-        let escapedName = Self.escapeIdentifier(name)
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
         _ = try await client.execute("DROP COLUMN MASTER KEY \(escapedName)")
     }
 
@@ -131,8 +127,8 @@ public final class SQLServerAlwaysEncryptedClient: @unchecked Sendable {
     /// Creates a column encryption key.
     @available(macOS 12.0, *)
     public func createColumnEncryptionKey(name: String, cmkName: String, algorithm: String, encryptedValue: String) async throws {
-        let escapedName = Self.escapeIdentifier(name)
-        let escapedCMK = Self.escapeIdentifier(cmkName)
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
+        let escapedCMK = SQLServerSQL.escapeIdentifier(cmkName)
         let escapedAlgo = algorithm.replacingOccurrences(of: "'", with: "''")
         let sql = """
         CREATE COLUMN ENCRYPTION KEY \(escapedName)
@@ -148,7 +144,7 @@ public final class SQLServerAlwaysEncryptedClient: @unchecked Sendable {
     /// Drops a column encryption key.
     @available(macOS 12.0, *)
     public func dropColumnEncryptionKey(name: String) async throws {
-        let escapedName = Self.escapeIdentifier(name)
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
         _ = try await client.execute("DROP COLUMN ENCRYPTION KEY \(escapedName)")
     }
 

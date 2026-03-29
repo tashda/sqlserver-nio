@@ -175,8 +175,8 @@ extension SQLServerMetadataOperations {
     }
 
     internal func isViewObject(database: String?, schema: String, table: String) -> EventLoopFuture<Bool> {
-        let dbPrefix = database.map { "[\(SQLServerMetadataOperations.escapeIdentifier($0))]." } ?? ""
-        let sql = "SELECT is_view = CONVERT(bit, OBJECTPROPERTYEX(OBJECT_ID(N'\(dbPrefix)[\(SQLServerMetadataOperations.escapeIdentifier(schema))].[\(SQLServerMetadataOperations.escapeIdentifier(table))]'), 'IsView'))"
+        let dbPrefix = database.map { "\(SQLServerSQL.escapeIdentifier($0))." } ?? ""
+        let sql = "SELECT is_view = CONVERT(bit, OBJECTPROPERTYEX(OBJECT_ID(N'\(dbPrefix)\(SQLServerSQL.escapeIdentifier(schema)).\(SQLServerSQL.escapeIdentifier(table))'), 'IsView'))"
         return queryExecutor(sql).map { rows in
             guard let value = rows.first?.column("is_view")?.int else { return false }
             return value != 0
@@ -184,9 +184,9 @@ extension SQLServerMetadataOperations {
     }
 
     internal func fetchColumnComments(database: String?, schema: String, table: String) -> EventLoopFuture<[String: String]> {
-        let dbPrefix = effectiveDatabase(database).map { "[\(SQLServerMetadataOperations.escapeIdentifier($0))]." } ?? ""
-        let escapedSchema = SQLServerMetadataOperations.escapeLiteral(schema)
-        let escapedTable = SQLServerMetadataOperations.escapeLiteral(table)
+        let dbPrefix = effectiveDatabase(database).map { "\(SQLServerSQL.escapeIdentifier($0))." } ?? ""
+        let escapedSchema = SQLServerSQL.escapeLiteral(schema)
+        let escapedTable = SQLServerSQL.escapeLiteral(table)
         let sql = """
         SELECT c.name AS column_name, comment = ISNULL(CAST(ep.value AS NVARCHAR(4000)), '')
         FROM \(dbPrefix)sys.columns AS c WITH (NOLOCK)
@@ -213,12 +213,12 @@ extension SQLServerMetadataOperations {
         table: String
     ) -> EventLoopFuture<[ColumnMetadata]> {
         var parameters: [String] = [
-            "@table_name = N'\(SQLServerMetadataOperations.escapeLiteral(table))'",
-            "@table_owner = N'\(SQLServerMetadataOperations.escapeLiteral(schema))'",
+            "@table_name = N'\(SQLServerSQL.escapeLiteral(table))'",
+            "@table_owner = N'\(SQLServerSQL.escapeLiteral(schema))'",
             "@ODBCVer = 3"
         ]
         if let qualifier = effectiveDatabase(database) {
-            parameters.append("@table_qualifier = N'\(SQLServerMetadataOperations.escapeLiteral(qualifier))'")
+            parameters.append("@table_qualifier = N'\(SQLServerSQL.escapeLiteral(qualifier))'")
         }
         let sql = "SET NOCOUNT ON; EXEC sp_columns_100 \(parameters.joined(separator: ", "));"
 
@@ -268,8 +268,8 @@ extension SQLServerMetadataOperations {
         includeDefaultMetadata: Bool,
         includeComments: Bool
     ) -> EventLoopFuture<[ColumnMetadata]> {
-        let escapedSchema = SQLServerMetadataOperations.escapeLiteral(schema)
-        let escapedTable = SQLServerMetadataOperations.escapeLiteral(table)
+        let escapedSchema = SQLServerSQL.escapeLiteral(schema)
+        let escapedTable = SQLServerSQL.escapeLiteral(table)
         
         let defaultSelect = isView || !includeDefaultMetadata ? "NULL AS default_definition" : "CAST(dc.definition AS NVARCHAR(4000)) AS default_definition"
         let computedSelect = isView || !includeDefaultMetadata ? "NULL AS computed_definition" : "CAST(cc.definition AS NVARCHAR(4000)) AS computed_definition"
@@ -394,7 +394,7 @@ extension SQLServerMetadataOperations {
 
         var predicates: [String] = ["o.type IN ('U', 'V')"]
         if let schema {
-            predicates.append("s.name = N'\(SQLServerMetadataOperations.escapeLiteral(schema))'")
+            predicates.append("s.name = N'\(SQLServerSQL.escapeLiteral(schema))'")
         }
         if !self.configuration.includeSystemSchemas {
             predicates.append("s.name NOT IN ('sys', 'INFORMATION_SCHEMA')")

@@ -36,13 +36,11 @@ public struct SQLServerBulkCopyOptions: Sendable {
     }
     
     internal var qualifiedTableName: String {
-        let escapedSchema = SQLServerBulkCopyClient.escapeIdentifier(schema)
-        let escapedTable = SQLServerBulkCopyClient.escapeIdentifier(table)
-        return "[\(escapedSchema)].[\(escapedTable)]"
+        "\(SQLServerSQL.escapeIdentifier(schema)).\(SQLServerSQL.escapeIdentifier(table))"
     }
-    
+
     internal var columnList: String {
-        columns.map { "[\(SQLServerBulkCopyClient.escapeIdentifier($0))]" }.joined(separator: ", ")
+        columns.map { SQLServerSQL.escapeIdentifier($0) }.joined(separator: ", ")
     }
 }
 
@@ -163,9 +161,6 @@ public final class SQLServerBulkCopyClient {
         )
     }
     
-    static func escapeIdentifier(_ identifier: String) -> String {
-        identifier.replacingOccurrences(of: "]", with: "]]")
-    }
 }
 
 private extension Array {

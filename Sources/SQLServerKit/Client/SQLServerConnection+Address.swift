@@ -39,7 +39,7 @@ extension SQLServerConnection {
         @Sendable
         func attempt(_ remaining: [SocketAddress]) -> EventLoopFuture<TDSConnection> {
             guard let next = remaining.first else {
-                return eventLoop.makeFailedFuture(SQLServerError.transient(NSError(domain: "SQLServerConnection", code: 4, userInfo: [NSLocalizedDescriptionKey: "No more addresses to try"])))
+                return eventLoop.makeFailedFuture(SQLServerError.invalidArgument("No more addresses to try"))
             }
             return TDSConnection.connect(
                 to: next,

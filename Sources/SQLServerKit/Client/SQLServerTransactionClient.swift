@@ -79,7 +79,7 @@ public final class SQLServerTransactionClient: @unchecked Sendable {
 
     /// Creates a savepoint with the specified name
     internal func createSavepoint(name: String) -> EventLoopFuture<Void> {
-        let escapedName = escapeIdentifier(name)
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
         return client.execute("SAVE TRANSACTION \(escapedName)").map { _ in
             self.activeSavepoints.append(name)
         }
@@ -88,7 +88,7 @@ public final class SQLServerTransactionClient: @unchecked Sendable {
     /// Creates a savepoint with the specified name (async version)
     @available(macOS 12.0, *)
     public func createSavepoint(name: String) async throws {
-        let escapedName = escapeIdentifier(name)
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
         _ = try await client.execute("SAVE TRANSACTION \(escapedName)")
         activeSavepoints.append(name)
     }
@@ -106,7 +106,7 @@ public final class SQLServerTransactionClient: @unchecked Sendable {
 
     /// Rolls back to the specified savepoint
     internal func rollbackToSavepoint(name: String) -> EventLoopFuture<Void> {
-        let escapedName = escapeIdentifier(name)
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
         return client.execute("ROLLBACK TRANSACTION \(escapedName)").map { _ in
             // Remove this savepoint and any savepoints created after it
             if let index = self.activeSavepoints.firstIndex(of: name) {
@@ -118,7 +118,7 @@ public final class SQLServerTransactionClient: @unchecked Sendable {
     /// Rolls back to the specified savepoint (async version)
     @available(macOS 12.0, *)
     public func rollbackToSavepoint(name: String) async throws {
-        let escapedName = escapeIdentifier(name)
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
         _ = try await client.execute("ROLLBACK TRANSACTION \(escapedName)")
         if let index = self.activeSavepoints.firstIndex(of: name) {
             self.activeSavepoints.removeSubrange(index...)
@@ -412,15 +412,6 @@ public final class SQLServerTransactionClient: @unchecked Sendable {
         }
     }
 
-    // MARK: - Helper Methods
-
-    private func escapeIdentifier(_ identifier: String) -> String {
-        // Basic SQL identifier escaping
-        if identifier.contains(" ") || identifier.contains("-") || identifier.contains(".") {
-            return "[\(identifier.replacingOccurrences(of: "]", with: "]]"))]"
-        }
-        return identifier
-    }
 }
 
 // MARK: - Supporting Types

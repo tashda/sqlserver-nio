@@ -43,7 +43,7 @@ extension SQLServerAgentOperations {
         return fetchProxyAndCredentialPermissions().flatMapThrowing { report in
             let hasOperator = report.msdbRoles.contains { $0.caseInsensitiveCompare("SQLAgentOperatorRole") == .orderedSame }
             guard report.isSysadmin || (report.hasAlterAnyCredential && hasOperator) else {
-                throw NSError(domain: "SQLServerAgentOperations", code: 2003, userInfo: [NSLocalizedDescriptionKey: "Principal lacks permissions to manage Agent proxies or credentials."])
+                throw SQLServerError.invalidArgument("Principal lacks permissions to manage Agent proxies or credentials.")
             }
         }
     }

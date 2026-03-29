@@ -86,9 +86,9 @@ public final class SQLServerTriggerClient: @unchecked Sendable {
             throw SQLServerError.invalidArgument("At least one trigger event is required")
         }
         
-        let escapedTriggerName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = options.schema != "dbo" ? "\(Self.escapeIdentifier(options.schema))." : ""
+        let escapedTriggerName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = options.schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(options.schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
         
         var sql = "CREATE TRIGGER \(escapedTriggerName)"
@@ -132,8 +132,8 @@ public final class SQLServerTriggerClient: @unchecked Sendable {
     
     @available(macOS 12.0, *)
     public func dropTrigger(name: String, schema: String = "dbo") async throws {
-        let escapedTriggerName = Self.escapeIdentifier(name)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedTriggerName = SQLServerSQL.escapeIdentifier(name)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTriggerName = "\(schemaPrefix)\(escapedTriggerName)"
         
         let sql = "DROP TRIGGER \(fullTriggerName)"
@@ -172,9 +172,9 @@ public final class SQLServerTriggerClient: @unchecked Sendable {
             throw SQLServerError.invalidArgument("At least one trigger event is required")
         }
         
-        let escapedTriggerName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = options.schema != "dbo" ? "\(Self.escapeIdentifier(options.schema))." : ""
+        let escapedTriggerName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = options.schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(options.schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
         
         var sql = "ALTER TRIGGER \(escapedTriggerName)"
@@ -220,9 +220,9 @@ public final class SQLServerTriggerClient: @unchecked Sendable {
     
     @available(macOS 12.0, *)
     public func enableTrigger(name: String, table: String, schema: String = "dbo") async throws {
-        let escapedTriggerName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedTriggerName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
         
         let sql = "ENABLE TRIGGER \(escapedTriggerName) ON \(fullTableName)"
@@ -243,9 +243,9 @@ public final class SQLServerTriggerClient: @unchecked Sendable {
     
     @available(macOS 12.0, *)
     public func disableTrigger(name: String, table: String, schema: String = "dbo") async throws {
-        let escapedTriggerName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedTriggerName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
         
         let sql = "DISABLE TRIGGER \(escapedTriggerName) ON \(fullTableName)"
@@ -266,8 +266,8 @@ public final class SQLServerTriggerClient: @unchecked Sendable {
     
     @available(macOS 12.0, *)
     public func enableAllTriggers(table: String, schema: String = "dbo") async throws {
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
         
         let sql = "ENABLE TRIGGER ALL ON \(fullTableName)"
@@ -288,8 +288,8 @@ public final class SQLServerTriggerClient: @unchecked Sendable {
     
     @available(macOS 12.0, *)
     public func disableAllTriggers(table: String, schema: String = "dbo") async throws {
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
         
         let sql = "DISABLE TRIGGER ALL ON \(fullTableName)"
@@ -488,7 +488,7 @@ public final class SQLServerTriggerClient: @unchecked Sendable {
             let eventsSql = """
             SELECT te.type_desc
             FROM sys.server_trigger_events AS te
-            WHERE te.object_id = (SELECT object_id FROM sys.server_triggers WHERE name = N'\(Self.escapeLiteral(name))')
+            WHERE te.object_id = (SELECT object_id FROM sys.server_triggers WHERE name = N'\(SQLServerSQL.escapeLiteral(name))')
             """
             let eventRows = try await client.query(eventsSql)
             let events = eventRows.compactMap { $0.column("type_desc")?.string }
@@ -513,7 +513,7 @@ public final class SQLServerTriggerClient: @unchecked Sendable {
         SELECT m.definition
         FROM sys.server_triggers AS t
         INNER JOIN sys.server_sql_modules AS m ON m.object_id = t.object_id
-        WHERE t.name = N'\(Self.escapeLiteral(name))'
+        WHERE t.name = N'\(SQLServerSQL.escapeLiteral(name))'
         """
         return try await client.queryScalar(sql, as: String.self)
     }
@@ -521,19 +521,19 @@ public final class SQLServerTriggerClient: @unchecked Sendable {
     /// Enables a server-level trigger.
     @available(macOS 12.0, *)
     public func enableServerTrigger(name: String) async throws {
-        _ = try await client.execute("ENABLE TRIGGER \(Self.escapeIdentifier(name)) ON ALL SERVER")
+        _ = try await client.execute("ENABLE TRIGGER \(SQLServerSQL.escapeIdentifier(name)) ON ALL SERVER")
     }
 
     /// Disables a server-level trigger.
     @available(macOS 12.0, *)
     public func disableServerTrigger(name: String) async throws {
-        _ = try await client.execute("DISABLE TRIGGER \(Self.escapeIdentifier(name)) ON ALL SERVER")
+        _ = try await client.execute("DISABLE TRIGGER \(SQLServerSQL.escapeIdentifier(name)) ON ALL SERVER")
     }
 
     /// Drops a server-level trigger.
     @available(macOS 12.0, *)
     public func dropServerTrigger(name: String) async throws {
-        _ = try await client.execute("DROP TRIGGER \(Self.escapeIdentifier(name)) ON ALL SERVER")
+        _ = try await client.execute("DROP TRIGGER \(SQLServerSQL.escapeIdentifier(name)) ON ALL SERVER")
     }
 
     // MARK: - Database-Level DDL Triggers
@@ -541,7 +541,7 @@ public final class SQLServerTriggerClient: @unchecked Sendable {
     /// Lists all database-level DDL triggers in the specified database.
     @available(macOS 12.0, *)
     public func listDatabaseDDLTriggers(database: String) async throws -> [DatabaseDDLTriggerMetadata] {
-        let db = Self.escapeIdentifier(database)
+        let db = SQLServerSQL.escapeIdentifier(database)
         let sql = """
         SELECT
             t.name,
@@ -563,7 +563,7 @@ public final class SQLServerTriggerClient: @unchecked Sendable {
             SELECT te.type_desc
             FROM \(db).sys.trigger_events AS te
             INNER JOIN \(db).sys.triggers AS t ON t.object_id = te.object_id
-            WHERE t.name = N'\(Self.escapeLiteral(name))'
+            WHERE t.name = N'\(SQLServerSQL.escapeLiteral(name))'
               AND t.parent_class = 0
             """
             let eventRows = try await client.query(eventsSql)
@@ -584,12 +584,12 @@ public final class SQLServerTriggerClient: @unchecked Sendable {
     /// Gets the T-SQL definition of a database-level DDL trigger.
     @available(macOS 12.0, *)
     public func getDatabaseDDLTriggerDefinition(name: String, database: String) async throws -> String? {
-        let db = Self.escapeIdentifier(database)
+        let db = SQLServerSQL.escapeIdentifier(database)
         let sql = """
         SELECT m.definition
         FROM \(db).sys.triggers AS t
         INNER JOIN \(db).sys.sql_modules AS m ON m.object_id = t.object_id
-        WHERE t.name = N'\(Self.escapeLiteral(name))'
+        WHERE t.name = N'\(SQLServerSQL.escapeLiteral(name))'
           AND t.parent_class = 0
         """
         return try await client.queryScalar(sql, as: String.self)
@@ -598,7 +598,7 @@ public final class SQLServerTriggerClient: @unchecked Sendable {
     /// Enables a database-level DDL trigger.
     @available(macOS 12.0, *)
     public func enableDatabaseDDLTrigger(name: String, database: String) async throws {
-        let sql = "ENABLE TRIGGER \(Self.escapeIdentifier(name)) ON DATABASE"
+        let sql = "ENABLE TRIGGER \(SQLServerSQL.escapeIdentifier(name)) ON DATABASE"
         try await client.withDatabase(database) { connection in
             _ = try await connection.execute(sql)
         }
@@ -607,7 +607,7 @@ public final class SQLServerTriggerClient: @unchecked Sendable {
     /// Disables a database-level DDL trigger.
     @available(macOS 12.0, *)
     public func disableDatabaseDDLTrigger(name: String, database: String) async throws {
-        let sql = "DISABLE TRIGGER \(Self.escapeIdentifier(name)) ON DATABASE"
+        let sql = "DISABLE TRIGGER \(SQLServerSQL.escapeIdentifier(name)) ON DATABASE"
         try await client.withDatabase(database) { connection in
             _ = try await connection.execute(sql)
         }
@@ -616,7 +616,7 @@ public final class SQLServerTriggerClient: @unchecked Sendable {
     /// Drops a database-level DDL trigger.
     @available(macOS 12.0, *)
     public func dropDatabaseDDLTrigger(name: String, database: String) async throws {
-        let sql = "DROP TRIGGER \(Self.escapeIdentifier(name)) ON DATABASE"
+        let sql = "DROP TRIGGER \(SQLServerSQL.escapeIdentifier(name)) ON DATABASE"
         try await client.withDatabase(database) { connection in
             _ = try await connection.execute(sql)
         }
@@ -641,10 +641,10 @@ public final class SQLServerTriggerClient: @unchecked Sendable {
         guard !events.isEmpty else {
             throw SQLServerError.invalidArgument("At least one DDL event is required")
         }
-        var sql = "CREATE TRIGGER \(Self.escapeIdentifier(name))\nON ALL SERVER"
+        var sql = "CREATE TRIGGER \(SQLServerSQL.escapeIdentifier(name))\nON ALL SERVER"
         var optionParts: [String] = []
         if options.withEncryption { optionParts.append("ENCRYPTION") }
-        if let executeAs = options.executeAs { optionParts.append("EXECUTE AS '\(Self.escapeLiteral(executeAs))'") }
+        if let executeAs = options.executeAs { optionParts.append("EXECUTE AS '\(SQLServerSQL.escapeLiteral(executeAs))'") }
         if !optionParts.isEmpty { sql += "\nWITH \(optionParts.joined(separator: ", "))" }
         sql += "\nAFTER \(events.joined(separator: ", "))"
         sql += "\nAS\n\(body)"
@@ -671,10 +671,10 @@ public final class SQLServerTriggerClient: @unchecked Sendable {
             throw SQLServerError.invalidArgument("At least one DDL event is required")
         }
         
-        var sql = "CREATE TRIGGER \(Self.escapeIdentifier(name))\nON DATABASE"
+        var sql = "CREATE TRIGGER \(SQLServerSQL.escapeIdentifier(name))\nON DATABASE"
         var optionParts: [String] = []
         if options.withEncryption { optionParts.append("ENCRYPTION") }
-        if let executeAs = options.executeAs { optionParts.append("EXECUTE AS '\(Self.escapeLiteral(executeAs))'") }
+        if let executeAs = options.executeAs { optionParts.append("EXECUTE AS '\(SQLServerSQL.escapeLiteral(executeAs))'") }
         if !optionParts.isEmpty { sql += "\nWITH \(optionParts.joined(separator: ", "))" }
         sql += "\nAFTER \(events.joined(separator: ", "))"
         sql += "\nAS\n\(body)"
@@ -684,13 +684,4 @@ public final class SQLServerTriggerClient: @unchecked Sendable {
         }
     }
 
-    // MARK: - Helpers
-
-    private static func escapeIdentifier(_ identifier: String) -> String {
-        "[\(identifier.replacingOccurrences(of: "]", with: "]]"))]"
-    }
-
-    private static func escapeLiteral(_ literal: String) -> String {
-        literal.replacingOccurrences(of: "'", with: "''")
-    }
 }

@@ -26,9 +26,9 @@ extension SQLServerMetadataOperations {
         schema: String?,
         table: String
     ) -> EventLoopFuture<[KeyConstraintMetadata]> {
-        var parameters: [String] = ["@table_name = N'\(SQLServerMetadataOperations.escapeLiteral(table))'"]
-        if let schema { parameters.append("@table_owner = N'\(SQLServerMetadataOperations.escapeLiteral(schema))'") }
-        if let database { parameters.append("@table_qualifier = N'\(SQLServerMetadataOperations.escapeLiteral(database))'") }
+        var parameters: [String] = ["@table_name = N'\(SQLServerSQL.escapeLiteral(table))'"]
+        if let schema { parameters.append("@table_owner = N'\(SQLServerSQL.escapeLiteral(schema))'") }
+        if let database { parameters.append("@table_qualifier = N'\(SQLServerSQL.escapeLiteral(database))'") }
         
         let sql = "SET NOCOUNT ON; EXEC sp_pkeys \(parameters.joined(separator: ", "));"
 
@@ -83,8 +83,8 @@ extension SQLServerMetadataOperations {
         WHERE kc.type = '\(type == .primaryKey ? "PK" : "UQ")'
         """
         var predicates: [String] = []
-        if let schema { predicates.append("s.name = N'\(SQLServerMetadataOperations.escapeLiteral(schema))'") }
-        if let table { predicates.append("t.name = N'\(SQLServerMetadataOperations.escapeLiteral(table))'") }
+        if let schema { predicates.append("s.name = N'\(SQLServerSQL.escapeLiteral(schema))'") }
+        if let table { predicates.append("t.name = N'\(SQLServerSQL.escapeLiteral(table))'") }
         if !predicates.isEmpty { sql += " AND " + predicates.joined(separator: " AND ") }
         sql += " ORDER BY s.name, t.name, kc.name, ic.key_ordinal;"
 
@@ -109,8 +109,8 @@ extension SQLServerMetadataOperations {
 
     private func fetchPrimaryKeyClusterInfo(database: String?, schema: String?, table: String?) -> EventLoopFuture<[String: Bool]> {
         var sql = "SELECT s.name as schema_name, t.name as table_name, kc.name as constraint_name, is_clustered = CASE WHEN i.type = 1 THEN 1 ELSE 0 END FROM \(qualified(database, object: "sys.key_constraints")) kc JOIN \(qualified(database, object: "sys.tables")) t ON kc.parent_object_id = t.object_id JOIN \(qualified(database, object: "sys.schemas")) s ON t.schema_id = s.schema_id JOIN \(qualified(database, object: "sys.indexes")) i ON kc.parent_object_id = i.object_id AND kc.unique_index_id = i.index_id WHERE kc.type = 'PK'"
-        if let schema { sql += " AND s.name = N'\(SQLServerMetadataOperations.escapeLiteral(schema))'" }
-        if let table { sql += " AND t.name = N'\(SQLServerMetadataOperations.escapeLiteral(table))'" }
+        if let schema { sql += " AND s.name = N'\(SQLServerSQL.escapeLiteral(schema))'" }
+        if let table { sql += " AND t.name = N'\(SQLServerSQL.escapeLiteral(table))'" }
         return queryExecutor(sql).map { rows in
             var info: [String: Bool] = [:]
             for row in rows {
@@ -147,8 +147,8 @@ extension SQLServerMetadataOperations {
             ON i.object_id = ic.object_id AND i.index_id = ic.index_id
         LEFT JOIN \(qualified(database, object: "sys.columns")) AS c
             ON ic.object_id = c.object_id AND ic.column_id = c.column_id
-        WHERE s.name = N'\(SQLServerMetadataOperations.escapeLiteral(schema))'
-          AND o.name = N'\(SQLServerMetadataOperations.escapeLiteral(table))'
+        WHERE s.name = N'\(SQLServerSQL.escapeLiteral(schema))'
+          AND o.name = N'\(SQLServerSQL.escapeLiteral(table))'
           AND o.type IN ('U', 'V')
           AND i.index_id > 0
           AND i.is_hypothetical = 0
@@ -226,8 +226,8 @@ extension SQLServerMetadataOperations {
         JOIN \(qualified(database, object: "sys.foreign_key_columns")) AS fkc ON fk.object_id = fkc.constraint_object_id
         JOIN \(qualified(database, object: "sys.columns")) AS fc ON fkc.parent_object_id = fc.object_id AND fkc.parent_column_id = fc.column_id
         JOIN \(qualified(database, object: "sys.columns")) AS pc ON fkc.referenced_object_id = pc.object_id AND fkc.referenced_column_id = pc.column_id
-        WHERE fs.name = N'\(SQLServerMetadataOperations.escapeLiteral(schema))'
-          AND ft.name = N'\(SQLServerMetadataOperations.escapeLiteral(table))'
+        WHERE fs.name = N'\(SQLServerSQL.escapeLiteral(schema))'
+          AND ft.name = N'\(SQLServerSQL.escapeLiteral(table))'
         ORDER BY fs.name, ft.name, fk.name, fkc.constraint_column_id;
         """
         return queryExecutor(sql).map { rows in
@@ -254,7 +254,7 @@ extension SQLServerMetadataOperations {
     // MARK: - Dependencies
 
     internal func listDependencies(database: String? = nil, schema: String, object: String) -> EventLoopFuture<[DependencyMetadata]> {
-        let sql = "WITH target AS (SELECT o.object_id FROM \(qualified(database, object: "sys.objects")) o JOIN \(qualified(database, object: "sys.schemas")) s ON o.schema_id = s.schema_id WHERE s.name = N'\(SQLServerMetadataOperations.escapeLiteral(schema))' AND o.name = N'\(SQLServerMetadataOperations.escapeLiteral(object))') SELECT rs.name as referencing_schema, ro.name as referencing_object, ro.type_desc as referencing_type, sed.is_schema_bound_reference as is_schema_bound FROM target JOIN \(qualified(database, object: "sys.sql_expression_dependencies")) sed ON sed.referenced_id = target.object_id JOIN \(qualified(database, object: "sys.objects")) ro ON sed.referencing_id = ro.object_id JOIN \(qualified(database, object: "sys.schemas")) rs ON ro.schema_id = rs.schema_id WHERE sed.referenced_minor_id = 0 ORDER BY rs.name, ro.name;"
+        let sql = "WITH target AS (SELECT o.object_id FROM \(qualified(database, object: "sys.objects")) o JOIN \(qualified(database, object: "sys.schemas")) s ON o.schema_id = s.schema_id WHERE s.name = N'\(SQLServerSQL.escapeLiteral(schema))' AND o.name = N'\(SQLServerSQL.escapeLiteral(object))') SELECT rs.name as referencing_schema, ro.name as referencing_object, ro.type_desc as referencing_type, sed.is_schema_bound_reference as is_schema_bound FROM target JOIN \(qualified(database, object: "sys.sql_expression_dependencies")) sed ON sed.referenced_id = target.object_id JOIN \(qualified(database, object: "sys.objects")) ro ON sed.referencing_id = ro.object_id JOIN \(qualified(database, object: "sys.schemas")) rs ON ro.schema_id = rs.schema_id WHERE sed.referenced_minor_id = 0 ORDER BY rs.name, ro.name;"
         return queryExecutor(sql).map { rows in
             rows.compactMap { row in
                 guard let s = row.column("referencing_schema")?.string, let o = row.column("referencing_object")?.string, let t = row.column("referencing_type")?.string else { return nil }
@@ -266,8 +266,8 @@ extension SQLServerMetadataOperations {
     // MARK: - Bidirectional Dependencies
 
     internal func objectDependencies(database: String? = nil, schema: String, name: String) -> EventLoopFuture<[SQLServerObjectDependency]> {
-        let escapedSchema = SQLServerMetadataOperations.escapeLiteral(schema)
-        let escapedName = SQLServerMetadataOperations.escapeLiteral(name)
+        let escapedSchema = SQLServerSQL.escapeLiteral(schema)
+        let escapedName = SQLServerSQL.escapeLiteral(name)
         let sql = """
         SELECT
             referencing_entity_name = OBJECT_NAME(d.referencing_id),
@@ -300,8 +300,8 @@ extension SQLServerMetadataOperations {
     // MARK: - Table Properties
 
     internal func tableProperties(database: String? = nil, schema: String, table: String) -> EventLoopFuture<SQLServerTableProperties> {
-        let escapedSchema = SQLServerMetadataOperations.escapeLiteral(schema)
-        let escapedTable = SQLServerMetadataOperations.escapeLiteral(table)
+        let escapedSchema = SQLServerSQL.escapeLiteral(schema)
+        let escapedTable = SQLServerSQL.escapeLiteral(table)
 
         // Query create/modify dates from sys.objects
         let datesSql = """
@@ -348,8 +348,8 @@ extension SQLServerMetadataOperations {
     // MARK: - Object Definition (raw string)
 
     internal func objectDefinitionString(database: String? = nil, schema: String, name: String) -> EventLoopFuture<String?> {
-        let escapedSchema = SQLServerMetadataOperations.escapeLiteral(schema)
-        let escapedName = SQLServerMetadataOperations.escapeLiteral(name)
+        let escapedSchema = SQLServerSQL.escapeLiteral(schema)
+        let escapedName = SQLServerSQL.escapeLiteral(name)
         let sql = "SELECT OBJECT_DEFINITION(OBJECT_ID(N'\(escapedSchema).\(escapedName)')) AS definition;"
         return queryExecutor(sql).map { rows in
             rows.first?.column("definition")?.string

@@ -44,10 +44,10 @@ extension SQLServerDatabaseMailClient {
         var sql = """
         DECLARE @id INT;
         EXEC msdb.dbo.sysmail_add_profile_sp
-            @profile_name = N'\(escapeLiteral(name))'
+            @profile_name = N'\(SQLServerSQL.escapeLiteral(name))'
         """
         if let description {
-            sql += ", @description = N'\(escapeLiteral(description))'"
+            sql += ", @description = N'\(SQLServerSQL.escapeLiteral(description))'"
         }
         sql += ", @profile_id = @id OUTPUT;"
         sql += " SELECT @id AS profile_id;"
@@ -60,10 +60,10 @@ extension SQLServerDatabaseMailClient {
         var sql = """
         EXEC msdb.dbo.sysmail_update_profile_sp
             @profile_id = \(profileID),
-            @profile_name = N'\(escapeLiteral(name))'
+            @profile_name = N'\(SQLServerSQL.escapeLiteral(name))'
         """
         if let description {
-            sql += ", @description = N'\(escapeLiteral(description))'"
+            sql += ", @description = N'\(SQLServerSQL.escapeLiteral(description))'"
         }
         sql += ";"
         try await exec(sql: sql)
@@ -83,27 +83,27 @@ extension SQLServerDatabaseMailClient {
         var sql = """
         DECLARE @id INT;
         EXEC msdb.dbo.sysmail_add_account_sp
-            @account_name = N'\(escapeLiteral(config.accountName))',
-            @email_address = N'\(escapeLiteral(config.emailAddress))',
-            @mailserver_name = N'\(escapeLiteral(config.serverName))',
+            @account_name = N'\(SQLServerSQL.escapeLiteral(config.accountName))',
+            @email_address = N'\(SQLServerSQL.escapeLiteral(config.emailAddress))',
+            @mailserver_name = N'\(SQLServerSQL.escapeLiteral(config.serverName))',
             @port = \(config.port),
             @use_default_credentials = \(config.useDefaultCredentials ? 1 : 0),
             @enable_ssl = \(config.enableSSL ? 1 : 0)
         """
         if let displayName = config.displayName {
-            sql += ", @display_name = N'\(escapeLiteral(displayName))'"
+            sql += ", @display_name = N'\(SQLServerSQL.escapeLiteral(displayName))'"
         }
         if let replyTo = config.replyToAddress {
-            sql += ", @replyto_address = N'\(escapeLiteral(replyTo))'"
+            sql += ", @replyto_address = N'\(SQLServerSQL.escapeLiteral(replyTo))'"
         }
         if let desc = config.description {
-            sql += ", @description = N'\(escapeLiteral(desc))'"
+            sql += ", @description = N'\(SQLServerSQL.escapeLiteral(desc))'"
         }
         if let username = config.username {
-            sql += ", @username = N'\(escapeLiteral(username))'"
+            sql += ", @username = N'\(SQLServerSQL.escapeLiteral(username))'"
         }
         if let password = config.password {
-            sql += ", @password = N'\(escapeLiteral(password))'"
+            sql += ", @password = N'\(SQLServerSQL.escapeLiteral(password))'"
         }
         sql += ", @account_id = @id OUTPUT;"
         sql += " SELECT @id AS account_id;"
@@ -116,27 +116,27 @@ extension SQLServerDatabaseMailClient {
         var sql = """
         EXEC msdb.dbo.sysmail_update_account_sp
             @account_id = \(accountID),
-            @account_name = N'\(escapeLiteral(config.accountName))',
-            @email_address = N'\(escapeLiteral(config.emailAddress))',
-            @mailserver_name = N'\(escapeLiteral(config.serverName))',
+            @account_name = N'\(SQLServerSQL.escapeLiteral(config.accountName))',
+            @email_address = N'\(SQLServerSQL.escapeLiteral(config.emailAddress))',
+            @mailserver_name = N'\(SQLServerSQL.escapeLiteral(config.serverName))',
             @port = \(config.port),
             @use_default_credentials = \(config.useDefaultCredentials ? 1 : 0),
             @enable_ssl = \(config.enableSSL ? 1 : 0)
         """
         if let displayName = config.displayName {
-            sql += ", @display_name = N'\(escapeLiteral(displayName))'"
+            sql += ", @display_name = N'\(SQLServerSQL.escapeLiteral(displayName))'"
         }
         if let replyTo = config.replyToAddress {
-            sql += ", @replyto_address = N'\(escapeLiteral(replyTo))'"
+            sql += ", @replyto_address = N'\(SQLServerSQL.escapeLiteral(replyTo))'"
         }
         if let desc = config.description {
-            sql += ", @description = N'\(escapeLiteral(desc))'"
+            sql += ", @description = N'\(SQLServerSQL.escapeLiteral(desc))'"
         }
         if let username = config.username {
-            sql += ", @username = N'\(escapeLiteral(username))'"
+            sql += ", @username = N'\(SQLServerSQL.escapeLiteral(username))'"
         }
         if let password = config.password {
-            sql += ", @password = N'\(escapeLiteral(password))'"
+            sql += ", @password = N'\(SQLServerSQL.escapeLiteral(password))'"
         }
         sql += ";"
         try await exec(sql: sql)
@@ -187,7 +187,7 @@ extension SQLServerDatabaseMailClient {
         let sql = """
         EXEC msdb.dbo.sysmail_add_principalprofile_sp
             @profile_id = \(profileID),
-            @principal_name = N'\(escapeLiteral(principalName))',
+            @principal_name = N'\(SQLServerSQL.escapeLiteral(principalName))',
             @is_default = \(isDefault ? 1 : 0);
         """
         try await exec(sql: sql)
@@ -198,7 +198,7 @@ extension SQLServerDatabaseMailClient {
         let sql = """
         EXEC msdb.dbo.sysmail_delete_principalprofile_sp
             @profile_id = \(profileID),
-            @principal_name = N'\(escapeLiteral(principalName))';
+            @principal_name = N'\(SQLServerSQL.escapeLiteral(principalName))';
         """
         try await exec(sql: sql)
     }
@@ -216,8 +216,8 @@ extension SQLServerDatabaseMailClient {
     public func setConfiguration(parameter: String, value: String) async throws {
         let sql = """
         EXEC msdb.dbo.sysmail_configure_sp
-            @parameter_name = N'\(escapeLiteral(parameter))',
-            @parameter_value = N'\(escapeLiteral(value))';
+            @parameter_name = N'\(SQLServerSQL.escapeLiteral(parameter))',
+            @parameter_value = N'\(SQLServerSQL.escapeLiteral(value))';
         """
         try await exec(sql: sql)
     }
@@ -233,14 +233,14 @@ extension SQLServerDatabaseMailClient {
     ) async throws {
         var sql = """
         EXEC msdb.dbo.sp_send_dbmail
-            @profile_name = N'\(escapeLiteral(profileName))',
-            @recipients = N'\(escapeLiteral(recipients))'
+            @profile_name = N'\(SQLServerSQL.escapeLiteral(profileName))',
+            @recipients = N'\(SQLServerSQL.escapeLiteral(recipients))'
         """
         if let subject {
-            sql += ", @subject = N'\(escapeLiteral(subject))'"
+            sql += ", @subject = N'\(SQLServerSQL.escapeLiteral(subject))'"
         }
         if let body {
-            sql += ", @body = N'\(escapeLiteral(body))'"
+            sql += ", @body = N'\(SQLServerSQL.escapeLiteral(body))'"
         }
         sql += ";"
         try await exec(sql: sql)

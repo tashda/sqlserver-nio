@@ -59,7 +59,7 @@ public final class SQLServerResourceGovernorClient: @unchecked Sendable {
     @available(macOS 12.0, *)
     public func setClassifierFunction(_ functionName: String?) async throws {
         let sql = if let name = functionName {
-            "ALTER RESOURCE GOVERNOR WITH (CLASSIFIER_FUNCTION = \(escapeIdentifier(name)))"
+            "ALTER RESOURCE GOVERNOR WITH (CLASSIFIER_FUNCTION = \(SQLServerSQL.escapeIdentifier(name)))"
         } else {
             "ALTER RESOURCE GOVERNOR WITH (CLASSIFIER_FUNCTION = NULL)"
         }
@@ -178,7 +178,7 @@ public final class SQLServerResourceGovernorClient: @unchecked Sendable {
         maxMemoryPercent: Int = 100
     ) async throws {
         let sql = """
-        CREATE RESOURCE POOL \(escapeIdentifier(name))
+        CREATE RESOURCE POOL \(SQLServerSQL.escapeIdentifier(name))
         WITH (MIN_CPU_PERCENT = \(minCpuPercent), MAX_CPU_PERCENT = \(maxCpuPercent),
               MIN_MEMORY_PERCENT = \(minMemoryPercent), MAX_MEMORY_PERCENT = \(maxMemoryPercent));
         ALTER RESOURCE GOVERNOR RECONFIGURE;
@@ -189,7 +189,7 @@ public final class SQLServerResourceGovernorClient: @unchecked Sendable {
     /// Drops a resource pool.
     @available(macOS 12.0, *)
     public func dropResourcePool(name: String) async throws {
-        let sql = "DROP RESOURCE POOL \(escapeIdentifier(name)); ALTER RESOURCE GOVERNOR RECONFIGURE;"
+        let sql = "DROP RESOURCE POOL \(SQLServerSQL.escapeIdentifier(name)); ALTER RESOURCE GOVERNOR RECONFIGURE;"
         _ = try await client.execute(sql)
     }
 
@@ -207,13 +207,13 @@ public final class SQLServerResourceGovernorClient: @unchecked Sendable {
         groupMaxRequests: Int = 0
     ) async throws {
         let sql = """
-        CREATE WORKLOAD GROUP \(escapeIdentifier(name))
+        CREATE WORKLOAD GROUP \(SQLServerSQL.escapeIdentifier(name))
         WITH (IMPORTANCE = \(importance),
               REQUEST_MAX_MEMORY_GRANT_PERCENT = \(requestMaxMemoryGrantPercent),
               REQUEST_MAX_CPU_TIME_SEC = \(requestMaxCpuTimeSec),
               MAX_DOP = \(maxDop),
               GROUP_MAX_REQUESTS = \(groupMaxRequests))
-        USING \(escapeIdentifier(poolName));
+        USING \(SQLServerSQL.escapeIdentifier(poolName));
         ALTER RESOURCE GOVERNOR RECONFIGURE;
         """
         _ = try await client.execute(sql)
@@ -222,11 +222,8 @@ public final class SQLServerResourceGovernorClient: @unchecked Sendable {
     /// Drops a workload group.
     @available(macOS 12.0, *)
     public func dropWorkloadGroup(name: String) async throws {
-        let sql = "DROP WORKLOAD GROUP \(escapeIdentifier(name)); ALTER RESOURCE GOVERNOR RECONFIGURE;"
+        let sql = "DROP WORKLOAD GROUP \(SQLServerSQL.escapeIdentifier(name)); ALTER RESOURCE GOVERNOR RECONFIGURE;"
         _ = try await client.execute(sql)
     }
 
-    private func escapeIdentifier(_ identifier: String) -> String {
-        "[\(identifier.replacingOccurrences(of: "]", with: "]]"))]"
-    }
 }

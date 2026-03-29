@@ -14,8 +14,6 @@ public final class SQLServerSSASClient: @unchecked Sendable {
     
     @available(macOS 12.0, *)
     public func fetchModels() async throws -> [String] {
-        throw NSError(domain: "SQLServerSSAS", code: -1, userInfo: [
-            NSLocalizedDescriptionKey: "SSAS is not supported via TDS. It requires an XMLA client."
-        ])
+        throw SQLServerError.notImplemented("SSAS is not supported via TDS. It requires an XMLA client.")
     }
 }

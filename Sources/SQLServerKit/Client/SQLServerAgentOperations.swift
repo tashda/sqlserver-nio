@@ -57,7 +57,7 @@ public final class SQLServerAgentOperations: Sendable {
                 requireProxyPrereqs ? "For proxies: grant ALTER ANY CREDENTIAL at SERVER scope and add msdb SQLAgentOperatorRole, or use a sysadmin login." : nil,
             ].compactMap { $0 }.joined(separator: "\n- ")
             let message = "Agent preflight failed. Missing: \(missing.joined(separator: ", ")).\nFixes:\n- \(guidance)"
-            return NSError(domain: "SQLServerAgentOperations.Preflight", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+            return SQLServerError.sqlExecutionError(message: message)
         }
 
         func checkAgentStatus() -> EventLoopFuture<(enabled: Bool, running: Bool)> {
@@ -99,8 +99,8 @@ public final class SQLServerAgentOperations: Sendable {
             let check = "SELECT 1 AS present FROM msdb.dbo.sysjobservers WHERE job_id = N'\(jobId)'"
             return self.run(check).flatMap { (rows: [TDSRow]) -> EventLoopFuture<Void> in
                 if rows.first?.column("present")?.int == 1 { return self.run("SELECT 1").map { _ in () } }
-                var sql = "EXEC msdb.dbo.sp_add_jobserver @job_name = N'\(Self.escapeLiteral(jobName))'"
-                if let serverName, !serverName.isEmpty { sql += ", @server_name = N'\(Self.escapeLiteral(serverName))'" }
+                var sql = "EXEC msdb.dbo.sp_add_jobserver @job_name = N'\(SQLServerSQL.escapeLiteral(jobName))'"
+                if let serverName, !serverName.isEmpty { sql += ", @server_name = N'\(SQLServerSQL.escapeLiteral(serverName))'" }
                 sql += ";"
                 return self.run(sql).flatMapError { error -> EventLoopFuture<[TDSRow]> in
                     let msg = String(describing: error)
@@ -114,7 +114,7 @@ public final class SQLServerAgentOperations: Sendable {
     }
 
     internal func getJobDetail(jobName: String) -> EventLoopFuture<SQLServerAgentJobDetail?> {
-        let sql = "EXEC msdb.dbo.sp_help_job @job_name = N'\(Self.escapeLiteral(jobName))';"
+        let sql = "EXEC msdb.dbo.sp_help_job @job_name = N'\(SQLServerSQL.escapeLiteral(jobName))';"
         return run(sql).flatMapErrorThrowing { error in
             let message = String(describing: error)
             if message.localizedCaseInsensitiveContains("does not exist") {
@@ -130,7 +130,7 @@ public final class SQLServerAgentOperations: Sendable {
     }
 
     internal func getJobSchedules(jobName: String) -> EventLoopFuture<[SQLServerAgentJobScheduleDetail]> {
-        let sql = "EXEC msdb.dbo.sp_help_jobschedule @job_name = N'\(Self.escapeLiteral(jobName))';"
+        let sql = "EXEC msdb.dbo.sp_help_jobschedule @job_name = N'\(SQLServerSQL.escapeLiteral(jobName))';"
         return run(sql).map { rows in
             rows.compactMap { row in
                 guard let scheduleId = row.column("schedule_id")?.int, let enabled = row.column("enabled")?.int, let freqType = row.column("freq_type")?.int else { return nil }
@@ -143,25 +143,18 @@ public final class SQLServerAgentOperations: Sendable {
 
     internal func configureStep(jobName: String, stepName: String, onSuccessAction: Int? = nil, onSuccessStepId: Int? = nil, onFailAction: Int? = nil, onFailStepId: Int? = nil, retryAttempts: Int? = nil, retryIntervalMinutes: Int? = nil, outputFileName: String? = nil, appendOutputFile: Bool? = nil) -> EventLoopFuture<Void> {
         return lookupStepId(jobName: jobName, stepName: stepName).flatMap { stepId in
-            var sql = "EXEC msdb.dbo.sp_update_jobstep @job_name = N'\(Self.escapeLiteral(jobName))', @step_id = \(stepId)"
+            var sql = "EXEC msdb.dbo.sp_update_jobstep @job_name = N'\(SQLServerSQL.escapeLiteral(jobName))', @step_id = \(stepId)"
             if let v = onSuccessAction { sql += ", @on_success_action = \(v)" }
             if let v = onSuccessStepId { sql += ", @on_success_step_id = \(v)" }
             if let v = onFailAction { sql += ", @on_fail_action = \(v)" }
             if let v = onFailStepId { sql += ", @on_fail_step_id = \(v)" }
             if let v = retryAttempts { sql += ", @retry_attempts = \(v)" }
             if let v = retryIntervalMinutes { sql += ", @retry_interval = \(v)" }
-            if let v = outputFileName { sql += ", @output_file_name = N'\(Self.escapeLiteral(v))'" }
+            if let v = outputFileName { sql += ", @output_file_name = N'\(SQLServerSQL.escapeLiteral(v))'" }
             if let v = appendOutputFile { sql += ", @append_output_file = \(v ? 1 : 0)" }
             sql += ";"
             return self.run(sql).map { _ in () }
         }
     }
 
-    internal static func escapeLiteral(_ literal: String) -> String {
-        return literal.replacingOccurrences(of: "'", with: "''")
-    }
-
-    internal static func escapeIdentifier(_ identifier: String) -> String {
-        return identifier.replacingOccurrences(of: "]", with: "]]")
-    }
 }
