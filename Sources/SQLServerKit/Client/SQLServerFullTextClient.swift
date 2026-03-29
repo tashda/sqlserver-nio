@@ -134,6 +134,68 @@ public final class SQLServerFullTextClient: @unchecked Sendable {
 
     // MARK: - Index Management
 
+    /// Creates a full-text index on a table.
+    ///
+    /// A table can have only one full-text index. The table must have a unique,
+    /// single-column, non-nullable index to serve as the full-text key.
+    ///
+    /// - Parameters:
+    ///   - schema: The schema name (e.g., "dbo").
+    ///   - table: The table name.
+    ///   - keyIndex: The name of the unique index on the table to use as the full-text key.
+    ///   - catalogName: The full-text catalog to associate the index with. Pass `nil` to use the default catalog.
+    ///   - columns: Column names to include in the full-text index.
+    ///   - changeTracking: Change tracking mode. Defaults to `auto`.
+    @available(macOS 12.0, *)
+    public func createIndex(
+        schema: String,
+        table: String,
+        keyIndex: String,
+        catalogName: String? = nil,
+        columns: [String],
+        changeTracking: ChangeTrackingMode = .auto
+    ) async throws {
+        guard !columns.isEmpty else { return }
+        let s = schema.replacingOccurrences(of: "]", with: "]]")
+        let t = table.replacingOccurrences(of: "]", with: "]]")
+        let k = keyIndex.replacingOccurrences(of: "]", with: "]]")
+        let colList = columns.map { col in
+            let c = col.replacingOccurrences(of: "]", with: "]]")
+            return "[\(c)]"
+        }.joined(separator: ", ")
+
+        var sql = "CREATE FULLTEXT INDEX ON [\(s)].[\(t)] (\(colList)) KEY INDEX [\(k)]"
+        if let catalog = catalogName {
+            let cat = catalog.replacingOccurrences(of: "]", with: "]]")
+            sql += " ON [\(cat)]"
+        }
+        sql += " WITH CHANGE_TRACKING = \(changeTracking.rawValue);"
+        _ = try await client.execute(sql)
+    }
+
+    /// Change tracking mode for full-text indexes.
+    public enum ChangeTrackingMode: String, Sendable {
+        case auto = "AUTO"
+        case manual = "MANUAL"
+        case off = "OFF"
+    }
+
+    /// Enables a disabled full-text index.
+    @available(macOS 12.0, *)
+    public func enableIndex(schema: String, table: String) async throws {
+        let s = schema.replacingOccurrences(of: "]", with: "]]")
+        let t = table.replacingOccurrences(of: "]", with: "]]")
+        _ = try await client.execute("ALTER FULLTEXT INDEX ON [\(s)].[\(t)] ENABLE;")
+    }
+
+    /// Disables a full-text index without dropping it.
+    @available(macOS 12.0, *)
+    public func disableIndex(schema: String, table: String) async throws {
+        let s = schema.replacingOccurrences(of: "]", with: "]]")
+        let t = table.replacingOccurrences(of: "]", with: "]]")
+        _ = try await client.execute("ALTER FULLTEXT INDEX ON [\(s)].[\(t)] DISABLE;")
+    }
+
     /// Drops a full-text index from a table.
     @available(macOS 12.0, *)
     public func dropIndex(schema: String, table: String) async throws {

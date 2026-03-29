@@ -295,6 +295,80 @@ public final class SQLServerAvailabilityGroupsClient: @unchecked Sendable {
         public let state: String
     }
 
+    /// Creates a listener for an availability group.
+    ///
+    /// - Parameters:
+    ///   - groupName: The availability group name.
+    ///   - dnsName: The DNS name for the listener.
+    ///   - port: The TCP port (typically 1433).
+    ///   - ipAddresses: Static IP addresses with subnet masks. Each tuple is (ip, subnetMask).
+    ///                   Pass empty to use DHCP.
+    @available(macOS 12.0, *)
+    public func createListener(
+        groupName: String,
+        dnsName: String,
+        port: Int,
+        ipAddresses: [(ip: String, subnetMask: String)] = []
+    ) async throws {
+        let g = groupName.replacingOccurrences(of: "]", with: "]]")
+        let dns = dnsName.replacingOccurrences(of: "'", with: "''")
+        var sql = "ALTER AVAILABILITY GROUP [\(g)] ADD LISTENER N'\(dns)' (WITH DHCP"
+        if !ipAddresses.isEmpty {
+            let ipClauses = ipAddresses.map { ip, mask in
+                let escapedIP = ip.replacingOccurrences(of: "'", with: "''")
+                let escapedMask = mask.replacingOccurrences(of: "'", with: "''")
+                return "(N'\(escapedIP)', N'\(escapedMask)')"
+            }
+            sql = "ALTER AVAILABILITY GROUP [\(g)] ADD LISTENER N'\(dns)' (WITH IP (\(ipClauses.joined(separator: ", "))), PORT = \(port));"
+        } else {
+            sql = "ALTER AVAILABILITY GROUP [\(g)] ADD LISTENER N'\(dns)' (WITH DHCP, PORT = \(port));"
+        }
+        _ = try await client.execute(sql)
+    }
+
+    /// Drops a listener from an availability group.
+    @available(macOS 12.0, *)
+    public func dropListener(groupName: String, dnsName: String) async throws {
+        let g = groupName.replacingOccurrences(of: "]", with: "]]")
+        let dns = dnsName.replacingOccurrences(of: "'", with: "''")
+        _ = try await client.execute("ALTER AVAILABILITY GROUP [\(g)] REMOVE LISTENER N'\(dns)';")
+    }
+
+    /// Sets read-only routing URLs for a replica within an availability group.
+    ///
+    /// - Parameters:
+    ///   - groupName: The availability group name.
+    ///   - replicaName: The server instance name of the replica.
+    ///   - routingUrl: The read-only routing URL (e.g., `TCP://server:1433`).
+    ///   - routingList: Ordered list of replica server names for read-only routing.
+    @available(macOS 12.0, *)
+    public func setReadOnlyRouting(
+        groupName: String,
+        replicaName: String,
+        routingUrl: String? = nil,
+        routingList: [String]? = nil
+    ) async throws {
+        let g = groupName.replacingOccurrences(of: "]", with: "]]")
+        let r = replicaName.replacingOccurrences(of: "'", with: "''")
+
+        if let url = routingUrl {
+            let escapedUrl = url.replacingOccurrences(of: "'", with: "''")
+            _ = try await client.execute(
+                "ALTER AVAILABILITY GROUP [\(g)] MODIFY REPLICA ON N'\(r)' WITH (SECONDARY_ROLE (READ_ONLY_ROUTING_URL = N'\(escapedUrl)'));"
+            )
+        }
+
+        if let list = routingList {
+            let listItems = list.map { name in
+                let escaped = name.replacingOccurrences(of: "'", with: "''")
+                return "N'\(escaped)'"
+            }
+            _ = try await client.execute(
+                "ALTER AVAILABILITY GROUP [\(g)] MODIFY REPLICA ON N'\(r)' WITH (PRIMARY_ROLE (READ_ONLY_ROUTING_LIST = (\(listItems.joined(separator: ", ")))));"
+            )
+        }
+    }
+
     /// Lists listeners for an availability group.
     @available(macOS 12.0, *)
     public func listListeners(groupId: String) async throws -> [SQLServerAGListener] {
