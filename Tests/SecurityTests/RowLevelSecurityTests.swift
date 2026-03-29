@@ -112,11 +112,9 @@ final class RowLevelSecurityTests: SecurityTestBase, @unchecked Sendable {
         AS RETURN SELECT 1 AS fn_result WHERE @tenant_id = 1
         """)
 
-        defer {
-            Task {
-                try? await securityClient.dropSecurityPolicy(name: policyName, schema: "dbo")
-                _ = try? await client.execute("DROP FUNCTION IF EXISTS dbo.\(funcName)")
-            }
+        addTeardownBlock {
+            try? await self.securityClient.dropSecurityPolicy(name: policyName, schema: "dbo")
+            _ = try? await self.client.execute("DROP FUNCTION IF EXISTS dbo.\(funcName)")
         }
 
         let predicates = [
@@ -186,11 +184,9 @@ final class RowLevelSecurityTests: SecurityTestBase, @unchecked Sendable {
         AS RETURN SELECT 1 AS fn_result WHERE @tenant_id = 1
         """)
 
-        defer {
-            Task {
-                try? await securityClient.dropSecurityPolicy(name: policyName, schema: "dbo")
-                _ = try? await client.execute("DROP FUNCTION IF EXISTS dbo.\(funcName)")
-            }
+        addTeardownBlock {
+            try? await self.securityClient.dropSecurityPolicy(name: policyName, schema: "dbo")
+            _ = try? await self.client.execute("DROP FUNCTION IF EXISTS dbo.\(funcName)")
         }
 
         // Create with single predicate
@@ -239,11 +235,9 @@ final class RowLevelSecurityTests: SecurityTestBase, @unchecked Sendable {
         AS RETURN SELECT 1 AS fn_result WHERE @tenant_id = 1
         """)
 
-        defer {
-            Task {
-                try? await securityClient.dropSecurityPolicy(name: policyName, schema: "dbo")
-                _ = try? await client.execute("DROP FUNCTION IF EXISTS dbo.\(funcName)")
-            }
+        addTeardownBlock {
+            try? await self.securityClient.dropSecurityPolicy(name: policyName, schema: "dbo")
+            _ = try? await self.client.execute("DROP FUNCTION IF EXISTS dbo.\(funcName)")
         }
 
         // Create with two predicates

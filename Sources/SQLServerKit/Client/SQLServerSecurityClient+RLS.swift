@@ -134,8 +134,12 @@ extension SQLServerSecurityClient {
         for pred in predicates {
             let funcName = "\(Self.escapeIdentifier(pred.functionSchema)).\(Self.escapeIdentifier(pred.functionName))"
             let tableName = "\(Self.escapeIdentifier(pred.targetSchema)).\(Self.escapeIdentifier(pred.targetTable))"
+            let predicateArguments = try await predicateArgumentList(
+                functionName: pred.functionName,
+                functionSchema: pred.functionSchema
+            )
             let keyword = pred.predicateType == .filter ? "FILTER" : "BLOCK"
-            var clause = "ADD \(keyword) PREDICATE \(funcName)(\(tableName)) ON \(tableName)"
+            var clause = "ADD \(keyword) PREDICATE \(funcName)(\(predicateArguments)) ON \(tableName)"
             if pred.predicateType == .block, let op = pred.blockOperation {
                 clause += " \(op.rawValue)"
             }
@@ -160,9 +164,13 @@ extension SQLServerSecurityClient {
         let policy = "\(Self.escapeIdentifier(policySchema)).\(Self.escapeIdentifier(policyName))"
         let funcName = "\(Self.escapeIdentifier(predicate.functionSchema)).\(Self.escapeIdentifier(predicate.functionName))"
         let tableName = "\(Self.escapeIdentifier(predicate.targetSchema)).\(Self.escapeIdentifier(predicate.targetTable))"
+        let predicateArguments = try await predicateArgumentList(
+            functionName: predicate.functionName,
+            functionSchema: predicate.functionSchema
+        )
         let keyword = predicate.predicateType == .filter ? "FILTER" : "BLOCK"
 
-        var clause = "ADD \(keyword) PREDICATE \(funcName)(\(tableName)) ON \(tableName)"
+        var clause = "ADD \(keyword) PREDICATE \(funcName)(\(predicateArguments)) ON \(tableName)"
         if predicate.predicateType == .block, let op = predicate.blockOperation {
             clause += " \(op.rawValue)"
         }
@@ -192,5 +200,28 @@ extension SQLServerSecurityClient {
 
         let sql = "ALTER SECURITY POLICY \(policy) \(clause);"
         _ = try await exec(sql)
+    }
+
+    @available(macOS 12.0, *)
+    private func predicateArgumentList(functionName: String, functionSchema: String) async throws -> String {
+        let rows = try await query("""
+        SELECT p.name
+        FROM sys.parameters AS p
+        INNER JOIN sys.objects AS o ON o.object_id = p.object_id
+        INNER JOIN sys.schemas AS s ON s.schema_id = o.schema_id
+        WHERE o.name = N'\(functionName.replacingOccurrences(of: "'", with: "''"))'
+          AND s.name = N'\(functionSchema.replacingOccurrences(of: "'", with: "''"))'
+        ORDER BY p.parameter_id
+        """)
+
+        let arguments = rows.compactMap { row -> String? in
+            guard let parameterName = row.column("name")?.string else {
+                return nil
+            }
+            let columnName = parameterName.hasPrefix("@") ? String(parameterName.dropFirst()) : parameterName
+            return Self.escapeIdentifier(columnName)
+        }
+
+        return arguments.joined(separator: ", ")
     }
 }
