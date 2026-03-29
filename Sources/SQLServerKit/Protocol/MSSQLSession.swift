@@ -35,7 +35,7 @@ public protocol MSSQLSession {
     var dependencies: SQLServerDependencyClient { get }
     @available(*, deprecated, message: "DAC operations are not yet implemented.")
     var dac: SQLServerDACClient { get }
-    var bulkCopy: SQLServerBulkCopyClient { get }
+    var bulk: SQLServerBulkClient { get }
     var ssis: SQLServerSSISClient { get }
     @available(*, deprecated, message: "SSAS requires an XMLA client, not TDS.")
     var ssas: SQLServerSSASClient { get }

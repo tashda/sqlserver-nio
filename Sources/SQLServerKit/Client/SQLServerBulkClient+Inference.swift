@@ -13,7 +13,7 @@ public struct SQLServerColumnInference: Sendable, Equatable, Identifiable {
     }
 }
 
-extension SQLServerBulkCopyClient {
+extension SQLServerBulkClient {
     /// Infers column types from a sample of string-based rows.
     public func inferSchema(headers: [String], sampleRows: [[String]]) -> [SQLServerColumnInference] {
         var inferences: [SQLServerColumnInference] = []

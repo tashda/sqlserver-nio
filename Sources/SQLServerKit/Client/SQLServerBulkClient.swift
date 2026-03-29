@@ -54,7 +54,7 @@ public struct SQLServerBulkCopySummary: Sendable {
     public let duration: TimeInterval
 }
 
-public final class SQLServerBulkCopyClient {
+public final class SQLServerBulkClient {
     private let client: SQLServerClient
     private let logger: Logger
     
@@ -70,7 +70,7 @@ public final class SQLServerBulkCopyClient {
         afterBatch: (@Sendable (SQLServerConnection, Int) async throws -> Void)? = nil
     ) async throws -> SQLServerBulkCopySummary {
         guard !rows.isEmpty else {
-            logger.debug("SQLServerBulkCopyClient skipping copy because no rows were provided.")
+            logger.debug("SQLServerBulkClient skipping copy because no rows were provided.")
             return SQLServerBulkCopySummary(
                 schema: options.schema,
                 table: options.table,
@@ -84,7 +84,7 @@ public final class SQLServerBulkCopyClient {
         
         let expectedColumnCount = options.columns.count
         guard expectedColumnCount > 0 else {
-            logger.warning("SQLServerBulkCopyClient copy invoked without columns; nothing to do.")
+            logger.warning("SQLServerBulkClient copy invoked without columns; nothing to do.")
             return SQLServerBulkCopySummary(
                 schema: options.schema,
                 table: options.table,

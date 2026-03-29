@@ -40,7 +40,7 @@ final class AdvancedScriptingAndBITests: XCTestCase, @unchecked Sendable {
     func testBulkCopySchemaInference() async throws {
         logger.info("🔧 Testing Bulk Copy Schema Inference...")
         
-        let bulkClient = client.bulkCopy
+        let bulkClient = client.bulk
         
         let headers = ["ID", "Name", "Score", "StartDate"]
         let rows = [

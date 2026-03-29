@@ -15,7 +15,7 @@ extension SQLServerClient {
     public var types: SQLServerTypeClient { SQLServerTypeClient(client: self) }
     public var activity: SQLServerActivityMonitor { SQLServerActivityMonitor(client: self) }
     public var directory: SQLServerDirectoryClient { SQLServerDirectoryClient(client: self) }
-    public var bulkCopy: SQLServerBulkCopyClient { SQLServerBulkCopyClient(client: self) }
+    public var bulk: SQLServerBulkClient { SQLServerBulkClient(client: self) }
     public var executionPlan: SQLServerExecutionPlanClient { SQLServerExecutionPlanClient(client: self) }
     public var extendedProperties: SQLServerExtendedPropertiesClient { SQLServerExtendedPropertiesClient(client: self) }
     public var queryStore: SQLServerQueryStoreClient { SQLServerQueryStoreClient(client: self) }
