@@ -4,14 +4,6 @@ import Foundation
 
 // MARK: - Savepoint Types
 
-public struct SavepointOptions: Sendable {
-    public let name: String
-
-    public init(name: String) {
-        self.name = name
-    }
-}
-
 public struct SavepointInfo: Sendable {
     public let name: String
     public let transactionId: String?
@@ -93,17 +85,6 @@ public final class SQLServerTransactionClient: @unchecked Sendable {
         activeSavepoints.append(name)
     }
 
-    /// Creates a savepoint with options
-    internal func createSavepoint(_ options: SavepointOptions) -> EventLoopFuture<Void> {
-        return createSavepoint(name: options.name)
-    }
-
-    /// Creates a savepoint with options (async version)
-    @available(macOS 12.0, *)
-    public func createSavepoint(_ options: SavepointOptions) async throws {
-        try await createSavepoint(name: options.name).get()
-    }
-
     /// Rolls back to the specified savepoint
     internal func rollbackToSavepoint(name: String) -> EventLoopFuture<Void> {
         let escapedName = SQLServerSQL.escapeIdentifier(name)
@@ -125,17 +106,6 @@ public final class SQLServerTransactionClient: @unchecked Sendable {
         }
     }
 
-    /// Rolls back to the specified savepoint options
-    internal func rollbackToSavepoint(_ options: SavepointOptions) -> EventLoopFuture<Void> {
-        return rollbackToSavepoint(name: options.name)
-    }
-
-    /// Rolls back to the specified savepoint options (async version)
-    @available(macOS 12.0, *)
-    public func rollbackToSavepoint(_ options: SavepointOptions) async throws {
-        try await rollbackToSavepoint(name: options.name).get()
-    }
-
     /// Releases the specified savepoint (SQL Server 2008+)
     internal func releaseSavepoint(name: String) -> EventLoopFuture<Void> {
         // SQL Server doesn't have an explicit RELEASE SAVEPOINT command like some other databases
@@ -154,17 +124,6 @@ public final class SQLServerTransactionClient: @unchecked Sendable {
         if let index = activeSavepoints.firstIndex(of: name) {
             activeSavepoints.remove(at: index)
         }
-    }
-
-    /// Releases the specified savepoint options
-    internal func releaseSavepoint(_ options: SavepointOptions) -> EventLoopFuture<Void> {
-        return releaseSavepoint(name: options.name)
-    }
-
-    /// Releases the specified savepoint options (async version)
-    @available(macOS 12.0, *)
-    public func releaseSavepoint(_ options: SavepointOptions) async throws {
-        try await releaseSavepoint(name: options.name).get()
     }
 
     // MARK: - Transaction Information
