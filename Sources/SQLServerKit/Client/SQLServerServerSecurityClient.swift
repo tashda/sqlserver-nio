@@ -437,6 +437,17 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
         return exec(sql: sql).map { _ in () }
     }
 
+    // MARK: - Role Membership Check
+
+    /// Returns `true` if the current login is a member of the specified server role.
+    @available(macOS 12.0, *)
+    public func isMemberOf(role: String) async throws -> Bool {
+        let escapedRole = SQLServerSQL.escapeLiteral(role)
+        let sql = "SELECT CASE WHEN IS_SRVROLEMEMBER(N'\(escapedRole)') = 1 THEN 1 ELSE 0 END AS is_member"
+        let rows = try await run(sql: sql).get()
+        return rows.first?.column("is_member")?.int == 1
+    }
+
     // MARK: - Async convenience
     @available(macOS 12.0, *)
     public func listLogins(includeDisabled: Bool = true, includeSystemLogins: Bool = false) async throws -> [ServerLoginInfo] { try await listLogins(includeDisabled: includeDisabled, includeSystemLogins: includeSystemLogins).get() }

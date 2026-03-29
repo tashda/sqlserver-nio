@@ -149,6 +149,15 @@ extension SQLServerClient {
         try await queryPaged(sql, limit: limit, offset: offset, on: nil)
     }
 
+    // MARK: - Database Context
+
+    /// Returns the name of the current database for this client's connection, or `nil` if unavailable.
+    @available(macOS 12.0, *)
+    public func currentDatabaseName() async throws -> String? {
+        let rows = try await query("SELECT DB_NAME() AS current_db")
+        return rows.first?.column("current_db")?.string
+    }
+
     @available(macOS 12.0, *)
     public func queryScalar<T: SQLServerDataConvertible & Sendable>(
         _ sql: String,

@@ -72,10 +72,52 @@ extension SQLServerAdministrationClient {
     }
 
     @available(macOS 12.0, *)
-    public func dropTable(name: String, schema: String = "dbo", database: String? = nil) async throws {
-        try await client.withConnection { connection in
-            try await connection.dropTable(name: name, schema: schema, database: database ?? self.database)
+    public func dropTable(name: String, schema: String = "dbo", database: String? = nil, ifExists: Bool = false) async throws {
+        if ifExists {
+            let escapedSchema = SQLServerSQL.escapeIdentifier(schema)
+            let escapedName = SQLServerSQL.escapeIdentifier(name)
+            let objectId = SQLServerSQL.escapeLiteral("\(schema).\(name)")
+            let sql: String
+            if let db = database ?? self.database {
+                let escapedDb = SQLServerSQL.escapeIdentifier(db)
+                sql = "USE \(escapedDb); IF OBJECT_ID(N'\(objectId)', 'U') IS NOT NULL DROP TABLE \(escapedSchema).\(escapedName)"
+            } else {
+                sql = "IF OBJECT_ID(N'\(objectId)', 'U') IS NOT NULL DROP TABLE \(escapedSchema).\(escapedName)"
+            }
+            _ = try await client.execute(sql)
+        } else {
+            try await client.withConnection { connection in
+                try await connection.dropTable(name: name, schema: schema, database: database ?? self.database)
+            }
         }
+    }
+
+    /// Returns space usage information for a table via `sp_spaceused`.
+    @available(macOS 12.0, *)
+    public func spaceUsed(schema: String = "dbo", table: String, database: String? = nil) async throws -> SQLServerSpaceUsed {
+        let objectName = SQLServerSQL.escapeLiteral("\(schema).\(table)")
+        let sql = "EXEC sp_spaceused N'\(objectName)'"
+
+        let rows: [SQLServerRow]
+        if let db = database ?? self.database {
+            rows = try await client.withDatabase(db) { connection in
+                try await connection.query(sql).get()
+            }
+        } else {
+            rows = try await client.query(sql)
+        }
+
+        guard let row = rows.first else {
+            throw SQLServerError.sqlExecutionError(message: "sp_spaceused returned no results for [\(schema)].[\(table)]")
+        }
+
+        return SQLServerSpaceUsed(
+            rows: row.column("rows")?.string ?? "0",
+            reserved: row.column("reserved")?.string ?? "0 KB",
+            data: row.column("data")?.string ?? "0 KB",
+            indexSize: row.column("index_size")?.string ?? "0 KB",
+            unused: row.column("unused")?.string ?? "0 KB"
+        )
     }
 
     @available(macOS 12.0, *)

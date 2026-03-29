@@ -303,16 +303,7 @@ extension SQLServerMetadataOperations {
         let escapedSchema = SQLServerSQL.escapeLiteral(schema)
         let escapedTable = SQLServerSQL.escapeLiteral(table)
 
-        // Query create/modify dates from sys.objects
-        let datesSql = """
-        SELECT o.create_date, o.modify_date
-        FROM \(qualified(database, object: "sys.objects")) o
-        JOIN \(qualified(database, object: "sys.schemas")) s ON o.schema_id = s.schema_id
-        WHERE s.name = N'\(escapedSchema)' AND o.name = N'\(escapedTable)';
-        """
-
-        // Query space usage from sys.dm_db_partition_stats and sys.allocation_units
-        // This avoids sp_spaceused which returns multiple result sets
+        // Query space usage from sys.allocation_units
         let spaceSql = """
         SELECT
             SUM(p.rows) AS row_count,
@@ -327,19 +318,107 @@ extension SQLServerMetadataOperations {
         WHERE s.name = N'\(escapedSchema)' AND o.name = N'\(escapedTable)' AND p.index_id IN (0, 1);
         """
 
-        return queryExecutor(datesSql).flatMap { dateRows in
-            let createDate = dateRows.first?.column("create_date")?.date
-            let modifyDate = dateRows.first?.column("modify_date")?.date
-            return self.queryExecutor(spaceSql).map { spaceRows in
-                let row = spaceRows.first
+        // Query table metadata: dates, storage config, partitioning, temporal, in-memory, change tracking
+        let propsSql = """
+        SELECT
+            o.create_date,
+            o.modify_date,
+            o.is_ms_shipped,
+            p.data_compression_desc,
+            fg.name AS filegroup_name,
+            t.lock_escalation_desc,
+            t.temporal_type,
+            t.uses_ansi_nulls,
+            t.is_replicated,
+            t.is_memory_optimized,
+            t.durability_desc,
+            hs.name AS history_schema,
+            ht.name AS history_table,
+            pc_start.name AS period_start_column,
+            pc_end.name AS period_end_column,
+            fg_lob.name AS text_filegroup,
+            fg_fs.name AS filestream_filegroup,
+            CASE WHEN ps.data_space_id IS NOT NULL THEN 1 ELSE 0 END AS is_partitioned,
+            ps.name AS partition_scheme,
+            pc_part.name AS partition_column,
+            (SELECT COUNT(*) FROM \(qualified(database, object: "sys.partitions")) sp
+             WHERE sp.object_id = t.object_id AND sp.index_id IN (0, 1)) AS partition_count,
+            ct.is_track_columns_updated_on AS track_columns_updated
+        FROM \(qualified(database, object: "sys.tables")) t
+        JOIN \(qualified(database, object: "sys.objects")) o ON o.object_id = t.object_id
+        JOIN \(qualified(database, object: "sys.schemas")) s ON t.schema_id = s.schema_id
+        JOIN \(qualified(database, object: "sys.partitions")) p
+            ON p.object_id = t.object_id AND p.index_id IN (0, 1) AND p.partition_number = 1
+        JOIN \(qualified(database, object: "sys.indexes")) i
+            ON i.object_id = t.object_id AND i.index_id IN (0, 1)
+        JOIN \(qualified(database, object: "sys.filegroups")) fg
+            ON fg.data_space_id = i.data_space_id
+        LEFT JOIN \(qualified(database, object: "sys.tables")) ht ON ht.object_id = t.history_table_id
+        LEFT JOIN \(qualified(database, object: "sys.schemas")) hs ON hs.schema_id = ht.schema_id
+        LEFT JOIN \(qualified(database, object: "sys.periods")) pr ON pr.object_id = t.object_id
+        LEFT JOIN \(qualified(database, object: "sys.columns")) pc_start
+            ON pc_start.object_id = t.object_id AND pc_start.column_id = pr.start_column_id
+        LEFT JOIN \(qualified(database, object: "sys.columns")) pc_end
+            ON pc_end.object_id = t.object_id AND pc_end.column_id = pr.end_column_id
+        LEFT JOIN \(qualified(database, object: "sys.filegroups")) fg_lob
+            ON fg_lob.data_space_id = t.lob_data_space_id
+        LEFT JOIN \(qualified(database, object: "sys.filegroups")) fg_fs
+            ON fg_fs.data_space_id = t.filestream_data_space_id
+        LEFT JOIN \(qualified(database, object: "sys.partition_schemes")) ps
+            ON ps.data_space_id = i.data_space_id
+        LEFT JOIN \(qualified(database, object: "sys.index_columns")) ic_part
+            ON ic_part.object_id = i.object_id AND ic_part.index_id = i.index_id AND ic_part.partition_ordinal = 1
+        LEFT JOIN \(qualified(database, object: "sys.columns")) pc_part
+            ON pc_part.object_id = t.object_id AND pc_part.column_id = ic_part.column_id
+        LEFT JOIN \(qualified(database, object: "sys.change_tracking_tables")) ct
+            ON ct.object_id = t.object_id
+        WHERE s.name = N'\(escapedSchema)' AND t.name = N'\(escapedTable)';
+        """
+
+        return queryExecutor(spaceSql).flatMap { spaceRows in
+            let spaceRow = spaceRows.first
+            let rowCount = spaceRow?.column("row_count")?.int64 ?? 0
+            let reservedKB = spaceRow?.column("reserved_kb")?.int64 ?? 0
+            let dataKB = spaceRow?.column("data_kb")?.int64 ?? 0
+            let indexKB = spaceRow?.column("index_kb")?.int64 ?? 0
+            let unusedKB = spaceRow?.column("unused_kb")?.int64 ?? 0
+
+            return self.queryExecutor(propsSql).map { propsRows in
+                let row = propsRows.first
+                let temporalType = row?.column("temporal_type")?.int ?? 0
+                let isMemOpt = (row?.column("is_memory_optimized")?.int ?? 0) != 0
+                let isPartitioned = (row?.column("is_partitioned")?.int ?? 0) != 0
+                let ctTrackCols = row?.column("track_columns_updated")?.int
+
                 return SQLServerTableProperties(
-                    rowCount: row?.column("row_count")?.int64 ?? 0,
-                    reservedKB: row?.column("reserved_kb")?.int64 ?? 0,
-                    dataKB: row?.column("data_kb")?.int64 ?? 0,
-                    indexKB: row?.column("index_kb")?.int64 ?? 0,
-                    unusedKB: row?.column("unused_kb")?.int64 ?? 0,
-                    createDate: createDate,
-                    modifyDate: modifyDate
+                    rowCount: rowCount,
+                    reservedKB: reservedKB,
+                    dataKB: dataKB,
+                    indexKB: indexKB,
+                    unusedKB: unusedKB,
+                    createDate: row?.column("create_date")?.date,
+                    modifyDate: row?.column("modify_date")?.date,
+                    dataCompression: row?.column("data_compression_desc")?.string,
+                    filegroup: row?.column("filegroup_name")?.string,
+                    lockEscalation: row?.column("lock_escalation_desc")?.string,
+                    textFilegroup: row?.column("text_filegroup")?.string,
+                    filestreamFilegroup: row?.column("filestream_filegroup")?.string,
+                    isSystemObject: (row?.column("is_ms_shipped")?.int ?? 0) != 0 ? true : nil,
+                    usesAnsiNulls: (row?.column("uses_ansi_nulls")?.int ?? 0) != 0 ? true : false,
+                    isReplicated: (row?.column("is_replicated")?.int ?? 0) != 0 ? true : nil,
+                    isPartitioned: isPartitioned ? true : nil,
+                    partitionScheme: isPartitioned ? row?.column("partition_scheme")?.string : nil,
+                    partitionColumn: isPartitioned ? row?.column("partition_column")?.string : nil,
+                    partitionCount: isPartitioned ? row?.column("partition_count")?.int : nil,
+                    isSystemVersioned: temporalType == 2 ? true : nil,
+                    historyTableSchema: row?.column("history_schema")?.string,
+                    historyTableName: row?.column("history_table")?.string,
+                    periodStartColumn: row?.column("period_start_column")?.string,
+                    periodEndColumn: row?.column("period_end_column")?.string,
+                    isMemoryOptimized: isMemOpt ? true : nil,
+                    memoryOptimizedDurability: isMemOpt ? row?.column("durability_desc")?.string : nil,
+                    changeTrackingEnabled: ctTrackCols != nil ? true : nil,
+                    trackColumnsUpdated: ctTrackCols != nil ? (ctTrackCols != 0) : nil
                 )
             }
         }
