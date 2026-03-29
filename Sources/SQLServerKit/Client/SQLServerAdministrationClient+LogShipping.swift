@@ -6,9 +6,9 @@ import SQLServerTDS
 @available(macOS 12.0, *)
 extension SQLServerAdministrationClient {
 
-    /// Fetches the log shipping configuration for a primary database.
+    /// Gets the log shipping configuration for a primary database.
     /// Returns nil if log shipping is not configured for this database.
-    public func fetchLogShippingConfig(database: String) async throws -> SQLServerLogShippingConfig? {
+    public func getLogShippingConfig(database: String) async throws -> SQLServerLogShippingConfig? {
         let escapedName = database.replacingOccurrences(of: "'", with: "''")
 
         // Check primary configuration
@@ -73,9 +73,9 @@ extension SQLServerAdministrationClient {
         )
     }
 
-    /// Fetches the log shipping secondary configuration for a database that is a secondary.
+    /// Gets the log shipping secondary configuration for a database that is a secondary.
     /// Returns nil if this database is not a log shipping secondary.
-    public func fetchLogShippingSecondaryConfig(database: String) async throws -> SQLServerLogShippingSecondaryConfig? {
+    public func getLogShippingSecondaryConfig(database: String) async throws -> SQLServerLogShippingSecondaryConfig? {
         let escapedName = database.replacingOccurrences(of: "'", with: "''")
         let sql = """
         SELECT
@@ -107,5 +107,17 @@ extension SQLServerAdministrationClient {
             lastRestoredDate: row.column("last_restored_date")?.string,
             lastRestoredFile: row.column("last_restored_file")?.string ?? ""
         )
+    }
+
+    // MARK: - Deprecated Forwarding
+
+    @available(*, deprecated, renamed: "getLogShippingConfig(database:)")
+    public func fetchLogShippingConfig(database: String) async throws -> SQLServerLogShippingConfig? {
+        try await getLogShippingConfig(database: database)
+    }
+
+    @available(*, deprecated, renamed: "getLogShippingSecondaryConfig(database:)")
+    public func fetchLogShippingSecondaryConfig(database: String) async throws -> SQLServerLogShippingSecondaryConfig? {
+        try await getLogShippingSecondaryConfig(database: database)
     }
 }

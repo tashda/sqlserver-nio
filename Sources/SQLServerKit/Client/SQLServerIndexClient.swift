@@ -5,13 +5,13 @@ import SQLServerTDS
 
 public final class SQLServerIndexClient: @unchecked Sendable {
     internal let client: SQLServerClient
-    
+
     public init(client: SQLServerClient) {
         self.client = client
     }
-    
+
     // MARK: - Index Creation
-    
+
     internal func dropIndexIfExistsSQL(name: String, table: String, schema: String) -> String {
         let escapedIndexName = SQLServerSQL.escapeIdentifier(name)
         let escapedTableName = SQLServerSQL.escapeIdentifier(table)
@@ -27,6 +27,7 @@ public final class SQLServerIndexClient: @unchecked Sendable {
         """
     }
 
+    @discardableResult
     public func createIndex(
         name: String,
         table: String,
@@ -35,8 +36,8 @@ public final class SQLServerIndexClient: @unchecked Sendable {
         options: IndexOptions? = nil,
         filter: String? = nil,
         dropIfExists: Bool = false
-    ) -> EventLoopFuture<Void> {
-        let promise = client.eventLoopGroup.next().makePromise(of: Void.self)
+    ) -> EventLoopFuture<[SQLServerStreamMessage]> {
+        let promise = client.eventLoopGroup.next().makePromise(of: [SQLServerStreamMessage].self)
         if #available(macOS 12.0, *) {
             promise.completeWithTask {
                 try await self.createIndex(name: name, table: table, columns: columns, schema: schema, options: options, filter: filter, dropIfExists: dropIfExists)
@@ -46,8 +47,9 @@ public final class SQLServerIndexClient: @unchecked Sendable {
         }
         return promise.futureResult
     }
-    
+
     @available(macOS 12.0, *)
+    @discardableResult
     public func createIndex(
         name: String,
         table: String,
@@ -56,31 +58,34 @@ public final class SQLServerIndexClient: @unchecked Sendable {
         options: IndexOptions? = nil,
         filter: String? = nil,
         dropIfExists: Bool = false
-    ) async throws {
+    ) async throws -> [SQLServerStreamMessage] {
         let escapedIndexName = SQLServerSQL.escapeIdentifier(name)
         let escapedTableName = SQLServerSQL.escapeIdentifier(table)
         let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
 
+        var allMessages: [SQLServerStreamMessage] = []
+
         if dropIfExists {
             let dropSql = dropIndexIfExistsSQL(name: name, table: table, schema: schema)
-            _ = try await client.execute(dropSql)
+            let dropResult = try await client.execute(dropSql)
+            allMessages.append(contentsOf: dropResult.messages)
         }
-        
+
         let keyColumns = columns.filter { !$0.isIncluded }
         let includedColumns = columns.filter { $0.isIncluded }
-        
+
         guard !keyColumns.isEmpty else {
             throw SQLServerError.invalidArgument("At least one key column is required")
         }
-        
+
         var sql = "CREATE NONCLUSTERED INDEX \(escapedIndexName) ON \(fullTableName)"
-        
+
         let keyColumnList = keyColumns.map { column in
             "\(SQLServerSQL.escapeIdentifier(column.name)) \(column.sortDirection.rawValue)"
         }.joined(separator: ", ")
         sql += " (\(keyColumnList))"
-        
+
         if !includedColumns.isEmpty {
             let includedColumnList = includedColumns.map { SQLServerSQL.escapeIdentifier($0.name) }.joined(separator: ", ")
             sql += " INCLUDE (\(includedColumnList))"
@@ -92,10 +97,13 @@ public final class SQLServerIndexClient: @unchecked Sendable {
         if let options = options {
             sql += try applyOptions(options)
         }
-        
-        _ = try await client.execute(sql)
+
+        let result = try await client.execute(sql)
+        allMessages.append(contentsOf: result.messages)
+        return allMessages
     }
-    
+
+    @discardableResult
     public func createUniqueIndex(
         name: String,
         table: String,
@@ -104,8 +112,8 @@ public final class SQLServerIndexClient: @unchecked Sendable {
         options: IndexOptions? = nil,
         filter: String? = nil,
         dropIfExists: Bool = false
-    ) -> EventLoopFuture<Void> {
-        let promise = client.eventLoopGroup.next().makePromise(of: Void.self)
+    ) -> EventLoopFuture<[SQLServerStreamMessage]> {
+        let promise = client.eventLoopGroup.next().makePromise(of: [SQLServerStreamMessage].self)
         if #available(macOS 12.0, *) {
             promise.completeWithTask {
                 try await self.createUniqueIndex(name: name, table: table, columns: columns, schema: schema, options: options, filter: filter, dropIfExists: dropIfExists)
@@ -115,8 +123,9 @@ public final class SQLServerIndexClient: @unchecked Sendable {
         }
         return promise.futureResult
     }
-    
+
     @available(macOS 12.0, *)
+    @discardableResult
     public func createUniqueIndex(
         name: String,
         table: String,
@@ -125,31 +134,34 @@ public final class SQLServerIndexClient: @unchecked Sendable {
         options: IndexOptions? = nil,
         filter: String? = nil,
         dropIfExists: Bool = false
-    ) async throws {
+    ) async throws -> [SQLServerStreamMessage] {
         let escapedIndexName = SQLServerSQL.escapeIdentifier(name)
         let escapedTableName = SQLServerSQL.escapeIdentifier(table)
         let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
 
+        var allMessages: [SQLServerStreamMessage] = []
+
         if dropIfExists {
             let dropSql = dropIndexIfExistsSQL(name: name, table: table, schema: schema)
-            _ = try await client.execute(dropSql)
+            let dropResult = try await client.execute(dropSql)
+            allMessages.append(contentsOf: dropResult.messages)
         }
-        
+
         let keyColumns = columns.filter { !$0.isIncluded }
         let includedColumns = columns.filter { $0.isIncluded }
-        
+
         guard !keyColumns.isEmpty else {
             throw SQLServerError.invalidArgument("At least one key column is required")
         }
-        
+
         var sql = "CREATE UNIQUE NONCLUSTERED INDEX \(escapedIndexName) ON \(fullTableName)"
-        
+
         let keyColumnList = keyColumns.map { column in
             "\(SQLServerSQL.escapeIdentifier(column.name)) \(column.sortDirection.rawValue)"
         }.joined(separator: ", ")
         sql += " (\(keyColumnList))"
-        
+
         if !includedColumns.isEmpty {
             let includedColumnList = includedColumns.map { SQLServerSQL.escapeIdentifier($0.name) }.joined(separator: ", ")
             sql += " INCLUDE (\(includedColumnList))"
@@ -161,11 +173,14 @@ public final class SQLServerIndexClient: @unchecked Sendable {
         if let options = options {
             sql += try applyOptions(options)
         }
-        
-        _ = try await client.execute(sql)
+
+        let result = try await client.execute(sql)
+        allMessages.append(contentsOf: result.messages)
+        return allMessages
     }
 
     @available(macOS 12.0, *)
+    @discardableResult
     public func createColumnstoreIndex(
         name: String,
         table: String,
@@ -173,15 +188,18 @@ public final class SQLServerIndexClient: @unchecked Sendable {
         columns: [String] = [],
         schema: String = "dbo",
         dropIfExists: Bool = false
-    ) async throws {
+    ) async throws -> [SQLServerStreamMessage] {
         let escapedIndexName = SQLServerSQL.escapeIdentifier(name)
         let escapedTableName = SQLServerSQL.escapeIdentifier(table)
         let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
 
+        var allMessages: [SQLServerStreamMessage] = []
+
         if dropIfExists {
             let dropSql = dropIndexIfExistsSQL(name: name, table: table, schema: schema)
-            _ = try await client.execute(dropSql)
+            let dropResult = try await client.execute(dropSql)
+            allMessages.append(contentsOf: dropResult.messages)
         }
 
         let kind = clustered ? "CLUSTERED COLUMNSTORE" : "NONCLUSTERED COLUMNSTORE"
@@ -191,50 +209,54 @@ public final class SQLServerIndexClient: @unchecked Sendable {
             sql += " (\(list))"
         }
         sql += ";"
-        _ = try await client.execute(sql)
+        let result = try await client.execute(sql)
+        allMessages.append(contentsOf: result.messages)
+        return allMessages
     }
-    
+
     @available(macOS 12.0, *)
+    @discardableResult
     public func createClusteredIndex(
         name: String,
         table: String,
         columns: [IndexColumn],
         schema: String = "dbo",
         options: IndexOptions? = nil
-    ) async throws {
+    ) async throws -> [SQLServerStreamMessage] {
         let escapedIndexName = SQLServerSQL.escapeIdentifier(name)
         let escapedTableName = SQLServerSQL.escapeIdentifier(table)
         let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
-        
+
         let keyColumns = columns.filter { !$0.isIncluded }
-        
+
         guard !keyColumns.isEmpty else {
             throw SQLServerError.invalidArgument("At least one key column is required")
         }
-        
+
         if columns.contains(where: { $0.isIncluded }) {
             throw SQLServerError.invalidArgument("Clustered indexes cannot have included columns")
         }
-        
+
         var sql = "CREATE CLUSTERED INDEX \(escapedIndexName) ON \(fullTableName)"
-        
+
         let keyColumnList = keyColumns.map { column in
             "\(SQLServerSQL.escapeIdentifier(column.name)) \(column.sortDirection.rawValue)"
         }.joined(separator: ", ")
         sql += " (\(keyColumnList))"
-        
+
         if let options = options {
             sql += try applyOptions(options)
         }
-        
-        _ = try await client.execute(sql)
+
+        let result = try await client.execute(sql)
+        return result.messages
     }
 
     internal func applyOptions(_ options: IndexOptions) throws -> String {
         var sql = ""
         var optionParts: [String] = []
-        
+
         if let fillFactor = options.fillFactor {
             optionParts.append("FILLFACTOR = \(fillFactor)")
         }
@@ -262,11 +284,11 @@ public final class SQLServerIndexClient: @unchecked Sendable {
         if let compression = options.dataCompression {
             optionParts.append("DATA_COMPRESSION = \(compression.rawValue)")
         }
-        
+
         if !optionParts.isEmpty {
             sql += " WITH (\(optionParts.joined(separator: ", ")))"
         }
-        
+
         if let partitionScheme = options.partitionScheme {
             let escapedPartitionScheme = SQLServerSQL.escapeIdentifier(partitionScheme)
             if options.partitionColumns.isEmpty {

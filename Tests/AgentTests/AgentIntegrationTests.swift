@@ -16,7 +16,7 @@ final class AppIntegrationTests: AgentTestBase, @unchecked Sendable {
         // Test 1: Try enhanced API (App's primary approach)
         do {
             print("🔍 [AppIntegration] Testing enhanced listJobsDetailed() API...")
-            let enhancedJobs = try await agent.listJobsDetailed()
+            let enhancedJobs = try await agent.listJobDetails()
             print("✅ [AppIntegration] Enhanced API succeeded: loaded \(enhancedJobs.count) jobs")
 
             // Verify the data structure matches App's expectations
@@ -92,14 +92,14 @@ final class AppIntegrationTests: AgentTestBase, @unchecked Sendable {
         // Test sp_help_job (enhanced API)
         do {
             print("🔍 [AppIntegration] Testing sp_help_job...")
-            let jobs = try await agent.listJobsDetailed()
+            let jobs = try await agent.listJobDetails()
             print("✅ [AppIntegration] sp_help_job succeeded: \(jobs.count) jobs")
         } catch {
             print("❌ [AppIntegration] sp_help_job failed: \(error.localizedDescription)")
         }
 
         // Test sp_help_jobstep (steps)
-        if let firstJob = try? await agent.listJobsDetailed().first {
+        if let firstJob = try? await agent.listJobDetails().first {
             do {
                 print("🔍 [AppIntegration] Testing sp_help_jobstep for job: \(firstJob.name)...")
                 let steps = try await agent.getJobSteps(jobName: firstJob.name)
@@ -118,10 +118,10 @@ final class AppIntegrationTests: AgentTestBase, @unchecked Sendable {
         }
 
         // Test sp_help_jobschedule (schedules)
-        if let firstJob = try? await agent.listJobsDetailed().first {
+        if let firstJob = try? await agent.listJobDetails().first {
             do {
                 print("🔍 [AppIntegration] Testing sp_help_jobschedule for job: \(firstJob.name)...")
-                let schedules = try await agent.getJobSchedules(jobName: firstJob.name)
+                let schedules = try await agent.listJobSchedules(jobName: firstJob.name)
                 print("✅ [AppIntegration] sp_help_jobschedule succeeded: \(schedules.count) schedules")
 
                 if let firstSchedule = schedules.first {

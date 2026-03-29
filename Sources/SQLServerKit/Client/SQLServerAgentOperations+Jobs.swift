@@ -38,7 +38,7 @@ extension SQLServerAgentOperations {
         }
     }
 
-    internal func listJobsDetailed() -> EventLoopFuture<[SQLServerAgentJobDetail]> {
+    internal func listJobDetails() -> EventLoopFuture<[SQLServerAgentJobDetail]> {
         let jobSql = "EXEC msdb.dbo.sp_help_job;"
         let lastRunSql = """
         SELECT CONVERT(nvarchar(36), job_id) AS job_id, last_run_date, last_run_time

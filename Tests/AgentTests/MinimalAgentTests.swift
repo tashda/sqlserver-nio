@@ -14,7 +14,7 @@ final class MinimalAgentTests: AgentTestBase, @unchecked Sendable {
 
         // Test the enhanced API
         let jobs = try await withTimeout(operationTimeout) {
-            try await agent.listJobsDetailed()
+            try await agent.listJobDetails()
         }
 
         // Verify we got job data

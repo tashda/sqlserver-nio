@@ -45,7 +45,7 @@ final class AgentJobBuilderTests: AgentTestBase, @unchecked Sendable {
 
         // Verify the returned jobId matches what SQL Server has
         let resolvedId = try await withTimeout(operationTimeout) {
-            try await agent.fetchJobId(named: jobName)
+            try await agent.getJobId(named: jobName)
         }
         XCTAssertEqual(result.jobId, resolvedId, "Returned jobId should match the server's job_id")
 
@@ -67,7 +67,7 @@ final class AgentJobBuilderTests: AgentTestBase, @unchecked Sendable {
 
         // Verify schedule is attached
         let schedules = try await withTimeout(operationTimeout) {
-            try await agent.getJobSchedules(jobName: jobName)
+            try await agent.listJobSchedules(jobName: jobName)
         }
         XCTAssertGreaterThanOrEqual(schedules.count, 1, "Job should have at least one schedule")
         XCTAssertTrue(schedules.contains(where: { $0.name == scheduleName }), "Schedule name should match")

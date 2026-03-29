@@ -1,11 +1,74 @@
 import Foundation
 import SQLServerTDS
 
+// MARK: - Create Database Options
+
+/// Options for creating a SQL Server database, including collation, containment, and file settings.
+public struct SQLServerCreateDatabaseOptions: Sendable {
+    public var collation: String?
+    public var containment: String?
+    public var dataFileName: String?
+    public var dataFileSize: Int?
+    public var dataFileMaxSize: Int?
+    public var dataFileGrowth: Int?
+    public var logFileName: String?
+    public var logFileSize: Int?
+    public var logFileMaxSize: Int?
+    public var logFileGrowth: Int?
+
+    public init(
+        collation: String? = nil,
+        containment: String? = nil,
+        dataFileName: String? = nil,
+        dataFileSize: Int? = nil,
+        dataFileMaxSize: Int? = nil,
+        dataFileGrowth: Int? = nil,
+        logFileName: String? = nil,
+        logFileSize: Int? = nil,
+        logFileMaxSize: Int? = nil,
+        logFileGrowth: Int? = nil
+    ) {
+        self.collation = collation
+        self.containment = containment
+        self.dataFileName = dataFileName
+        self.dataFileSize = dataFileSize
+        self.dataFileMaxSize = dataFileMaxSize
+        self.dataFileGrowth = dataFileGrowth
+        self.logFileName = logFileName
+        self.logFileSize = logFileSize
+        self.logFileMaxSize = logFileMaxSize
+        self.logFileGrowth = logFileGrowth
+    }
+}
+
 extension SQLServerAdministrationClient {
     // MARK: - Database Management
 
     /// Create a database with optional configuration for collation, containment, and file settings.
     @available(macOS 12.0, *)
+    @discardableResult
+    public func createDatabase(
+        name: String,
+        options: SQLServerCreateDatabaseOptions = .init()
+    ) async throws -> [SQLServerStreamMessage] {
+        try await createDatabase(
+            name: name,
+            collation: options.collation,
+            containment: options.containment,
+            dataFileName: options.dataFileName,
+            dataFileSize: options.dataFileSize,
+            dataFileMaxSize: options.dataFileMaxSize,
+            dataFileGrowth: options.dataFileGrowth,
+            logFileName: options.logFileName,
+            logFileSize: options.logFileSize,
+            logFileMaxSize: options.logFileMaxSize,
+            logFileGrowth: options.logFileGrowth
+        )
+    }
+
+    /// Create a database with optional configuration for collation, containment, and file settings.
+    @available(macOS 12.0, *)
+    @available(*, deprecated, message: "Use createDatabase(name:options:) instead")
     @discardableResult
     public func createDatabase(
         name: String,
@@ -134,9 +197,9 @@ extension SQLServerAdministrationClient {
         return result.messages
     }
 
-    /// Fetch comprehensive properties for a database from sys.databases and related system views.
+    /// Get comprehensive properties for a database from sys.databases and related system views.
     @available(macOS 12.0, *)
-    public func fetchDatabaseProperties(name: String) async throws -> SQLServerDatabaseProperties {
+    public func getDatabaseProperties(name: String) async throws -> SQLServerDatabaseProperties {
         let escapedName = name.replacingOccurrences(of: "'", with: "''")
         let sql = """
         SELECT
@@ -268,9 +331,15 @@ extension SQLServerAdministrationClient {
         )
     }
 
-    /// Fetch database files from sys.master_files.
+    @available(*, deprecated, renamed: "getDatabaseProperties(name:)")
     @available(macOS 12.0, *)
-    public func fetchDatabaseFiles(name: String) async throws -> [SQLServerDatabaseFile] {
+    public func fetchDatabaseProperties(name: String) async throws -> SQLServerDatabaseProperties {
+        try await getDatabaseProperties(name: name)
+    }
+
+    /// Get database files from sys.master_files.
+    @available(macOS 12.0, *)
+    public func getDatabaseFiles(name: String) async throws -> [SQLServerDatabaseFile] {
         let escapedName = name.replacingOccurrences(of: "'", with: "''")
         let sql = """
         SELECT
@@ -331,6 +400,12 @@ extension SQLServerAdministrationClient {
                 type: type
             )
         }
+    }
+
+    @available(*, deprecated, renamed: "getDatabaseFiles(name:)")
+    @available(macOS 12.0, *)
+    public func fetchDatabaseFiles(name: String) async throws -> [SQLServerDatabaseFile] {
+        try await getDatabaseFiles(name: name)
     }
 
     /// Modify a database file property (size, max size, or growth).

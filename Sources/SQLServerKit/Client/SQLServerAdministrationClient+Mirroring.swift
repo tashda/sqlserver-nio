@@ -6,8 +6,8 @@ import SQLServerTDS
 @available(macOS 12.0, *)
 extension SQLServerAdministrationClient {
 
-    /// Fetches the mirroring status for a database from sys.database_mirroring.
-    public func fetchMirroringStatus(database: String) async throws -> SQLServerMirroringStatus {
+    /// Gets the mirroring status for a database from sys.database_mirroring.
+    public func getMirroringStatus(database: String) async throws -> SQLServerMirroringStatus {
         let escapedName = database.replacingOccurrences(of: "'", with: "''")
         
         // On some platforms (like SQL Server on Linux), mirroring views might be empty 
@@ -170,5 +170,12 @@ extension SQLServerAdministrationClient {
         let sql = "ALTER DATABASE \(escapedDb) SET PARTNER TIMEOUT \(seconds)"
         let result = try await client.execute(sql)
         return result.messages
+    }
+
+    // MARK: - Deprecated Forwarding
+
+    @available(*, deprecated, renamed: "getMirroringStatus(database:)")
+    public func fetchMirroringStatus(database: String) async throws -> SQLServerMirroringStatus {
+        try await getMirroringStatus(database: database)
     }
 }

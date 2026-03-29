@@ -7,7 +7,7 @@ final class DatabasePropertiesTests: DatabaseTestBase, @unchecked Sendable {
 
     func testFetchDatabaseProperties() async throws {
 
-        let props = try await adminClient.fetchDatabaseProperties(name: testDatabase)
+        let props = try await adminClient.getDatabaseProperties(name: testDatabase)
 
         XCTAssertEqual(props.name, testDatabase)
         XCTAssertFalse(props.owner.isEmpty, "Owner should not be empty")
@@ -20,7 +20,7 @@ final class DatabasePropertiesTests: DatabaseTestBase, @unchecked Sendable {
 
     func testFetchDatabasePropertiesRecoveryDefaults() async throws {
 
-        let props = try await adminClient.fetchDatabaseProperties(name: testDatabase)
+        let props = try await adminClient.getDatabaseProperties(name: testDatabase)
 
         // New databases default to FULL recovery model
         XCTAssertEqual(props.recoveryModel, "FULL")
@@ -31,7 +31,7 @@ final class DatabasePropertiesTests: DatabaseTestBase, @unchecked Sendable {
 
     func testFetchDatabasePropertiesAutoDefaults() async throws {
 
-        let props = try await adminClient.fetchDatabaseProperties(name: testDatabase)
+        let props = try await adminClient.getDatabaseProperties(name: testDatabase)
 
         XCTAssertTrue(props.isAutoCreateStatsOn, "Auto create statistics should be on by default")
         XCTAssertTrue(props.isAutoUpdateStatsOn, "Auto update statistics should be on by default")
@@ -42,7 +42,7 @@ final class DatabasePropertiesTests: DatabaseTestBase, @unchecked Sendable {
 
     func testFetchDatabasePropertiesAnsiDefaults() async throws {
 
-        let props = try await adminClient.fetchDatabaseProperties(name: testDatabase)
+        let props = try await adminClient.getDatabaseProperties(name: testDatabase)
 
         // Default ANSI settings for a new database
         XCTAssertFalse(props.isAnsiNullDefaultOn)
@@ -59,7 +59,7 @@ final class DatabasePropertiesTests: DatabaseTestBase, @unchecked Sendable {
 
     func testFetchDatabasePropertiesIsolationDefaults() async throws {
 
-        let props = try await adminClient.fetchDatabaseProperties(name: testDatabase)
+        let props = try await adminClient.getDatabaseProperties(name: testDatabase)
 
         XCTAssertFalse(props.isReadCommittedSnapshotOn)
         // Snapshot isolation state should contain OFF
@@ -69,7 +69,7 @@ final class DatabasePropertiesTests: DatabaseTestBase, @unchecked Sendable {
 
     func testFetchDatabasePropertiesMiscDefaults() async throws {
 
-        let props = try await adminClient.fetchDatabaseProperties(name: testDatabase)
+        let props = try await adminClient.getDatabaseProperties(name: testDatabase)
 
         XCTAssertTrue(props.isBrokerEnabled)
         XCTAssertFalse(props.isTrustworthy)
@@ -79,7 +79,7 @@ final class DatabasePropertiesTests: DatabaseTestBase, @unchecked Sendable {
     func testFetchNonExistentDatabaseThrows() async throws {
 
         do {
-            _ = try await adminClient.fetchDatabaseProperties(name: "nonexistent_db_\(UUID().uuidString.prefix(8))")
+            _ = try await adminClient.getDatabaseProperties(name: "nonexistent_db_\(UUID().uuidString.prefix(8))")
             XCTFail("Should have thrown for non-existent database")
         } catch {
             // Expected
@@ -90,7 +90,7 @@ final class DatabasePropertiesTests: DatabaseTestBase, @unchecked Sendable {
 
     func testFetchDatabaseFiles() async throws {
 
-        let files = try await adminClient.fetchDatabaseFiles(name: testDatabase)
+        let files = try await adminClient.getDatabaseFiles(name: testDatabase)
 
         XCTAssertGreaterThanOrEqual(files.count, 2, "Should have at least a data file and a log file")
 
@@ -120,7 +120,7 @@ final class DatabasePropertiesTests: DatabaseTestBase, @unchecked Sendable {
 
     func testFetchDatabaseFileRawMetadata() async throws {
 
-        let files = try await adminClient.fetchDatabaseFiles(name: testDatabase)
+        let files = try await adminClient.getDatabaseFiles(name: testDatabase)
         guard let file = files.first else {
             XCTFail("No files returned")
             return
@@ -145,12 +145,12 @@ final class DatabasePropertiesTests: DatabaseTestBase, @unchecked Sendable {
 
         try await adminClient.takeDatabaseOffline(name: testDatabase)
 
-        var props = try await adminClient.fetchDatabaseProperties(name: testDatabase)
+        var props = try await adminClient.getDatabaseProperties(name: testDatabase)
         XCTAssertEqual(props.stateDescription, "OFFLINE")
 
         try await adminClient.bringDatabaseOnline(name: testDatabase)
 
-        props = try await adminClient.fetchDatabaseProperties(name: testDatabase)
+        props = try await adminClient.getDatabaseProperties(name: testDatabase)
         XCTAssertEqual(props.stateDescription, "ONLINE")
     }
 

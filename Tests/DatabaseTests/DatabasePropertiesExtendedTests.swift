@@ -139,7 +139,7 @@ final class DatabasePropertiesExtendedTests: DatabaseTestBase, @unchecked Sendab
     // MARK: - Mirroring
 
     func testFetchMirroringStatusForNonMirroredDatabase() async throws {
-        let status = try await adminClient.fetchMirroringStatus(database: testDatabase)
+        let status = try await adminClient.getMirroringStatus(database: testDatabase)
 
         XCTAssertFalse(status.isConfigured, "Test database should not have mirroring configured")
         XCTAssertNil(status.stateDescription)
@@ -151,19 +151,19 @@ final class DatabasePropertiesExtendedTests: DatabaseTestBase, @unchecked Sendab
     // MARK: - Log Shipping
 
     func testFetchLogShippingConfigForNonConfiguredDatabase() async throws {
-        let config = try await adminClient.fetchLogShippingConfig(database: testDatabase)
+        let config = try await adminClient.getLogShippingConfig(database: testDatabase)
         XCTAssertNil(config, "Test database should not have log shipping configured")
     }
 
     func testFetchLogShippingSecondaryConfigForNonConfiguredDatabase() async throws {
-        let config = try await adminClient.fetchLogShippingSecondaryConfig(database: testDatabase)
+        let config = try await adminClient.getLogShippingSecondaryConfig(database: testDatabase)
         XCTAssertNil(config, "Test database should not be a log shipping secondary")
     }
 
     // MARK: - FILESTREAM Options
 
     func testFetchFilestreamOptions() async throws {
-        let options = try await adminClient.fetchFilestreamOptions(database: testDatabase)
+        let options = try await adminClient.getFilestreamOptions(database: testDatabase)
 
         // New database should have FILESTREAM off by default
         XCTAssertEqual(options.nonTransactedAccess, 0)
@@ -173,7 +173,7 @@ final class DatabasePropertiesExtendedTests: DatabaseTestBase, @unchecked Sendab
     // MARK: - Cursor Defaults
 
     func testFetchCursorDefaults() async throws {
-        let defaults = try await adminClient.fetchCursorDefaults(database: testDatabase)
+        let defaults = try await adminClient.getCursorDefaults(database: testDatabase)
 
         // Default for new databases is GLOBAL cursor scope and cursor not close on commit
         XCTAssertFalse(defaults.isLocalCursorDefault, "Default cursor scope should be GLOBAL")
@@ -184,13 +184,13 @@ final class DatabasePropertiesExtendedTests: DatabaseTestBase, @unchecked Sendab
         // Enable cursor close on commit
         _ = try await adminClient.alterDatabaseOption(name: testDatabase, option: .cursorCloseOnCommit(true))
 
-        var defaults = try await adminClient.fetchCursorDefaults(database: testDatabase)
+        var defaults = try await adminClient.getCursorDefaults(database: testDatabase)
         XCTAssertTrue(defaults.isCursorCloseOnCommitOn)
 
         // Restore
         _ = try await adminClient.alterDatabaseOption(name: testDatabase, option: .cursorCloseOnCommit(false))
 
-        defaults = try await adminClient.fetchCursorDefaults(database: testDatabase)
+        defaults = try await adminClient.getCursorDefaults(database: testDatabase)
         XCTAssertFalse(defaults.isCursorCloseOnCommitOn)
     }
 
@@ -198,20 +198,20 @@ final class DatabasePropertiesExtendedTests: DatabaseTestBase, @unchecked Sendab
         // Set cursor default to LOCAL
         _ = try await adminClient.alterDatabaseOption(name: testDatabase, option: .cursorDefaultLocal(true))
 
-        var defaults = try await adminClient.fetchCursorDefaults(database: testDatabase)
+        var defaults = try await adminClient.getCursorDefaults(database: testDatabase)
         XCTAssertTrue(defaults.isLocalCursorDefault)
 
         // Restore to GLOBAL
         _ = try await adminClient.alterDatabaseOption(name: testDatabase, option: .cursorDefaultLocal(false))
 
-        defaults = try await adminClient.fetchCursorDefaults(database: testDatabase)
+        defaults = try await adminClient.getCursorDefaults(database: testDatabase)
         XCTAssertFalse(defaults.isLocalCursorDefault)
     }
 
     // MARK: - Service Broker Properties
 
     func testFetchServiceBrokerProperties() async throws {
-        let props = try await adminClient.fetchServiceBrokerProperties(database: testDatabase)
+        let props = try await adminClient.getServiceBrokerProperties(database: testDatabase)
 
         // New databases have broker enabled by default
         XCTAssertTrue(props.isBrokerEnabled, "Broker should be enabled by default on new databases")
@@ -221,7 +221,7 @@ final class DatabasePropertiesExtendedTests: DatabaseTestBase, @unchecked Sendab
     // MARK: - Containment Properties
 
     func testFetchContainmentPropertiesForNonContainedDatabase() async throws {
-        let props = try await adminClient.fetchContainmentProperties(database: testDatabase)
+        let props = try await adminClient.getContainmentProperties(database: testDatabase)
         XCTAssertNil(props, "Non-contained database should return nil")
     }
 

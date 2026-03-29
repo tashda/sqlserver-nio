@@ -364,12 +364,20 @@ public final class SQLServerMetadataNamespace: @unchecked Sendable {
     }
 
     @available(macOS 12.0, *)
-    public func fetchObjectDefinitions(
+    public func listObjectDefinitions(
         _ identifiers: [SQLServerMetadataObjectIdentifier]
     ) async throws -> [ObjectDefinition] {
         try await client.withConnection { connection in
-            try await connection.fetchObjectDefinitions(identifiers)
+            try await connection.listObjectDefinitions(identifiers)
         }
+    }
+
+    @available(*, deprecated, renamed: "listObjectDefinitions(_:)")
+    @available(macOS 12.0, *)
+    public func fetchObjectDefinitions(
+        _ identifiers: [SQLServerMetadataObjectIdentifier]
+    ) async throws -> [ObjectDefinition] {
+        try await listObjectDefinitions(identifiers)
     }
 
     // MARK: - Structure Loading

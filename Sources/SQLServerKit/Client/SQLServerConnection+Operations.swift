@@ -11,7 +11,7 @@ extension SQLServerConnection {
         name: String,
         kind: SQLServerMetadataObjectIdentifier.Kind
     ) async throws -> ObjectDefinition? {
-        try await fetchObjectDefinition(database: database, schema: schema, name: name, kind: kind).get()
+        try await getObjectDefinition(database: database, schema: schema, name: name, kind: kind).get()
     }
 
     internal func listDatabases() -> EventLoopFuture<[DatabaseMetadata]> {
@@ -135,8 +135,14 @@ extension SQLServerConnection {
     }
 
     @available(macOS 12.0, *)
+    public func listObjectDefinitions(_ identifiers: [SQLServerMetadataObjectIdentifier]) async throws -> [ObjectDefinition] {
+        try await listObjectDefinitions(identifiers).get()
+    }
+
+    @available(*, deprecated, renamed: "listObjectDefinitions(_:)")
+    @available(macOS 12.0, *)
     public func fetchObjectDefinitions(_ identifiers: [SQLServerMetadataObjectIdentifier]) async throws -> [ObjectDefinition] {
-        try await fetchObjectDefinitions(identifiers).get()
+        try await listObjectDefinitions(identifiers)
     }
 
     @available(macOS 12.0, *)
@@ -230,11 +236,11 @@ extension SQLServerConnection {
         metadataClient.listSynonyms(database: database, schema: schema, includeComments: includeComments)
     }
 
-    internal func fetchObjectDefinitions(_ identifiers: [SQLServerMetadataObjectIdentifier]) -> EventLoopFuture<[ObjectDefinition]> {
+    internal func listObjectDefinitions(_ identifiers: [SQLServerMetadataObjectIdentifier]) -> EventLoopFuture<[ObjectDefinition]> {
         metadataClient.fetchObjectDefinitions(identifiers)
     }
 
-    internal func fetchObjectDefinition(database: String? = nil, schema: String, name: String, kind: SQLServerMetadataObjectIdentifier.Kind) -> EventLoopFuture<ObjectDefinition?> {
+    internal func getObjectDefinition(database: String? = nil, schema: String, name: String, kind: SQLServerMetadataObjectIdentifier.Kind) -> EventLoopFuture<ObjectDefinition?> {
         let identifier = SQLServerMetadataObjectIdentifier(database: database, schema: schema, name: name, kind: kind)
         return metadataClient.fetchObjectDefinitions([identifier]).map { $0.first }
     }

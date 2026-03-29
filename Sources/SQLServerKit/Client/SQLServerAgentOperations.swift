@@ -82,7 +82,7 @@ public final class SQLServerAgentOperations: Sendable {
                 return self.run("SELECT 1").map { _ in () }
             }
             
-            return self.fetchProxyAndCredentialPermissions().flatMapThrowing { perms in
+            return self.listProxyCredentialPermissions().flatMapThrowing { perms in
                 let hasOperator = perms.msdbRoles.contains { $0.caseInsensitiveCompare("SQLAgentOperatorRole") == .orderedSame }
                 let ok = perms.isSysadmin || (perms.hasAlterAnyCredential && hasOperator)
                 if !ok {
@@ -129,7 +129,7 @@ public final class SQLServerAgentOperations: Sendable {
         }
     }
 
-    internal func getJobSchedules(jobName: String) -> EventLoopFuture<[SQLServerAgentJobScheduleDetail]> {
+    internal func listJobSchedules(jobName: String) -> EventLoopFuture<[SQLServerAgentJobScheduleDetail]> {
         let sql = "EXEC msdb.dbo.sp_help_jobschedule @job_name = N'\(SQLServerSQL.escapeLiteral(jobName))';"
         return run(sql).map { rows in
             rows.compactMap { row in

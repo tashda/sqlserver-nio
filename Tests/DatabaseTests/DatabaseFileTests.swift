@@ -7,7 +7,7 @@ final class DatabaseFileTests: DatabaseTestBase, @unchecked Sendable {
 
     func testModifyFileSize() async throws {
 
-        let files = try await adminClient.fetchDatabaseFiles(name: testDatabase)
+        let files = try await adminClient.getDatabaseFiles(name: testDatabase)
         guard let dataFile = files.first(where: { $0.typeDescription == "ROWS" }) else {
             XCTFail("No data file found")
             return
@@ -21,7 +21,7 @@ final class DatabaseFileTests: DatabaseTestBase, @unchecked Sendable {
             option: .sizeMB(newSizeMB)
         )
 
-        let updatedFiles = try await adminClient.fetchDatabaseFiles(name: testDatabase)
+        let updatedFiles = try await adminClient.getDatabaseFiles(name: testDatabase)
         let updatedFile = updatedFiles.first(where: { $0.name == dataFile.name })
         XCTAssertNotNil(updatedFile)
         XCTAssertGreaterThanOrEqual(Int(updatedFile!.sizeMB), newSizeMB,
@@ -30,7 +30,7 @@ final class DatabaseFileTests: DatabaseTestBase, @unchecked Sendable {
 
     func testModifyFileMaxSizeUnlimited() async throws {
 
-        let files = try await adminClient.fetchDatabaseFiles(name: testDatabase)
+        let files = try await adminClient.getDatabaseFiles(name: testDatabase)
         guard let dataFile = files.first(where: { $0.typeDescription == "ROWS" }) else {
             XCTFail("No data file found")
             return
@@ -42,7 +42,7 @@ final class DatabaseFileTests: DatabaseTestBase, @unchecked Sendable {
             option: .maxSizeUnlimited
         )
 
-        let updatedFiles = try await adminClient.fetchDatabaseFiles(name: testDatabase)
+        let updatedFiles = try await adminClient.getDatabaseFiles(name: testDatabase)
         let updatedFile = updatedFiles.first(where: { $0.name == dataFile.name })
         XCTAssertNotNil(updatedFile)
         XCTAssertTrue(updatedFile!.isMaxSizeUnlimited, "Max size should be unlimited")
@@ -51,7 +51,7 @@ final class DatabaseFileTests: DatabaseTestBase, @unchecked Sendable {
 
     func testModifyFileMaxSizeMB() async throws {
 
-        let files = try await adminClient.fetchDatabaseFiles(name: testDatabase)
+        let files = try await adminClient.getDatabaseFiles(name: testDatabase)
         guard let dataFile = files.first(where: { $0.typeDescription == "ROWS" }) else {
             XCTFail("No data file found")
             return
@@ -63,7 +63,7 @@ final class DatabaseFileTests: DatabaseTestBase, @unchecked Sendable {
             option: .maxSizeMB(512)
         )
 
-        let updatedFiles = try await adminClient.fetchDatabaseFiles(name: testDatabase)
+        let updatedFiles = try await adminClient.getDatabaseFiles(name: testDatabase)
         let updatedFile = updatedFiles.first(where: { $0.name == dataFile.name })
         XCTAssertNotNil(updatedFile)
         XCTAssertFalse(updatedFile!.isMaxSizeUnlimited, "Max size should not be unlimited")
@@ -77,7 +77,7 @@ final class DatabaseFileTests: DatabaseTestBase, @unchecked Sendable {
 
     func testModifyFileGrowthMB() async throws {
 
-        let files = try await adminClient.fetchDatabaseFiles(name: testDatabase)
+        let files = try await adminClient.getDatabaseFiles(name: testDatabase)
         guard let dataFile = files.first(where: { $0.typeDescription == "ROWS" }) else {
             XCTFail("No data file found")
             return
@@ -89,7 +89,7 @@ final class DatabaseFileTests: DatabaseTestBase, @unchecked Sendable {
             option: .filegrowthMB(128)
         )
 
-        let updatedFiles = try await adminClient.fetchDatabaseFiles(name: testDatabase)
+        let updatedFiles = try await adminClient.getDatabaseFiles(name: testDatabase)
         let updatedFile = updatedFiles.first(where: { $0.name == dataFile.name })
         XCTAssertNotNil(updatedFile)
         XCTAssertFalse(updatedFile!.isPercentGrowth)
@@ -98,7 +98,7 @@ final class DatabaseFileTests: DatabaseTestBase, @unchecked Sendable {
 
     func testModifyFileGrowthPercent() async throws {
 
-        let files = try await adminClient.fetchDatabaseFiles(name: testDatabase)
+        let files = try await adminClient.getDatabaseFiles(name: testDatabase)
         guard let dataFile = files.first(where: { $0.typeDescription == "ROWS" }) else {
             XCTFail("No data file found")
             return
@@ -110,7 +110,7 @@ final class DatabaseFileTests: DatabaseTestBase, @unchecked Sendable {
             option: .filegrowthPercent(25)
         )
 
-        let updatedFiles = try await adminClient.fetchDatabaseFiles(name: testDatabase)
+        let updatedFiles = try await adminClient.getDatabaseFiles(name: testDatabase)
         let updatedFile = updatedFiles.first(where: { $0.name == dataFile.name })
         XCTAssertNotNil(updatedFile)
         XCTAssertTrue(updatedFile!.isPercentGrowth)
@@ -119,7 +119,7 @@ final class DatabaseFileTests: DatabaseTestBase, @unchecked Sendable {
 
     func testModifyFileGrowthNone() async throws {
 
-        let files = try await adminClient.fetchDatabaseFiles(name: testDatabase)
+        let files = try await adminClient.getDatabaseFiles(name: testDatabase)
         guard let dataFile = files.first(where: { $0.typeDescription == "ROWS" }) else {
             XCTFail("No data file found")
             return
@@ -131,7 +131,7 @@ final class DatabaseFileTests: DatabaseTestBase, @unchecked Sendable {
             option: .filegrowthNone
         )
 
-        let updatedFiles = try await adminClient.fetchDatabaseFiles(name: testDatabase)
+        let updatedFiles = try await adminClient.getDatabaseFiles(name: testDatabase)
         let updatedFile = updatedFiles.first(where: { $0.name == dataFile.name })
         XCTAssertNotNil(updatedFile)
         XCTAssertEqual(updatedFile!.growthRaw, 0, "Growth should be 0 (disabled)")
@@ -139,7 +139,7 @@ final class DatabaseFileTests: DatabaseTestBase, @unchecked Sendable {
 
     func testModifyLogFileGrowth() async throws {
 
-        let files = try await adminClient.fetchDatabaseFiles(name: testDatabase)
+        let files = try await adminClient.getDatabaseFiles(name: testDatabase)
         guard let logFile = files.first(where: { $0.typeDescription == "LOG" }) else {
             XCTFail("No log file found")
             return
@@ -151,7 +151,7 @@ final class DatabaseFileTests: DatabaseTestBase, @unchecked Sendable {
             option: .filegrowthMB(64)
         )
 
-        let updatedFiles = try await adminClient.fetchDatabaseFiles(name: testDatabase)
+        let updatedFiles = try await adminClient.getDatabaseFiles(name: testDatabase)
         let updatedFile = updatedFiles.first(where: { $0.name == logFile.name })
         XCTAssertNotNil(updatedFile)
         XCTAssertEqual(updatedFile!.growthMB, 64, "Log file growth should be 64 MB")
@@ -162,7 +162,7 @@ final class DatabaseFileTests: DatabaseTestBase, @unchecked Sendable {
     func testAddAndRemoveDataFile() async throws {
 
         // Get the data directory from existing file
-        let files = try await adminClient.fetchDatabaseFiles(name: testDatabase)
+        let files = try await adminClient.getDatabaseFiles(name: testDatabase)
         guard let existingFile = files.first(where: { $0.typeDescription == "ROWS" }) else {
             XCTFail("No data file found")
             return
@@ -182,7 +182,7 @@ final class DatabaseFileTests: DatabaseTestBase, @unchecked Sendable {
             filegrowthMB: 8
         )
 
-        var updatedFiles = try await adminClient.fetchDatabaseFiles(name: testDatabase)
+        var updatedFiles = try await adminClient.getDatabaseFiles(name: testDatabase)
         let addedFile = updatedFiles.first(where: { $0.name == logicalName })
         XCTAssertNotNil(addedFile, "New data file should appear in file list")
         XCTAssertEqual(addedFile?.typeDescription, "ROWS")
@@ -200,14 +200,14 @@ final class DatabaseFileTests: DatabaseTestBase, @unchecked Sendable {
             logicalFileName: logicalName
         )
 
-        updatedFiles = try await adminClient.fetchDatabaseFiles(name: testDatabase)
+        updatedFiles = try await adminClient.getDatabaseFiles(name: testDatabase)
         let removedFile = updatedFiles.first(where: { $0.name == logicalName })
         XCTAssertNil(removedFile, "Removed file should no longer appear")
     }
 
     func testAddLogFile() async throws {
 
-        let files = try await adminClient.fetchDatabaseFiles(name: testDatabase)
+        let files = try await adminClient.getDatabaseFiles(name: testDatabase)
         guard let existingLog = files.first(where: { $0.typeDescription == "LOG" }) else {
             XCTFail("No log file found")
             return
@@ -226,7 +226,7 @@ final class DatabaseFileTests: DatabaseTestBase, @unchecked Sendable {
             filegrowthMB: 8
         )
 
-        let updatedFiles = try await adminClient.fetchDatabaseFiles(name: testDatabase)
+        let updatedFiles = try await adminClient.getDatabaseFiles(name: testDatabase)
         let addedFile = updatedFiles.first(where: { $0.name == logicalName })
         XCTAssertNotNil(addedFile, "New log file should appear")
         XCTAssertEqual(addedFile?.typeDescription, "LOG")

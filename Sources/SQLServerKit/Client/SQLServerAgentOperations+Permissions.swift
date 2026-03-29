@@ -5,7 +5,7 @@ import SQLServerTDS
 extension SQLServerAgentOperations {
     // MARK: - Permissions
 
-    internal func fetchCurrentPrincipalAgentRoles() -> EventLoopFuture<[String]> {
+    internal func getCurrentPrincipalAgentRoles() -> EventLoopFuture<[String]> {
         let sql = """
         SELECT role_name = r.name
         FROM msdb.sys.database_role_members AS drm
@@ -22,9 +22,9 @@ extension SQLServerAgentOperations {
         }
     }
 
-    internal func fetchProxyAndCredentialPermissions() -> EventLoopFuture<SQLServerAgentPermissionReport> {
+    internal func listProxyCredentialPermissions() -> EventLoopFuture<SQLServerAgentPermissionReport> {
         return checkServerPermissionFlags().flatMap { flags in
-            self.fetchCurrentPrincipalAgentRoles().map { roles in
+            self.getCurrentPrincipalAgentRoles().map { roles in
                 SQLServerAgentPermissionReport(isSysadmin: flags.isSysadmin, hasAlterAnyCredential: flags.hasAlterAnyCredential, msdbRoles: roles)
             }
         }
@@ -40,7 +40,7 @@ extension SQLServerAgentOperations {
     }
 
     internal func assertCanManageProxiesAndCredentials() -> EventLoopFuture<Void> {
-        return fetchProxyAndCredentialPermissions().flatMapThrowing { report in
+        return listProxyCredentialPermissions().flatMapThrowing { report in
             let hasOperator = report.msdbRoles.contains { $0.caseInsensitiveCompare("SQLAgentOperatorRole") == .orderedSame }
             guard report.isSysadmin || (report.hasAlterAnyCredential && hasOperator) else {
                 throw SQLServerError.invalidArgument("Principal lacks permissions to manage Agent proxies or credentials.")
@@ -49,8 +49,14 @@ extension SQLServerAgentOperations {
     }
 
     @available(macOS 12.0, *)
-    public func fetchCurrentPrincipalAgentRoles() async throws -> [String] {
-        let future: EventLoopFuture<[String]> = self.fetchCurrentPrincipalAgentRoles()
+    public func getCurrentPrincipalAgentRoles() async throws -> [String] {
+        let future: EventLoopFuture<[String]> = self.getCurrentPrincipalAgentRoles()
         return try await future.get()
+    }
+
+    @available(*, deprecated, renamed: "getCurrentPrincipalAgentRoles()")
+    @available(macOS 12.0, *)
+    public func fetchCurrentPrincipalAgentRoles() async throws -> [String] {
+        try await getCurrentPrincipalAgentRoles()
     }
 }

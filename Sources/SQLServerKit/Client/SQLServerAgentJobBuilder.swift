@@ -276,7 +276,7 @@ public final class SQLServerAgentJobBuilder: @unchecked Sendable {
             }
 
             // Resolve job id — the job was just created, so this must succeed
-            let jobId = try await agent.fetchJobId(named: jobName)
+            let jobId = try await agent.getJobId(named: jobName)
             return (name: jobName, jobId: jobId)
         } catch {
             // Rollback: delete job and any schedules we created

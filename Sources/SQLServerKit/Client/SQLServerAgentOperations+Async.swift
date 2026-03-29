@@ -16,8 +16,14 @@ extension SQLServerAgentOperations {
     }
 
     @available(macOS 12.0, *)
+    public func listJobDetails() async throws -> [SQLServerAgentJobDetail] {
+        try await listJobDetails().get()
+    }
+
+    @available(*, deprecated, renamed: "listJobDetails()")
+    @available(macOS 12.0, *)
     public func listJobsDetailed() async throws -> [SQLServerAgentJobDetail] {
-        try await listJobsDetailed().get()
+        try await listJobDetails()
     }
 
     @available(macOS 12.0, *)
@@ -121,8 +127,14 @@ extension SQLServerAgentOperations {
     }
 
     @available(macOS 12.0, *)
-    public func fetchJobId(named jobName: String) async throws -> String {
+    public func getJobId(named jobName: String) async throws -> String {
         try await lookupJobId(jobName: jobName).get()
+    }
+
+    @available(*, deprecated, renamed: "getJobId(named:)")
+    @available(macOS 12.0, *)
+    public func fetchJobId(named jobName: String) async throws -> String {
+        try await getJobId(named: jobName)
     }
 
     @available(macOS 12.0, *)
@@ -163,8 +175,14 @@ extension SQLServerAgentOperations {
     }
 
     @available(macOS 12.0, *)
+    public func listJobSchedules(jobName: String) async throws -> [SQLServerAgentJobScheduleDetail] {
+        try await listJobSchedules(jobName: jobName).get()
+    }
+
+    @available(*, deprecated, renamed: "listJobSchedules(jobName:)")
+    @available(macOS 12.0, *)
     public func getJobSchedules(jobName: String) async throws -> [SQLServerAgentJobScheduleDetail] {
-        try await getJobSchedules(jobName: jobName).get()
+        try await listJobSchedules(jobName: jobName)
     }
 
     @available(macOS 12.0, *)
@@ -353,8 +371,14 @@ extension SQLServerAgentOperations {
     }
 
     @available(macOS 12.0, *)
-    public func fetchProxyAndCredentialPermissions() async throws -> SQLServerAgentPermissionReport {
-        let future: EventLoopFuture<SQLServerAgentPermissionReport> = self.fetchProxyAndCredentialPermissions()
+    public func listProxyCredentialPermissions() async throws -> SQLServerAgentPermissionReport {
+        let future: EventLoopFuture<SQLServerAgentPermissionReport> = self.listProxyCredentialPermissions()
         return try await future.get()
+    }
+
+    @available(*, deprecated, renamed: "listProxyCredentialPermissions()")
+    @available(macOS 12.0, *)
+    public func fetchProxyAndCredentialPermissions() async throws -> SQLServerAgentPermissionReport {
+        try await listProxyCredentialPermissions()
     }
 }

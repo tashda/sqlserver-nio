@@ -3,7 +3,8 @@ import SQLServerTDS
 
 extension SQLServerConstraintClient {
     // MARK: - Foreign Key Constraints
-    
+
+    @discardableResult
     public func addForeignKey(
         name: String,
         table: String,
@@ -13,8 +14,8 @@ extension SQLServerConstraintClient {
         schema: String = "dbo",
         referencedSchema: String = "dbo",
         options: ForeignKeyOptions = ForeignKeyOptions()
-    ) -> EventLoopFuture<Void> {
-        let promise = client.eventLoopGroup.next().makePromise(of: Void.self)
+    ) -> EventLoopFuture<[SQLServerStreamMessage]> {
+        let promise = client.eventLoopGroup.next().makePromise(of: [SQLServerStreamMessage].self)
         if #available(macOS 12.0, *) {
             promise.completeWithTask {
                 try await self.addForeignKey(
@@ -33,8 +34,9 @@ extension SQLServerConstraintClient {
         }
         return promise.futureResult
     }
-    
+
     @available(macOS 12.0, *)
+    @discardableResult
     public func addForeignKey(
         name: String,
         table: String,
@@ -44,51 +46,53 @@ extension SQLServerConstraintClient {
         schema: String = "dbo",
         referencedSchema: String = "dbo",
         options: ForeignKeyOptions = ForeignKeyOptions()
-    ) async throws {
+    ) async throws -> [SQLServerStreamMessage] {
         guard columns.count == referencedColumns.count else {
             throw SQLServerError.invalidArgument("Number of columns must match number of referenced columns")
         }
-        
+
         let escapedConstraintName = SQLServerSQL.escapeIdentifier(name)
         let escapedTableName = SQLServerSQL.escapeIdentifier(table)
         let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
-        
+
         let escapedReferencedTableName = SQLServerSQL.escapeIdentifier(referencedTable)
         let referencedSchemaPrefix = referencedSchema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(referencedSchema))." : ""
         let fullReferencedTableName = "\(referencedSchemaPrefix)\(escapedReferencedTableName)"
-        
+
         let columnList = columns.map { SQLServerSQL.escapeIdentifier($0) }.joined(separator: ", ")
         let referencedColumnList = referencedColumns.map { SQLServerSQL.escapeIdentifier($0) }.joined(separator: ", ")
-        
+
         var sql = """
         ALTER TABLE \(fullTableName)
         ADD CONSTRAINT \(escapedConstraintName)
         FOREIGN KEY (\(columnList))
         REFERENCES \(fullReferencedTableName) (\(referencedColumnList))
         """
-        
+
         if options.onDelete != .noAction {
             sql += "\nON DELETE \(options.onDelete.rawValue)"
         }
-        
+
         if options.onUpdate != .noAction {
             sql += "\nON UPDATE \(options.onUpdate.rawValue)"
         }
-        
+
         if !options.checkExisting {
             sql += "\nWITH NOCHECK"
         }
-        
+
         if options.isNotTrusted {
             sql += "\nNOT FOR REPLICATION"
         }
-        
-        _ = try await client.execute(sql)
+
+        let result = try await client.execute(sql)
+        return result.messages
     }
-    
-    internal func dropForeignKey(name: String, table: String, schema: String = "dbo") -> EventLoopFuture<Void> {
-        let promise = client.eventLoopGroup.next().makePromise(of: Void.self)
+
+    @discardableResult
+    internal func dropForeignKey(name: String, table: String, schema: String = "dbo") -> EventLoopFuture<[SQLServerStreamMessage]> {
+        let promise = client.eventLoopGroup.next().makePromise(of: [SQLServerStreamMessage].self)
         if #available(macOS 12.0, *) {
             promise.completeWithTask {
                 try await self.dropForeignKey(name: name, table: table, schema: schema)
@@ -98,15 +102,17 @@ extension SQLServerConstraintClient {
         }
         return promise.futureResult
     }
-    
+
     @available(macOS 12.0, *)
-    public func dropForeignKey(name: String, table: String, schema: String = "dbo") async throws {
+    @discardableResult
+    public func dropForeignKey(name: String, table: String, schema: String = "dbo") async throws -> [SQLServerStreamMessage] {
         let escapedConstraintName = SQLServerSQL.escapeIdentifier(name)
         let escapedTableName = SQLServerSQL.escapeIdentifier(table)
         let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
-        
+
         let sql = "ALTER TABLE \(fullTableName) DROP CONSTRAINT \(escapedConstraintName)"
-        _ = try await client.execute(sql)
+        let result = try await client.execute(sql)
+        return result.messages
     }
 }
