@@ -1,6 +1,6 @@
 import XCTest
 import Logging
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 
 final class SQLServerViewTests: XCTestCase, @unchecked Sendable {
@@ -49,26 +49,24 @@ final class SQLServerViewTests: XCTestCase, @unchecked Sendable {
         try await adminClient.createTable(name: name, columns: columns)
         tablesToDrop.append(name)
 
-        try await client.withConnection { connection in
-            try await connection.insertRow(into: name, values: [
+        _ = try await adminClient.insertRow(into: name, values: [
                 "id": .int(1),
                 "name": .nString("First"),
                 "value": .int(100),
                 "created_date": .raw("'2023-01-01 10:00:00'")
             ])
-            try await connection.insertRow(into: name, values: [
+            _ = try await adminClient.insertRow(into: name, values: [
                 "id": .int(2),
                 "name": .nString("Second"),
                 "value": .int(200),
                 "created_date": .raw("'2023-01-02 11:00:00'")
             ])
-            try await connection.insertRow(into: name, values: [
+            _ = try await adminClient.insertRow(into: name, values: [
                 "id": .int(3),
                 "name": .nString("Third"),
                 "value": .int(300),
                 "created_date": .raw("'2023-01-03 12:00:00'")
             ])
-        }
     }
 
     // MARK: - Basic View Tests
@@ -282,12 +280,10 @@ final class SQLServerViewTests: XCTestCase, @unchecked Sendable {
         try await adminClient.createTable(name: table2Name, columns: columns2)
         tablesToDrop.append(table2Name)
 
-        try await client.withConnection { connection in
-            try await connection.insertRow(into: table1Name, values: ["id": .int(1), "name": .nString("First")])
-            try await connection.insertRow(into: table1Name, values: ["id": .int(2), "name": .nString("Second")])
-            try await connection.insertRow(into: table2Name, values: ["id": .int(1), "table1_id": .int(1), "description": .nString("Desc1")])
-            try await connection.insertRow(into: table2Name, values: ["id": .int(2), "table1_id": .int(2), "description": .nString("Desc2")])
-        }
+        _ = try await adminClient.insertRow(into: table1Name, values: ["id": .int(1), "name": .nString("First")])
+        _ = try await adminClient.insertRow(into: table1Name, values: ["id": .int(2), "name": .nString("Second")])
+        _ = try await adminClient.insertRow(into: table2Name, values: ["id": .int(1), "table1_id": .int(1), "description": .nString("Desc1")])
+        _ = try await adminClient.insertRow(into: table2Name, values: ["id": .int(2), "table1_id": .int(2), "description": .nString("Desc2")])
 
         // Create view with join
         let query = """
@@ -320,13 +316,11 @@ final class SQLServerViewTests: XCTestCase, @unchecked Sendable {
         try await adminClient.createTable(name: tableName, columns: columns)
         tablesToDrop.append(tableName)
 
-        try await client.withConnection { connection in
-            try await connection.insertRow(into: tableName, values: ["id": .int(1), "category": .nString("A"), "amount": .decimal("100.50")])
-            try await connection.insertRow(into: tableName, values: ["id": .int(2), "category": .nString("A"), "amount": .decimal("200.25")])
-            try await connection.insertRow(into: tableName, values: ["id": .int(3), "category": .nString("B"), "amount": .decimal("150.75")])
-            try await connection.insertRow(into: tableName, values: ["id": .int(4), "category": .nString("B"), "amount": .decimal("300.00")])
-            try await connection.insertRow(into: tableName, values: ["id": .int(5), "category": .nString("C"), "amount": .decimal("75.25")])
-        }
+        _ = try await adminClient.insertRow(into: tableName, values: ["id": .int(1), "category": .nString("A"), "amount": .decimal("100.50")])
+        _ = try await adminClient.insertRow(into: tableName, values: ["id": .int(2), "category": .nString("A"), "amount": .decimal("200.25")])
+        _ = try await adminClient.insertRow(into: tableName, values: ["id": .int(3), "category": .nString("B"), "amount": .decimal("150.75")])
+        _ = try await adminClient.insertRow(into: tableName, values: ["id": .int(4), "category": .nString("B"), "amount": .decimal("300.00")])
+        _ = try await adminClient.insertRow(into: tableName, values: ["id": .int(5), "category": .nString("C"), "amount": .decimal("75.25")])
 
         // Create aggregation view
         let query = """

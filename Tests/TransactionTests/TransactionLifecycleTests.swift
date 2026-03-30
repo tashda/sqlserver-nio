@@ -20,7 +20,7 @@ final class TransactionLifecycleTests: TransactionTestBase, @unchecked Sendable 
             try await connection.commit()
         }
 
-        let result = try await self.client.query("SELECT COUNT(*) as count FROM [\(tableName)]").get()
+        let result = try await self.client.query("SELECT COUNT(*) as count FROM [\(tableName)]")
         XCTAssertEqual(result.first?.column("count")?.int, 2)
     }
 
@@ -42,10 +42,10 @@ final class TransactionLifecycleTests: TransactionTestBase, @unchecked Sendable 
             try await connection.rollback()
         }
 
-        let result = try await self.client.query("SELECT COUNT(*) as count FROM [\(tableName)]").get()
+        let result = try await self.client.query("SELECT COUNT(*) as count FROM [\(tableName)]")
         XCTAssertEqual(result.first?.column("count")?.int, 1)
 
-        let valueResult = try await self.client.query("SELECT value FROM [\(tableName)] WHERE id = 1").get()
+        let valueResult = try await self.client.query("SELECT value FROM [\(tableName)] WHERE id = 1")
         XCTAssertEqual(valueResult.first?.column("value")?.string, "Initial")
     }
 
@@ -65,14 +65,14 @@ final class TransactionLifecycleTests: TransactionTestBase, @unchecked Sendable 
             try await connection.commit()
         }
 
-        let tableResult = try await self.client.query("SELECT COUNT(*) as count FROM sys.tables WHERE name = '\(tableName)'").get()
+        let tableResult = try await self.client.query("SELECT COUNT(*) as count FROM sys.tables WHERE name = '\(tableName)'")
         XCTAssertEqual(tableResult.first?.column("count")?.int, 1)
 
         let commentResult = try await self.client.query("""
             SELECT CAST(p.value AS NVARCHAR(4000)) AS value
             FROM sys.extended_properties p
             WHERE p.major_id = OBJECT_ID(N'dbo.\(tableName)') AND p.minor_id = 0
-            """).get()
+            """)
         XCTAssertEqual(commentResult.first?.column("value")?.string, "Test table created in transaction")
     }
 
@@ -93,7 +93,7 @@ final class TransactionLifecycleTests: TransactionTestBase, @unchecked Sendable 
             try await connection.rollback()
         }
 
-        let result = try await self.client.query("SELECT COUNT(*) as count FROM [\(tableName)]").get()
+        let result = try await self.client.query("SELECT COUNT(*) as count FROM [\(tableName)]")
         XCTAssertEqual(result.first?.column("count")?.int, 0)
     }
 
@@ -118,7 +118,7 @@ final class TransactionLifecycleTests: TransactionTestBase, @unchecked Sendable 
         }
 
         let result = try await self.client.withConnection { connection in
-            try await connection.query("SELECT COUNT(*) as count FROM [\(tableName)]").get()
+            try await connection.query("SELECT COUNT(*) as count FROM [\(tableName)]")
         }
         XCTAssertEqual(result.first?.column("count")?.int, 100)
     }

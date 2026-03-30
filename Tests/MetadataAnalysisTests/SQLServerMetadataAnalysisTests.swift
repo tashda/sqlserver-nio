@@ -1,6 +1,6 @@
 import XCTest
 import Logging
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 
 /// Comprehensive metadata analysis test to systematically identify failure patterns

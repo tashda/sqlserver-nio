@@ -1,7 +1,7 @@
 import XCTest
 import Logging
-@testable import SQLServerTDS
-@testable import SQLServerKit
+import SQLServerTDS
+import SQLServerKit
 import SQLServerKitTesting
 
 /// Diagnostics and Performance Tuning tests (Phase 5)

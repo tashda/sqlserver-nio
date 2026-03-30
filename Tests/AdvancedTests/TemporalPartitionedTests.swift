@@ -1,4 +1,4 @@
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 import XCTest
 import Logging
@@ -78,14 +78,16 @@ final class SQLServerTemporalPartitionedTests: XCTestCase, @unchecked Sendable {
                     try? await conn.dropPartitionFunction(name: String(pf))
             }
         } catch {
-            let norm = SQLServerError.normalize(error)
-            switch norm {
-            case .connectionClosed, .timeout:
-                XCTFail("Partitioned table scripting failed due to connectivity: \(norm)")
-                return
-            default:
-                throw error
+            if let sqlError = error as? SQLServerError {
+                switch sqlError {
+                case .connectionClosed, .timeout:
+                    XCTFail("Partitioned table scripting failed due to connectivity: \(sqlError)")
+                    return
+                default:
+                    break
+                }
             }
+            throw error
         }
     }
 }

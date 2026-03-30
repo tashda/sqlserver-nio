@@ -1,7 +1,7 @@
 import XCTest
 import Logging
-@testable import SQLServerTDS
-@testable import SQLServerKit
+import SQLServerTDS
+import SQLServerKit
 import SQLServerKitTesting
 
 /// Simple performance tests for SQLServerNIO

@@ -154,7 +154,7 @@ final class TransactionIsolationTests: TransactionTestBase, @unchecked Sendable 
             try await self.client.withConnection { connection in
                 try await connection.setIsolationLevel(.serializable)
                 try await connection.beginTransaction()
-                _ = try await connection.query("SELECT COUNT(*) FROM [\(tableName)] WHERE category = N'A'").get()
+                _ = try await connection.query("SELECT COUNT(*) FROM [\(tableName)] WHERE category = N'A'")
                 try await Task.sleep(nanoseconds: 700_000_000)
                 try await connection.commit()
             }
@@ -173,7 +173,7 @@ final class TransactionIsolationTests: TransactionTestBase, @unchecked Sendable 
         XCTAssertGreaterThan(insertDelay, 50_000_000 as UInt64, "INSERT should have experienced some delay due to SERIALIZABLE transaction")
 
         let countResult = try await self.client.withConnection { connection in
-            try await connection.query("SELECT COUNT(*) as count FROM [\(tableName)] WHERE category = N'A'").get()
+            try await connection.query("SELECT COUNT(*) as count FROM [\(tableName)] WHERE category = N'A'")
         }
         XCTAssertEqual(countResult.first?.column("count")?.int, 3)
     }
@@ -204,9 +204,9 @@ final class TransactionIsolationTests: TransactionTestBase, @unchecked Sendable 
         let (firstRead, secondRead) = try await self.client.withConnection { connection in
             try await connection.setIsolationLevel(.snapshot)
             try await connection.beginTransaction()
-            let first = try await connection.query("SELECT value FROM [\(tableName)] WHERE id = 1").get()
+            let first = try await connection.query("SELECT value FROM [\(tableName)] WHERE id = 1")
             try await Task.sleep(nanoseconds: 400_000_000)
-            let second = try await connection.query("SELECT value FROM [\(tableName)] WHERE id = 1").get()
+            let second = try await connection.query("SELECT value FROM [\(tableName)] WHERE id = 1")
             try await connection.commit()
             return (first.first?.column("value")?.string, second.first?.column("value")?.string)
         }
@@ -217,7 +217,7 @@ final class TransactionIsolationTests: TransactionTestBase, @unchecked Sendable 
         XCTAssertEqual(secondRead, "Original")
 
         let committedValue = try await self.client.withConnection { connection in
-            try await connection.query("SELECT value FROM [\(tableName)] WHERE id = 1").get()
+            try await connection.query("SELECT value FROM [\(tableName)] WHERE id = 1")
         }
         XCTAssertEqual(committedValue.first?.column("value")?.string, "NewValue")
     }

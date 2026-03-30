@@ -3,7 +3,7 @@ import XCTest
 import Logging
 import NIO
 import NIOConcurrencyHelpers
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 
 final class SQLServerBulkCopyTests: XCTestCase, @unchecked Sendable {
@@ -155,18 +155,8 @@ final class SQLServerBulkCopyTests: XCTestCase, @unchecked Sendable {
             SQLServerColumnDefinition(name: "category", definition: .standard(.init(dataType: .nvarchar(length: .length(20)))))
         ]
         try await adminClient.createTable(name: tableName, columns: columns)
-        try await client.withConnection { connection in
-            let promise = connection.eventLoop.makePromise(of: Void.self)
-            Task {
-                do {
-                    try await connection.addCheckConstraint(name: "CK_\(tableName)_amount", table: tableName, expression: "amount >= 0")
-                    promise.succeed(())
-                } catch {
-                    promise.fail(error)
-                }
-            }
-            return promise.futureResult
-        }.get()
+        let constraintClient = SQLServerConstraintClient(client: client)
+        try await constraintClient.addCheckConstraint(name: "CK_\(tableName)_amount", table: tableName, expression: "amount >= 0")
         
         let rows = [
             SQLServerBulkCopyRow(values: [.int(1), .decimal("10.00"), .nString("ok")]),
@@ -301,28 +291,22 @@ final class SQLServerBulkCopyTests: XCTestCase, @unchecked Sendable {
     }
     
     private func truncateTable(named tableName: String) async throws {
-        try await client.withConnection { connection in
-            try await connection.truncateTable(name: tableName)
-        }
+        try await adminClient.truncateTable(name: tableName)
     }
     
     private func singleInsertStatement(row: SQLServerBulkCopyRow, tableName: String, columns: [String]) -> String {
         let columnList = columns
-            .map { "[\(SQLServerSQL.escapeIdentifier($0))]" }
+            .map { "[\($0.replacingOccurrences(of: "]", with: "]]"))]" }
             .joined(separator: ", ")
         let literals = row.values.map { $0.sqlLiteral() }.joined(separator: ", ")
         return "INSERT INTO \(qualifiedTableName(tableName)) (\(columnList)) VALUES (\(literals));"
     }
-    
+
     private func qualifiedTableName(_ tableName: String) -> String {
-        "[dbo].[\(SQLServerSQL.escapeIdentifier(tableName))]"
+        "[dbo].[\(tableName.replacingOccurrences(of: "]", with: "]]"))]"
     }
     
     private func closeUnderlyingConnection(_ connection: SQLServerConnection) async throws {
-        try await withCheckedThrowingContinuation { continuation in
-            connection.underlying.close().whenComplete { result in
-                continuation.resume(with: result)
-            }
-        }
+        try await connection.close()
     }
 }

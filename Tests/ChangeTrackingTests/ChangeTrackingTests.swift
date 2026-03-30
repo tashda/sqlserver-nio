@@ -1,5 +1,5 @@
 import XCTest
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 
 /// Integration tests for the Change Tracking and CDC namespace (`client.changeTracking`).

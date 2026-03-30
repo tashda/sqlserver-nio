@@ -15,7 +15,7 @@ import SQLServerTDS
 public final class SQLServerAlwaysEncryptedClient: @unchecked Sendable {
     private let client: SQLServerClient
 
-    internal init(client: SQLServerClient) {
+    public init(client: SQLServerClient) {
         self.client = client
     }
 

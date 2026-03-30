@@ -1,4 +1,4 @@
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 import XCTest
 import Logging
@@ -25,9 +25,8 @@ final class SQLServerAdventureWorksRoutineTests: XCTestCase, @unchecked Sendable
         } catch let error as SQLServerFixtureUnavailable {
             throw XCTSkip(error.message)
         }
-        try await client.withConnection { connection in
-            _ = try await connection.changeDatabase(dbName).get()
-            let parameters = try await connection.listParameters(schema: "dbo", object: "ufnGetAccountingEndDate")
+        try await client.withDatabase(dbName) { _ in
+            let parameters = try await self.client.metadata.listParameters(database: dbName, schema: "dbo", object: "ufnGetAccountingEndDate")
             XCTAssertFalse(parameters.isEmpty, "Expected parameters for dbo.ufnGetAccountingEndDate")
         }
     }
@@ -43,131 +42,108 @@ final class SQLServerAdventureWorksRoutineTests: XCTestCase, @unchecked Sendable
             throw XCTSkip(error.message)
         }
 
-        try await client.withConnection { connection in
-            _ = try await connection.changeDatabase(dbName).get()
+        // Test critical views that previously caused TDS parsing issues
+        let problemViews = [
+            ("HumanResources", "vJobCandidate"),
+            ("Sales", "vSalesPerson"),
+            ("HumanResources", "vEmployee"),
+            ("Sales", "vPersonDemographics"),
+            ("Sales", "vIndividualCustomer")
+        ]
 
-            // Test critical views that previously caused TDS parsing issues
-            let problemViews = [
-                ("HumanResources", "vJobCandidate"),
-                ("Sales", "vSalesPerson"),
-                ("HumanResources", "vEmployee"),
-                ("Sales", "vPersonDemographics"),
-                ("Sales", "vIndividualCustomer")
-            ]
-
-            for (schema, view) in problemViews {
-                do {
-                    // This should not cause TDS protocol parsing errors after our fixes
-                    let columns = try await connection.listColumns(schema: schema, table: view)
-                    XCTAssertFalse(columns.isEmpty, "Expected columns for \(schema).\(view)")
-
-                    // Verify critical metadata fields are loaded correctly
-                    for column in columns {
-                        XCTAssertNotNil(column.name, "Column name should not be nil for \(schema).\(view)")
-                        XCTAssertNotNil(column.typeName, "Column dataType should not be nil for \(schema).\(view).\(column.name)")
-                    }
-                } catch {
-                    XCTFail("Failed to load columns for \(schema).\(view): \(error)")
-                }
-            }
-
-            // Test table metadata loading with extended properties
-            let criticalTables = [
-                ("Person", "Person"),
-                ("HumanResources", "Employee"),
-                ("Sales", "SalesOrderHeader"),
-                ("Production", "Product"),
-                ("Purchasing", "PurchaseOrderHeader")
-            ]
-
-            for (schema, table) in criticalTables {
-                do {
-                    let columns = try await connection.listColumns(schema: schema, table: table)
-                    XCTAssertFalse(columns.isEmpty, "Expected columns for \(schema).\(table)")
-
-                    // Test extended properties and comments - use listTables with includeComments
-                    let tablesWithComments = try await connection.listTables(database: dbName, schema: schema, includeComments: true)
-                    let targetTable = tablesWithComments.first { $0.name == table }
-                    XCTAssertNotNil(targetTable, "Should find table \(schema).\(table)")
-
-                } catch {
-                    XCTFail("Failed to load metadata for \(schema).\(table): \(error)")
-                }
-            }
-
-            // Test security metadata loading (previously caused null byte issues)
+        for (schema, view) in problemViews {
             do {
-                let securityClient = SQLServerSecurityClient(client: self.client)
-                let permissions = try await securityClient.listPermissionsDetailed(principal: "dbo")
-                // Query should succeed without TDS protocol parsing errors
-                XCTAssertFalse(permissions.isEmpty, "Should load security permissions")
+                // This should not cause TDS protocol parsing errors after our fixes
+                let columns = try await client.metadata.listColumns(database: dbName, schema: schema, table: view)
+                XCTAssertFalse(columns.isEmpty, "Expected columns for \(schema).\(view)")
+
+                // Verify critical metadata fields are loaded correctly
+                for column in columns {
+                    XCTAssertNotNil(column.name, "Column name should not be nil for \(schema).\(view)")
+                    XCTAssertNotNil(column.typeName, "Column dataType should not be nil for \(schema).\(view).\(column.name)")
+                }
             } catch {
-                XCTFail("Failed to load security metadata: \(error)")
+                XCTFail("Failed to load columns for \(schema).\(view): \(error)")
             }
+        }
 
-            // Test trigger metadata loading (previously had CAST NULL issues)
-            let tablesWithTriggers = [
-                ("Person", "Person"),
-                ("HumanResources", "Employee"),
-                ("Sales", "SalesOrderHeader")
-            ]
+        // Test table metadata loading with extended properties
+        let criticalTables = [
+            ("Person", "Person"),
+            ("HumanResources", "Employee"),
+            ("Sales", "SalesOrderHeader"),
+            ("Production", "Product"),
+            ("Purchasing", "PurchaseOrderHeader")
+        ]
 
-            for (schema, table) in tablesWithTriggers {
-                do {
-                    // Test that we can query triggers without TDS parsing errors
-                    let triggerQuery = """
-                        SELECT COUNT(*) as trigger_count
-                        FROM sys.triggers t
-                        JOIN sys.objects o ON t.parent_id = o.object_id
-                        JOIN sys.schemas s ON o.schema_id = s.schema_id
-                        WHERE s.name = '\(schema)' AND o.name = '\(table)'
-                        """
-                    let result = try await connection.query(triggerQuery).get()
-                    // Should load trigger metadata without TDS parsing errors
-                    // The fact we can execute this query proves the CAST NULL fixes work
-                    XCTAssertFalse(result.isEmpty, "Should get trigger count result")
-
-                } catch {
-                    XCTFail("Failed to load trigger metadata for \(schema).\(table): \(error)")
-                }
-            }
-
-            // Test procedure and function metadata loading
-            let criticalRoutines = [
-                ("dbo", "uspGetBillOfMaterials"),
-                ("dbo", "uspGetEmployeeManagers"),
-                ("dbo", "ufnGetAccountingEndDate"),
-                ("dbo", "ufnGetContactInformation"),
-                ("dbo", "ufnLeadingZeros")
-            ]
-
-            for (schema, routine) in criticalRoutines {
-                do {
-                    let parameters = try await connection.listParameters(schema: schema, object: routine)
-                    // Should load parameters without TDS parsing errors
-
-                    // If we get here, the TDS fixes for stored procedures work
-                    XCTAssertFalse(parameters.isEmpty, "Should have parameters for \(schema).\(routine)")
-                } catch {
-                    // Some routines might not exist, that's OK
-                    print("Note: Routine \(schema).\(routine) not accessible: \(error)")
-                }
-            }
-
-            // Test index metadata loading - verify we can query sys.indexes without TDS errors
+        for (schema, table) in criticalTables {
             do {
-                let indexQuery = """
-                    SELECT COUNT(*) as index_count
-                    FROM sys.indexes i
-                    JOIN sys.objects o ON i.object_id = o.object_id
-                    JOIN sys.schemas s ON o.schema_id = s.schema_id
-                    WHERE s.name = 'Person' AND o.name = 'Person'
-                    """
-                let result = try await connection.query(indexQuery).get()
-                XCTAssertFalse(result.isEmpty, "Should get index count result")
+                let columns = try await client.metadata.listColumns(database: dbName, schema: schema, table: table)
+                XCTAssertFalse(columns.isEmpty, "Expected columns for \(schema).\(table)")
+
+                // Test extended properties and comments - use listTables with includeComments
+                let tablesWithComments = try await client.metadata.listTables(database: dbName, schema: schema, includeComments: true)
+                let targetTable = tablesWithComments.first { $0.name == table }
+                XCTAssertNotNil(targetTable, "Should find table \(schema).\(table)")
+
             } catch {
-                XCTFail("Failed to load index metadata: \(error)")
+                XCTFail("Failed to load metadata for \(schema).\(table): \(error)")
             }
+        }
+
+        // Test security metadata loading (previously caused null byte issues)
+        do {
+            let securityClient = SQLServerSecurityClient(client: self.client)
+            let permissions = try await securityClient.listPermissionsDetailed(principal: "dbo")
+            // Query should succeed without TDS protocol parsing errors
+            XCTAssertFalse(permissions.isEmpty, "Should load security permissions")
+        } catch {
+            XCTFail("Failed to load security metadata: \(error)")
+        }
+
+        // Test trigger metadata loading (previously had CAST NULL issues)
+        let tablesWithTriggers = [
+            ("Person", "Person"),
+            ("HumanResources", "Employee"),
+            ("Sales", "SalesOrderHeader")
+        ]
+
+        for (schema, table) in tablesWithTriggers {
+            do {
+                let triggers = try await client.metadata.listTriggers(database: dbName, schema: schema, table: table)
+                // Should load trigger metadata without TDS parsing errors
+                XCTAssertNotNil(triggers, "Should get trigger results for \(schema).\(table)")
+            } catch {
+                XCTFail("Failed to load trigger metadata for \(schema).\(table): \(error)")
+            }
+        }
+
+        // Test procedure and function metadata loading
+        let criticalRoutines = [
+            ("dbo", "uspGetBillOfMaterials"),
+            ("dbo", "uspGetEmployeeManagers"),
+            ("dbo", "ufnGetAccountingEndDate"),
+            ("dbo", "ufnGetContactInformation"),
+            ("dbo", "ufnLeadingZeros")
+        ]
+
+        for (schema, routine) in criticalRoutines {
+            do {
+                let parameters = try await client.metadata.listParameters(database: dbName, schema: schema, object: routine)
+                // Should load parameters without TDS parsing errors
+                XCTAssertFalse(parameters.isEmpty, "Should have parameters for \(schema).\(routine)")
+            } catch {
+                // Some routines might not exist, that's OK
+                print("Note: Routine \(schema).\(routine) not accessible: \(error)")
+            }
+        }
+
+        // Test index metadata loading
+        do {
+            let indexes = try await client.metadata.listIndexes(database: dbName, schema: "Person", table: "Person")
+            XCTAssertFalse(indexes.isEmpty, "Should get indexes for Person.Person")
+        } catch {
+            XCTFail("Failed to load index metadata: \(error)")
         }
     }
 }

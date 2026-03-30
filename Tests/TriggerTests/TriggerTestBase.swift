@@ -26,7 +26,7 @@ class TriggerTestBase: XCTestCase, @unchecked Sendable {
 
     override func tearDown() async throws {
         for trigger in triggersToDrop {
-            try? await triggerClient.dropTrigger(name: trigger.name, schema: trigger.schema).get()
+            try? await triggerClient.dropTrigger(name: trigger.name, schema: trigger.schema)
         }
         triggersToDrop.removeAll()
 

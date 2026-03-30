@@ -138,13 +138,15 @@ final class SQLServerTableDefinitionCoverageTests: XCTestCase, @unchecked Sendab
             if let te = error as? AsyncTimeoutError {
                 throw XCTSkip("Skipping due to timeout during comprehensive table scripting: \(te)")
             }
-            let norm = SQLServerError.normalize(error)
-            switch norm {
-            case .connectionClosed, .timeout:
-                throw XCTSkip("Skipping due to unstable server during comprehensive table scripting: \(norm)")
-            default:
-                throw error
+            if let sqlError = error as? SQLServerError {
+                switch sqlError {
+                case .connectionClosed, .timeout:
+                    throw XCTSkip("Skipping due to unstable server during comprehensive table scripting: \(sqlError)")
+                default:
+                    break
+                }
             }
+            throw error
         }
     }
 }

@@ -14,7 +14,7 @@ import SQLServerTDS
 public final class SQLServerAuditClient: @unchecked Sendable {
     private let client: SQLServerClient
 
-    internal init(client: SQLServerClient) {
+    public init(client: SQLServerClient) {
         self.client = client
     }
 

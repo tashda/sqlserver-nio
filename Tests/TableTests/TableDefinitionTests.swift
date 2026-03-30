@@ -93,13 +93,15 @@ final class SQLServerTableDefinitionTests: XCTestCase, @unchecked Sendable {
             if let te = error as? AsyncTimeoutError {
                 throw XCTSkip("Skipping due to timeout during table definition test: \(te)")
             }
-            let norm = SQLServerError.normalize(error)
-            switch norm {
-            case .connectionClosed, .timeout:
-                throw XCTSkip("Skipping due to unstable server during table definition test: \(norm)")
-            default:
-                throw error
+            if let sqlError = error as? SQLServerError {
+                switch sqlError {
+                case .connectionClosed, .timeout:
+                    throw XCTSkip("Skipping due to unstable server during table definition test: \(sqlError)")
+                default:
+                    break
+                }
             }
+            throw error
         }
     }
 }

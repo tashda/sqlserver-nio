@@ -1,5 +1,5 @@
 import XCTest
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 
 @available(macOS 12.0, *)

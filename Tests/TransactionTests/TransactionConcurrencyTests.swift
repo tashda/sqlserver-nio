@@ -85,7 +85,7 @@ final class TransactionConcurrencyTests: TransactionTestBase, @unchecked Sendabl
         }
 
         let result = try await self.client.withConnection { connection in
-            try await connection.query("SELECT COUNT(*) as count FROM [\(tableName)]").get()
+            try await connection.query("SELECT COUNT(*) as count FROM [\(tableName)]")
         }
         XCTAssertEqual(result.first?.column("count")?.int, 1)
     }
@@ -104,14 +104,13 @@ final class TransactionConcurrencyTests: TransactionTestBase, @unchecked Sendabl
         }
 
         let currentDb = try await self.client.withConnection { conn in
-            let rows = try await conn.query("SELECT DB_NAME() AS db").get()
+            let rows = try await conn.query("SELECT DB_NAME() AS db")
             return rows.first?.column("db")?.string ?? ""
         }
-        let secondaryGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         let secondaryConn: SQLServerConnection = try await {
             var connCfg = makeSQLServerConnectionConfiguration()
             connCfg.login.database = currentDb
-            return try await SQLServerConnection.connect(configuration: connCfg, on: secondaryGroup.next()).get()
+            return try await SQLServerConnection.connect(configuration: connCfg, numberOfThreads: 1)
         }()
 
         let (lockReady, lockReadyCont) = AsyncStream.makeStream(of: Void.self)
@@ -139,7 +138,7 @@ final class TransactionConcurrencyTests: TransactionTestBase, @unchecked Sendabl
                 DECLARE @finish DATETIME2(7) = SYSDATETIME();
                 SELECT DATEDIFF_BIG(millisecond, @start, @finish) AS elapsed_ms;
                 """
-                let result = try await secondaryConn.execute(script).get()
+                let result = try await secondaryConn.execute(script)
                 var ms64: Int64 = 0
                 for row in result.rows {
                     if let v = row.column("elapsed_ms")?.int64 { ms64 = v }
@@ -153,11 +152,10 @@ final class TransactionConcurrencyTests: TransactionTestBase, @unchecked Sendabl
         XCTAssertGreaterThan(elapsed, 120_000_000 as UInt64, "Second update should wait for first transaction to commit")
 
         let final = try await self.client.withConnection { connection in
-            try await connection.query("SELECT value FROM [\(tableName)] WHERE id = 1").get()
+            try await connection.query("SELECT value FROM [\(tableName)] WHERE id = 1")
         }
         XCTAssertEqual(final.first?.column("value")?.string, "Updated")
 
-        _ = try? await secondaryConn.close().get()
-        try? await secondaryGroup.shutdownGracefully()
+        _ = try? await secondaryConn.close()
     }
 }

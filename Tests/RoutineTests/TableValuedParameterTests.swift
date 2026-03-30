@@ -1,6 +1,6 @@
 import XCTest
 import Logging
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 
 final class SQLServerTableValuedParameterTests: XCTestCase, @unchecked Sendable {

@@ -42,13 +42,13 @@ final class SQLServerSecurityParityTests: XCTestCase, @unchecked Sendable {
         )
 
         let oid = ObjectIdentifier(database: nil, schema: "dbo", name: table.nameOnly, kind: .table)
-        _ = try await dbSec.grant(permission: .select, on: .object(oid), to: "public").get()
+        _ = try await dbSec.grant(permission: .select, on: .object(oid), to: "public")
         // Detailed permissions should include an OBJECT_OR_COLUMN entry
         if #available(macOS 12.0, *) {
             let details = try await dbSec.listPermissionsDetailed(principal: "public")
             XCTAssertTrue(details.contains(where: { $0.objectName?.caseInsensitiveCompare(table.nameOnly) == .orderedSame }))
         }
-        _ = try await dbSec.revoke(permission: .select, on: .object(oid), from: "public").get()
+        _ = try await dbSec.revoke(permission: .select, on: .object(oid), from: "public")
 
         // Cleanup
         try? await adminClient.dropTable(name: table.nameOnly)
@@ -67,8 +67,8 @@ final class SQLServerSecurityParityTests: XCTestCase, @unchecked Sendable {
         let dbSec = SQLServerSecurityClient(client: client)
         let adminClient = SQLServerAdministrationClient(client: client)
         let schema = "nio_ops"
-        _ = try? await dbSec.dropSchema(name: schema).get()
-        _ = try await dbSec.createSchema(name: schema, authorization: "dbo").get()
+        _ = try? await dbSec.dropSchema(name: schema)
+        _ = try await dbSec.createSchema(name: schema, authorization: "dbo")
         let schemas = try await dbSec.listSchemas()
         XCTAssertTrue(schemas.contains(where: { $0.name.caseInsensitiveCompare(schema) == .orderedSame }))
         // Transfer a simple object
@@ -80,15 +80,15 @@ final class SQLServerSecurityParityTests: XCTestCase, @unchecked Sendable {
 
         // Cleanup using defer alternative
         do {
-            _ = try await dbSec.transferObjectToSchema(objectSchema: "dbo", objectName: table.nameOnly, newSchema: schema).get()
-            _ = try await dbSec.alterAuthorizationOnSchema(schema: schema, principal: "dbo").get()
+            _ = try await dbSec.transferObjectToSchema(objectSchema: "dbo", objectName: table.nameOnly, newSchema: schema)
+            _ = try await dbSec.alterAuthorizationOnSchema(schema: schema, principal: "dbo")
             // Must drop the table first before dropping the schema
             try await adminClient.dropTable(name: table.nameOnly, schema: schema)
-            _ = try await dbSec.dropSchema(name: schema).get()
+            _ = try await dbSec.dropSchema(name: schema)
         } catch {
             // Best effort cleanup - drop table first, then schema
             try? await adminClient.dropTable(name: table.nameOnly, schema: schema)
-            _ = try? await dbSec.dropSchema(name: schema).get()
+            _ = try? await dbSec.dropSchema(name: schema)
             throw error
         }
     }

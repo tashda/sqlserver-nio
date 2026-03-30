@@ -46,7 +46,7 @@ final class SQLServerTransactionIsolationMatrixTests: XCTestCase, @unchecked Sen
                     try await dbClient.withConnection { conn in
                         try await conn.setIsolationLevel(.serializable)
                         try await conn.beginTransaction()
-                        _ = try await conn.query("SELECT COUNT(*) FROM [dbo].[\(tableName)] WHERE category = N'A'").get()
+                        _ = try await conn.query("SELECT COUNT(*) FROM [dbo].[\(tableName)] WHERE category = N'A'")
                         try await Task.sleep(nanoseconds: 600_000_000)
                         try await conn.commit()
                     }
@@ -101,7 +101,7 @@ final class SQLServerTransactionIsolationMatrixTests: XCTestCase, @unchecked Sen
                 // Under READ COMMITTED (default), the reader is blocked until writer commits/rolls back
                 let elapsed = try await dbClient.withConnection { conn in
                     let start = DispatchTime.now()
-                    _ = try await conn.query("SELECT value FROM [dbo].[\(tableName)] WHERE id = 1").get()
+                    _ = try await conn.query("SELECT value FROM [dbo].[\(tableName)] WHERE id = 1")
                     return DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds
                 }
                 _ = try? await withTimeout(5) { try await writer.value }

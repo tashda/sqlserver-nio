@@ -1,4 +1,4 @@
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 import XCTest
 
@@ -46,41 +46,37 @@ final class SQLServerAppMetadataLoadingTests: XCTestCase, @unchecked Sendable {
         }
 
         try await withTimeout(operationTimeout) {
-            try await self.client.withConnection { connection in
-                _ = try await connection.changeDatabase(dbName)
+            let structure = try await self.client.metadata.loadDatabaseStructure(database: dbName)
+            let schemaNames = Set(structure.schemas.map(\.name))
 
-                let structure = try await connection.loadDatabaseStructure(database: dbName)
-                let schemaNames = Set(structure.schemas.map(\.name))
+            if schemaNames.contains("Production") {
+                let schema = structure.schemas.first { $0.name.caseInsensitiveCompare("Production") == .orderedSame }
+                let product = schema?.tables.first { $0.table.name.caseInsensitiveCompare("Product") == .orderedSame }
+                XCTAssertNotNil(product, "Expected Production.Product table")
+                XCTAssertFalse(product?.columns.isEmpty ?? true, "Expected columns for Production.Product")
+            }
 
-                if schemaNames.contains("Production") {
-                    let schema = structure.schemas.first { $0.name.caseInsensitiveCompare("Production") == .orderedSame }
-                    let product = schema?.tables.first { $0.table.name.caseInsensitiveCompare("Product") == .orderedSame }
-                    XCTAssertNotNil(product, "Expected Production.Product table")
-                    XCTAssertFalse(product?.columns.isEmpty ?? true, "Expected columns for Production.Product")
-                }
+            if schemaNames.contains("Purchasing") {
+                let schema = structure.schemas.first { $0.name.caseInsensitiveCompare("Purchasing") == .orderedSame }
+                let header = schema?.tables.first { $0.table.name.caseInsensitiveCompare("PurchaseOrderHeader") == .orderedSame }
+                XCTAssertNotNil(header, "Expected Purchasing.PurchaseOrderHeader table")
+                XCTAssertFalse(header?.columns.isEmpty ?? true, "Expected columns for Purchasing.PurchaseOrderHeader")
+            }
 
-                if schemaNames.contains("Purchasing") {
-                    let schema = structure.schemas.first { $0.name.caseInsensitiveCompare("Purchasing") == .orderedSame }
-                    let header = schema?.tables.first { $0.table.name.caseInsensitiveCompare("PurchaseOrderHeader") == .orderedSame }
-                    XCTAssertNotNil(header, "Expected Purchasing.PurchaseOrderHeader table")
-                    XCTAssertFalse(header?.columns.isEmpty ?? true, "Expected columns for Purchasing.PurchaseOrderHeader")
-                }
+            if schemaNames.contains("dbo") {
+                let schema = structure.schemas.first { $0.name.caseInsensitiveCompare("dbo") == .orderedSame }
+                XCTAssertFalse(schema?.procedures.isEmpty ?? true, "Expected stored procedures in dbo schema")
+                XCTAssertFalse(schema?.functions.isEmpty ?? true, "Expected functions in dbo schema")
+            }
 
-                if schemaNames.contains("dbo") {
-                    let schema = structure.schemas.first { $0.name.caseInsensitiveCompare("dbo") == .orderedSame }
-                    XCTAssertFalse(schema?.procedures.isEmpty ?? true, "Expected stored procedures in dbo schema")
-                    XCTAssertFalse(schema?.functions.isEmpty ?? true, "Expected functions in dbo schema")
-                }
+            if schemaNames.contains("HumanResources") {
+                let schema = try await self.client.metadata.loadSchemaStructure(database: dbName, schema: "HumanResources")
+                let shift = schema.tables.first { $0.table.name.caseInsensitiveCompare("Shift") == .orderedSame }
+                XCTAssertNotNil(shift, "Expected HumanResources.Shift table")
+                XCTAssertFalse(shift?.columns.isEmpty ?? true, "Expected columns for HumanResources.Shift")
 
-                if schemaNames.contains("HumanResources") {
-                    let schema = try await connection.loadSchemaStructure(database: dbName, schema: "HumanResources")
-                    let shift = schema.tables.first { $0.table.name.caseInsensitiveCompare("Shift") == .orderedSame }
-                    XCTAssertNotNil(shift, "Expected HumanResources.Shift table")
-                    XCTAssertFalse(shift?.columns.isEmpty ?? true, "Expected columns for HumanResources.Shift")
-
-                    let view = schema.views.first { $0.table.name.caseInsensitiveCompare("vEmployee") == .orderedSame }
-                    XCTAssertNotNil(view, "Expected HumanResources.vEmployee view")
-                }
+                let view = schema.views.first { $0.table.name.caseInsensitiveCompare("vEmployee") == .orderedSame }
+                XCTAssertNotNil(view, "Expected HumanResources.vEmployee view")
             }
         }
     }

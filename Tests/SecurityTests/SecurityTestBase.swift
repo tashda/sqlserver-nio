@@ -29,17 +29,17 @@ class SecurityTestBase: XCTestCase, @unchecked Sendable {
         // Remove users from roles first
         for user in usersToDrop {
             for role in rolesToDrop {
-                try? await securityClient.removeUserFromRole(user: user, role: role).get()
+                try? await securityClient.removeUserFromRole(user: user, role: role)
             }
         }
 
         for user in usersToDrop {
-            try? await securityClient.dropUser(name: user).get()
+            try? await securityClient.dropUser(name: user)
         }
         usersToDrop.removeAll()
 
         for role in rolesToDrop {
-            try? await securityClient.dropRole(name: role).get()
+            try? await securityClient.dropRole(name: role)
         }
         rolesToDrop.removeAll()
 

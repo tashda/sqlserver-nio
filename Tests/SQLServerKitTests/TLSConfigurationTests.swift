@@ -1,6 +1,6 @@
 import XCTest
 import NIOSSL
-@testable import SQLServerKit
+import SQLServerKit
 
 final class TLSConfigurationTests: XCTestCase, @unchecked Sendable {
 

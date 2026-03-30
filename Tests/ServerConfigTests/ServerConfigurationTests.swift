@@ -1,5 +1,5 @@
 import XCTest
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 
 final class ServerConfigurationTests: XCTestCase, @unchecked Sendable {
