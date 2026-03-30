@@ -56,37 +56,10 @@ final class SQLServerColumnstoreIndexTests: XCTestCase, @unchecked Sendable {
                     throw XCTSkip("Columnstore indexes are not supported on this server/edition")
                 }
 
-                // Use a reliable connection after potential DDL errors to avoid lingering connectionClosed
-                var def: ObjectDefinition?
-                var remaining = 3
-                while def == nil && remaining > 0 {
-                    remaining -= 1
-                    do {
-                        // Keep attempts modest; combine with RawSql stall-strike cap to fail fast.
-                        def = try await self.client.withConnection { conn in
-                            _ = try await conn.changeDatabase(db).get()
-                            // Bound each metadata fetch to avoid long hangs if the server stops responding.
-                            return try await conn
-                                .fetchObjectDefinition(schema: "dbo", name: table, kind: .table)
-                                .withTimeout(on: conn.eventLoop, seconds: 8, reason: "fetchObjectDefinition(columnstore)")
-                                .get()
-                        }
-                    } catch {
-                        // spin a fresh client bound to DB and retry once
-                        if let se = error as? SQLServerError, case .connectionClosed = se, remaining > 0 {
-                            let dbClient = try await makeClient(forDatabase: db)
-                            def = try? await dbClient.withConnection { conn in
-                                try await conn
-                                    .fetchObjectDefinition(schema: "dbo", name: table, kind: .table)
-                                    .withTimeout(on: conn.eventLoop, seconds: 8, reason: "fetchObjectDefinition(columnstore,alt)")
-                                    .get()
-                            }
-                            try? await dbClient.shutdownGracefully()
-                        } else {
-                            throw error
-                        }
-                    }
-                }
+                // Use the public metadata API to fetch the object definition
+                let dbClient = try await makeClient(forDatabase: db)
+                defer { Task { try? await dbClient.shutdownGracefully() } }
+                let def = try await dbClient.metadata.objectDefinition(schema: "dbo", name: table, kind: .table)
                 guard let def, let ddl = def.definition else { throw XCTSkip("Unable to fetch definition reliably due to connection resets") }
                 XCTAssertTrue(ddl.contains("COLUMNSTORE"), "Expected columnstore index in script")
             }

@@ -308,14 +308,14 @@ final class SQLServerBulkCopyTests: XCTestCase, @unchecked Sendable {
     
     private func singleInsertStatement(row: SQLServerBulkCopyRow, tableName: String, columns: [String]) -> String {
         let columnList = columns
-            .map { "[\(SQLServerBulkClient.escapeIdentifier($0))]" }
+            .map { "[\(SQLServerSQL.escapeIdentifier($0))]" }
             .joined(separator: ", ")
         let literals = row.values.map { $0.sqlLiteral() }.joined(separator: ", ")
         return "INSERT INTO \(qualifiedTableName(tableName)) (\(columnList)) VALUES (\(literals));"
     }
     
     private func qualifiedTableName(_ tableName: String) -> String {
-        "[dbo].[\(SQLServerBulkClient.escapeIdentifier(tableName))]"
+        "[dbo].[\(SQLServerSQL.escapeIdentifier(tableName))]"
     }
     
     private func closeUnderlyingConnection(_ connection: SQLServerConnection) async throws {

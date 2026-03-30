@@ -51,19 +51,45 @@ extension SQLServerAdministrationClient {
         name: String,
         options: SQLServerCreateDatabaseOptions = .init()
     ) async throws -> [SQLServerStreamMessage] {
-        try await createDatabase(
-            name: name,
-            collation: options.collation,
-            containment: options.containment,
-            dataFileName: options.dataFileName,
-            dataFileSize: options.dataFileSize,
-            dataFileMaxSize: options.dataFileMaxSize,
-            dataFileGrowth: options.dataFileGrowth,
-            logFileName: options.logFileName,
-            logFileSize: options.logFileSize,
-            logFileMaxSize: options.logFileMaxSize,
-            logFileGrowth: options.logFileGrowth
-        )
+        let escaped = SQLServerSQL.escapeIdentifier(name)
+        var sql = "CREATE DATABASE \(escaped)"
+
+        if let collation = options.collation {
+            sql += "\n    COLLATE \(collation)"
+        }
+
+        if let containment = options.containment {
+            sql += "\n    WITH CONTAINMENT = \(containment)"
+        }
+
+        // Primary data file
+        if options.dataFileName != nil || options.dataFileSize != nil {
+            let logicalName = options.dataFileName ?? name
+            let escapedLogical = logicalName.replacingOccurrences(of: "'", with: "''")
+            var fileParts = ["NAME = N'\(escapedLogical)'"]
+            if let size = options.dataFileSize { fileParts.append("SIZE = \(size)MB") }
+            if let maxSize = options.dataFileMaxSize {
+                fileParts.append("MAXSIZE = \(maxSize)MB")
+            }
+            if let growth = options.dataFileGrowth { fileParts.append("FILEGROWTH = \(growth)MB") }
+            sql += "\n    ON PRIMARY (\(fileParts.joined(separator: ", ")))"
+        }
+
+        // Log file
+        if options.logFileName != nil || options.logFileSize != nil {
+            let logicalName = options.logFileName ?? "\(name)_log"
+            let escapedLogical = logicalName.replacingOccurrences(of: "'", with: "''")
+            var fileParts = ["NAME = N'\(escapedLogical)'"]
+            if let size = options.logFileSize { fileParts.append("SIZE = \(size)MB") }
+            if let maxSize = options.logFileMaxSize {
+                fileParts.append("MAXSIZE = \(maxSize)MB")
+            }
+            if let growth = options.logFileGrowth { fileParts.append("FILEGROWTH = \(growth)MB") }
+            sql += "\n    LOG ON (\(fileParts.joined(separator: ", ")))"
+        }
+
+        let result = try await client.execute(sql)
+        return result.messages
     }
 
     /// Create a database with optional configuration for collation, containment, and file settings.
@@ -83,45 +109,21 @@ extension SQLServerAdministrationClient {
         logFileMaxSize: Int? = nil,
         logFileGrowth: Int? = nil
     ) async throws -> [SQLServerStreamMessage] {
-        let escaped = SQLServerSQL.escapeIdentifier(name)
-        var sql = "CREATE DATABASE \(escaped)"
-
-        if let collation {
-            sql += "\n    COLLATE \(collation)"
-        }
-
-        if let containment {
-            sql += "\n    WITH CONTAINMENT = \(containment)"
-        }
-
-        // Primary data file
-        if dataFileName != nil || dataFileSize != nil {
-            let logicalName = dataFileName ?? name
-            let escapedLogical = logicalName.replacingOccurrences(of: "'", with: "''")
-            var fileParts = ["NAME = N'\(escapedLogical)'"]
-            if let size = dataFileSize { fileParts.append("SIZE = \(size)MB") }
-            if let maxSize = dataFileMaxSize {
-                fileParts.append("MAXSIZE = \(maxSize)MB")
-            }
-            if let growth = dataFileGrowth { fileParts.append("FILEGROWTH = \(growth)MB") }
-            sql += "\n    ON PRIMARY (\(fileParts.joined(separator: ", ")))"
-        }
-
-        // Log file
-        if logFileName != nil || logFileSize != nil {
-            let logicalName = logFileName ?? "\(name)_log"
-            let escapedLogical = logicalName.replacingOccurrences(of: "'", with: "''")
-            var fileParts = ["NAME = N'\(escapedLogical)'"]
-            if let size = logFileSize { fileParts.append("SIZE = \(size)MB") }
-            if let maxSize = logFileMaxSize {
-                fileParts.append("MAXSIZE = \(maxSize)MB")
-            }
-            if let growth = logFileGrowth { fileParts.append("FILEGROWTH = \(growth)MB") }
-            sql += "\n    LOG ON (\(fileParts.joined(separator: ", ")))"
-        }
-
-        let result = try await client.execute(sql)
-        return result.messages
+        try await createDatabase(
+            name: name,
+            options: SQLServerCreateDatabaseOptions(
+                collation: collation,
+                containment: containment,
+                dataFileName: dataFileName,
+                dataFileSize: dataFileSize,
+                dataFileMaxSize: dataFileMaxSize,
+                dataFileGrowth: dataFileGrowth,
+                logFileName: logFileName,
+                logFileSize: logFileSize,
+                logFileMaxSize: logFileMaxSize,
+                logFileGrowth: logFileGrowth
+            )
+        )
     }
 
     /// List available collations from sys.fn_helpcollations().
