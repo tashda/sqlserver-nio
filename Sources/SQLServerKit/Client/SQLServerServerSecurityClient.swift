@@ -51,6 +51,7 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
                 group.addTask { .mappings(try await self.listLoginDatabaseMappings(login: name)) }
             }
 
+            var serverName: String?
             var loginInfo: ServerLoginInfo?
             var allRoles: [ServerRoleInfo] = []
             var memberOf: [String] = []
@@ -61,6 +62,7 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
 
             while let result = try await group.next() {
                 switch result {
+                case .serverName(let v): serverName = v
                 case .loginInfo(let v): loginInfo = v
                 case .allRoles(let v): allRoles = v
                 case .memberOfRoles(let v): memberOf = v
