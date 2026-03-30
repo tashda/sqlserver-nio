@@ -3,7 +3,7 @@ import XCTest
 import Logging
 import NIO
 import NIOConcurrencyHelpers
-import SQLServerKit
+@testable import SQLServerKit
 import SQLServerKitTesting
 
 final class SQLServerBulkCopyTests: XCTestCase, @unchecked Sendable {
@@ -307,6 +307,10 @@ final class SQLServerBulkCopyTests: XCTestCase, @unchecked Sendable {
     }
     
     private func closeUnderlyingConnection(_ connection: SQLServerConnection) async throws {
-        try await connection.close()
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+            connection.underlying.close().whenComplete { result in
+                continuation.resume(with: result)
+            }
+        }
     }
 }
