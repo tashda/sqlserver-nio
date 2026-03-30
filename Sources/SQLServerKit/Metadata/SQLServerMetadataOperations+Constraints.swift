@@ -480,7 +480,7 @@ extension SQLServerMetadataOperations {
         let escapedName = SQLServerSQL.escapeLiteral(name)
         let qualifiedName: String
         if let db = effectiveDatabase(database), !db.isEmpty {
-            qualifiedName = "[\(db.replacing("]", with: "]]"))].[\(escapedSchema)].[\(escapedName)]"
+            qualifiedName = "[\(db.replacingOccurrences(of: "]", with: "]]"))].[\(escapedSchema)].[\(escapedName)]"
         } else {
             qualifiedName = "[\(escapedSchema)].[\(escapedName)]"
         }
