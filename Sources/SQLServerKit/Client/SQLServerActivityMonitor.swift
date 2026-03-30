@@ -381,7 +381,8 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
             qs.max_elapsed_time,
             qs.last_execution_time,
             st.text AS sql_text,
-            CAST(qp.query_plan AS NVARCHAR(MAX)) AS plan_xml
+            CAST(qp.query_plan AS NVARCHAR(MAX)) AS plan_xml,
+            DB_NAME(st.dbid) AS database_name
         FROM sys.dm_exec_query_stats AS qs
         OUTER APPLY sys.dm_exec_sql_text(qs.sql_handle) AS st
         OUTER APPLY sys.dm_exec_query_plan(qs.plan_handle) AS qp
@@ -404,7 +405,8 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
                     maxElapsedTime: Int64(row.column("max_elapsed_time")?.int64 ?? 0),
                     lastExecutionTime: row.column("last_execution_time")?.date,
                     sqlText: row.column("sql_text")?.string,
-                    planXml: row.column("plan_xml")?.string
+                    planXml: row.column("plan_xml")?.string,
+                    databaseName: row.column("database_name")?.string
                 )
             }
         }
