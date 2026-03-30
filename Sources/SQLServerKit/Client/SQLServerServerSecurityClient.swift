@@ -30,7 +30,7 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
             
             // List databases - use internal execution since we might not have a full client here
             group.addTask {
-                let rows = try await self.query("SELECT name FROM sys.databases WHERE state = 0 AND database_id > 0 ORDER BY name")
+                let rows = try await self.run(sql: "SELECT name FROM sys.databases WHERE state = 0 AND database_id > 0 ORDER BY name").get()
                 return .availableDatabases(rows.compactMap { $0.column("name")?.string })
             }
 
@@ -84,6 +84,18 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
         case loginPermissions([ServerPermissionInfo])
         case mappings([LoginDatabaseMapping])
         case availableDatabases([String])
+    }
+
+    // MARK: - Databases
+
+    internal func listDatabases() -> EventLoopFuture<[String]> {
+        run(sql: "SELECT name FROM sys.databases WHERE state = 0 AND database_id > 0 ORDER BY name")
+            .map { rows in rows.compactMap { $0.column("name")?.string } }
+    }
+
+    @available(macOS 12.0, *)
+    public func listDatabases() async throws -> [String] {
+        try await listDatabases().get()
     }
 
     // MARK: - Logins
