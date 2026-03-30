@@ -26,10 +26,31 @@ public struct ServerLoginInfo: Sendable {
     public let name: String
     public let type: ServerLoginType
     public let isDisabled: Bool
+    public let isLocked: Bool?
     public let defaultDatabase: String?
     public let defaultLanguage: String?
     public let isPolicyChecked: Bool?
     public let isExpirationChecked: Bool?
+
+    public init(
+        name: String,
+        type: ServerLoginType,
+        isDisabled: Bool,
+        isLocked: Bool? = nil,
+        defaultDatabase: String? = nil,
+        defaultLanguage: String? = nil,
+        isPolicyChecked: Bool? = nil,
+        isExpirationChecked: Bool? = nil
+    ) {
+        self.name = name
+        self.type = type
+        self.isDisabled = isDisabled
+        self.isLocked = isLocked
+        self.defaultDatabase = defaultDatabase
+        self.defaultLanguage = defaultLanguage
+        self.isPolicyChecked = isPolicyChecked
+        self.isExpirationChecked = isExpirationChecked
+    }
 }
 
 public enum DatabasePrincipalType: String, Sendable {
@@ -249,6 +270,7 @@ public struct LoginDatabaseMapping: Sendable {
 // MARK: - Login Editor Data
 
 public struct ServerLoginEditorData: Sendable {
+    public let serverName: String?
     public let loginInfo: ServerLoginInfo?
     public let allServerRoles: [ServerRoleInfo]
     public let memberOfRoles: [String]
@@ -258,6 +280,7 @@ public struct ServerLoginEditorData: Sendable {
     public let availableDatabases: [String]
 
     public init(
+        serverName: String?,
         loginInfo: ServerLoginInfo?,
         allServerRoles: [ServerRoleInfo],
         memberOfRoles: [String],
@@ -266,6 +289,7 @@ public struct ServerLoginEditorData: Sendable {
         databaseMappings: [LoginDatabaseMapping],
         availableDatabases: [String]
     ) {
+        self.serverName = serverName
         self.loginInfo = loginInfo
         self.allServerRoles = allServerRoles
         self.memberOfRoles = memberOfRoles

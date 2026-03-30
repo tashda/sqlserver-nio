@@ -19,6 +19,13 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
     }
     private init(backing: Backing) { self.backing = backing }
 
+    /// Returns the server name (@@SERVERNAME).
+    @available(macOS 12.0, *)
+    public func getServerName() async throws -> String? {
+        let rows = try await run(sql: "SELECT @@SERVERNAME AS name").get()
+        return rows.first?.column("name")?.string
+    }
+
     // MARK: - Login Editor Data
 
     @available(macOS 12.0, *)
@@ -30,6 +37,9 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
             
             // List databases
             group.addTask { .availableDatabases(try await self.listDatabases()) }
+
+            // Fetch server name
+            group.addTask { .serverName(try await self.getServerName()) }
 
             if let name = name {
                 group.addTask {
@@ -74,6 +84,7 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
     }
 
     private enum LoginEditorSubData {
+        case serverName(String?)
         case loginInfo(ServerLoginInfo?)
         case allRoles([ServerRoleInfo])
         case memberOfRoles([String])
@@ -102,6 +113,7 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
             SELECT sp.name,
                    sp.type_desc,
                    sp.is_disabled,
+                   CAST(LOGINPROPERTY(sp.name, 'IsLocked') AS INT) AS is_locked,
                    sp.default_database_name,
                    sp.default_language_name,
                    sl.is_policy_checked,
@@ -121,6 +133,7 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
                 let name = row.column("name")?.string ?? ""
                 let typeDesc = row.column("type_desc")?.string ?? ""
                 let disabled = (row.column("is_disabled")?.int ?? 0) == 1
+                let locked = row.column("is_locked")?.int == 1
                 let defDb = row.column("default_database_name")?.string
                 let defLang = row.column("default_language_name")?.string
                 let policyChecked = row.column("is_policy_checked")?.int.map { $0 == 1 }
@@ -135,8 +148,16 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
                 case "EXTERNAL_LOGIN": type = .external
                 default: type = .sql
                 }
-                return ServerLoginInfo(name: name, type: type, isDisabled: disabled, defaultDatabase: defDb, defaultLanguage: defLang, isPolicyChecked: policyChecked, isExpirationChecked: expirationChecked)
-            }
+                return ServerLoginInfo(
+                   name: name,
+                   type: type,
+                   isDisabled: disabled,
+                   isLocked: locked,
+                   defaultDatabase: defDb,
+                   defaultLanguage: defLang,
+                   isPolicyChecked: policyChecked,
+                   isExpirationChecked: expirationChecked
+                )            }
         }
     }
 
