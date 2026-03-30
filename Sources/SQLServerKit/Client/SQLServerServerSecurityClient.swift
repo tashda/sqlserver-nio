@@ -19,6 +19,73 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
     }
     private init(backing: Backing) { self.backing = backing }
 
+    // MARK: - Login Editor Data
+
+    @available(macOS 12.0, *)
+    public func getServerLoginEditorData(name: String?) async throws -> ServerLoginEditorData {
+        try await withThrowingTaskGroup(of: LoginEditorSubData.self) { group in
+            // Always fetch independent sets
+            group.addTask { .allRoles(try await self.listServerRoles()) }
+            group.addTask { .allPermissions(try await self.listAllServerPermissions()) }
+            
+            // List databases - use internal execution since we might not have a full client here
+            group.addTask {
+                let rows = try await self.query("SELECT name FROM sys.databases WHERE state = 0 AND database_id > 0 ORDER BY name")
+                return .availableDatabases(rows.compactMap { $0.column("name")?.string })
+            }
+
+            if let name = name {
+                group.addTask {
+                    let logins = try await self.listLogins(includeSystemLogins: true)
+                    return .loginInfo(logins.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }))
+                }
+                group.addTask { .memberOfRoles(try await self.listServerRolesForPrincipal(principal: name)) }
+                group.addTask { .loginPermissions(try await self.listPermissions(principal: name)) }
+                group.addTask { .mappings(try await self.listLoginDatabaseMappings(login: name)) }
+            }
+
+            var loginInfo: ServerLoginInfo?
+            var allRoles: [ServerRoleInfo] = []
+            var memberOf: [String] = []
+            var allPerms: [String] = []
+            var loginPerms: [ServerPermissionInfo] = []
+            var mappings: [LoginDatabaseMapping] = []
+            var dbs: [String] = []
+
+            while let result = try await group.next() {
+                switch result {
+                case .loginInfo(let v): loginInfo = v
+                case .allRoles(let v): allRoles = v
+                case .memberOfRoles(let v): memberOf = v
+                case .allPermissions(let v): allPerms = v
+                case .loginPermissions(let v): loginPerms = v
+                case .mappings(let v): mappings = v
+                case .availableDatabases(let v): dbs = v
+                }
+            }
+
+            return ServerLoginEditorData(
+                loginInfo: loginInfo,
+                allServerRoles: allRoles,
+                memberOfRoles: memberOf,
+                allServerPermissions: allPerms,
+                loginPermissions: loginPerms,
+                databaseMappings: mappings,
+                availableDatabases: dbs
+            )
+        }
+    }
+
+    private enum LoginEditorSubData {
+        case loginInfo(ServerLoginInfo?)
+        case allRoles([ServerRoleInfo])
+        case memberOfRoles([String])
+        case allPermissions([String])
+        case loginPermissions([ServerPermissionInfo])
+        case mappings([LoginDatabaseMapping])
+        case availableDatabases([String])
+    }
+
     // MARK: - Logins
     internal func listLogins(includeDisabled: Bool = true, includeSystemLogins: Bool = false) -> EventLoopFuture<[ServerLoginInfo]> {
         run(sql: {

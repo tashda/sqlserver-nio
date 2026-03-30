@@ -246,7 +246,35 @@ public struct LoginDatabaseMapping: Sendable {
     }
 }
 
-// MARK: - Effective Permissions
+// MARK: - Login Editor Data
+
+public struct ServerLoginEditorData: Sendable {
+    public let loginInfo: ServerLoginInfo?
+    public let allServerRoles: [ServerRoleInfo]
+    public let memberOfRoles: [String]
+    public let allServerPermissions: [String]
+    public let loginPermissions: [SQLServerServerSecurityClient.ServerPermissionInfo]
+    public let databaseMappings: [LoginDatabaseMapping]
+    public let availableDatabases: [String]
+
+    public init(
+        loginInfo: ServerLoginInfo?,
+        allServerRoles: [ServerRoleInfo],
+        memberOfRoles: [String],
+        allServerPermissions: [String],
+        loginPermissions: [SQLServerServerSecurityClient.ServerPermissionInfo],
+        databaseMappings: [LoginDatabaseMapping],
+        availableDatabases: [String]
+    ) {
+        self.loginInfo = loginInfo
+        self.allServerRoles = allServerRoles
+        self.memberOfRoles = memberOfRoles
+        self.allServerPermissions = allServerPermissions
+        self.loginPermissions = loginPermissions
+        self.databaseMappings = databaseMappings
+        self.availableDatabases = availableDatabases
+    }
+}
 
 /// A single effective permission entry returned by `fn_my_permissions()`.
 public struct EffectivePermissionInfo: Sendable, Hashable {
