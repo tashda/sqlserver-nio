@@ -1,5 +1,5 @@
 import XCTest
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 
 final class SQLServerTableAdministrationTests: XCTestCase, @unchecked Sendable {
@@ -64,16 +64,14 @@ final class SQLServerTableAdministrationTests: XCTestCase, @unchecked Sendable {
             ]
         )
 
-        try await self.client.withConnection { connection in
-            try await connection.insertRow(into: originalName, values: [
-                "id": .int(1),
-                "name": .nString("one")
-            ])
-            try await connection.insertRow(into: originalName, values: [
-                "id": .int(2),
-                "name": .nString("two")
-            ])
-        }
+        _ = try await self.client.admin.insertRow(into: originalName, values: [
+            "id": .int(1),
+            "name": .nString("one")
+        ])
+        _ = try await self.client.admin.insertRow(into: originalName, values: [
+            "id": .int(2),
+            "name": .nString("two")
+        ])
 
         try await masterScopedAdmin.renameTable(name: originalName, newName: renamedName)
         let originalTableCount = try await self.getTableCount(client: self.client, name: originalName)

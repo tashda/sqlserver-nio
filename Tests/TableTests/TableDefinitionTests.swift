@@ -1,4 +1,4 @@
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 import XCTest
 import Logging
@@ -72,9 +72,7 @@ final class SQLServerTableDefinitionTests: XCTestCase, @unchecked Sendable {
                 // Fetch scripted definition using the same DB-scoped client
                 let def = try await withRetry(attempts: 5) {
                     try await withTimeout(60) {
-                        try await dbClient.withConnection { conn in
-                            try await conn.objectDefinition(schema: "dbo", name: child, kind: .table)
-                        }
+                        try await dbClient.metadata.objectDefinition(schema: "dbo", name: child, kind: .table)
                     }
                 }
                 XCTAssertNotNil(def)

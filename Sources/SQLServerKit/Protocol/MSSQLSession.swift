@@ -1,7 +1,7 @@
 import Foundation
 
 /// Protocol defining enhanced SQL Server session capabilities
-public protocol MSSQLSession {
+public protocol MSSQLSession: Sendable {
     func serverVersion() async throws -> String
     var metadata: SQLServerMetadataNamespace { get }
     var agent: SQLServerAgentOperations { get }
@@ -37,10 +37,6 @@ public protocol MSSQLSession {
     var dac: SQLServerDACClient { get }
     var bulk: SQLServerBulkClient { get }
     var ssis: SQLServerSSISClient { get }
-    @available(*, deprecated, message: "SSAS requires an XMLA client, not TDS.")
-    var ssas: SQLServerSSASClient { get }
-    @available(*, deprecated, message: "SSRS requires an HTTP client, not TDS.")
-    var ssrs: SQLServerSSRSClient { get }
 }
 
 extension MSSQLSession {

@@ -1,4 +1,4 @@
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 import XCTest
 import Logging
@@ -85,9 +85,7 @@ final class SQLServerTableDefinitionCoverageTests: XCTestCase, @unchecked Sendab
 
             guard let def = try await withRetry(attempts: 5, operation: {
                 try await withTimeout(60, operation: {
-                    try await dbClient.withConnection { conn in
-                        try await conn.objectDefinition(schema: "dbo", name: child, kind: .table)
-                    }
+                    try await dbClient.metadata.objectDefinition(schema: "dbo", name: child, kind: .table)
                 })
             }), let ddl = def.definition else {
                 XCTFail("No definition returned")

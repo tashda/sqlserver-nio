@@ -1,4 +1,4 @@
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 import XCTest
 
@@ -22,19 +22,16 @@ final class SQLServerDeadlockRetryTests: XCTestCase, @unchecked Sendable {
         let adminClient = SQLServerAdministrationClient(client: self.client)
 
         try await adminClient.createDatabase(name: dbName)
-        try await client.withConnection { connection in
-            try await connection.changeDatabase(dbName)
-            try await connection.createTable(
-                name: table,
-                columns: [
-                    SQLServerColumnDefinition(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
-                    SQLServerColumnDefinition(name: "v", definition: .standard(.init(dataType: .int)))
-                ],
-                schema: "dbo"
-            )
-            try await connection.insertRow(into: table, values: ["id": .int(1), "v": .int(0)])
-            try await connection.insertRow(into: table, values: ["id": .int(2), "v": .int(0)])
-        }
+        let dbAdmin = SQLServerAdministrationClient(client: self.client, database: dbName)
+        try await dbAdmin.createTable(
+            name: table,
+            columns: [
+                SQLServerColumnDefinition(name: "id", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
+                SQLServerColumnDefinition(name: "v", definition: .standard(.init(dataType: .int)))
+            ]
+        )
+        _ = try await dbAdmin.insertRow(into: table, values: ["id": .int(1), "v": .int(0)])
+        _ = try await dbAdmin.insertRow(into: table, values: ["id": .int(2), "v": .int(0)])
 
         do {
             // Use two independent connections that may deadlock and recover

@@ -1,5 +1,5 @@
 import XCTest
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 
 class TransactionTestBase: XCTestCase, @unchecked Sendable {
@@ -37,18 +37,15 @@ class TransactionTestBase: XCTestCase, @unchecked Sendable {
     func ensureSnapshotIsolationEnabled() async throws {
         guard !snapshotIsolationChecked else { return }
         snapshotIsolationChecked = true
-        let databaseRows = try await self.client.query("SELECT DB_NAME() AS db")
-        let database = databaseRows.first?.column("db")?.string ?? ""
-        try await self.client.withConnection { connection in
-            let stateRows = try await connection.query("""
+        let database = try await client.currentDatabaseName() ?? ""
+        let stateRows = try await client.query("""
             SELECT snapshot_isolation_state
             FROM sys.databases
             WHERE name = N'\(database.replacingOccurrences(of: "'", with: "''"))'
             """)
-            let state = stateRows.first?.column("snapshot_isolation_state")?.int ?? 0
-            if state != 1 {
-                try await connection.setSnapshotIsolation(database: database, enabled: true)
-            }
+        let state = stateRows.first?.column("snapshot_isolation_state")?.int ?? 0
+        if state != 1 {
+            _ = try await client.admin.setSnapshotIsolation(database: database, enabled: true)
         }
     }
 }

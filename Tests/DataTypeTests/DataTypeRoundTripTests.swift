@@ -1,6 +1,6 @@
 import XCTest
 import Logging
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 import Foundation
 
@@ -60,20 +60,18 @@ final class SQLServerDataTypeRoundTripTests: XCTestCase, @unchecked Sendable {
                 ]
                 try await dbAdminClient.createTable(name: tableName, columns: columns)
 
-                try await dbClient.withConnection { connection in
-                    try await connection.insertRow(into: tableName, values: [
-                        "bit_value": .bool(true),
-                        "tiny_value": .int(255),
-                        "small_value": .int(-120),
-                        "int_value": .int(214748364),
-                        "big_value": .int64(922_337_203_685),
-                        "decimal_value": .decimal("98765.4321"),
-                        "numeric_value": .decimal("123.456"),
-                        "money_value": .decimal("88.88"),
-                        "float_value": .double(3.1415926535),
-                        "real_value": .double(1.25)
-                    ])
-                }
+                _ = try await dbAdminClient.insertRow(into: tableName, values: [
+                    "bit_value": .bool(true),
+                    "tiny_value": .int(255),
+                    "small_value": .int(-120),
+                    "int_value": .int(214748364),
+                    "big_value": .int64(922_337_203_685),
+                    "decimal_value": .decimal("98765.4321"),
+                    "numeric_value": .decimal("123.456"),
+                    "money_value": .decimal("88.88"),
+                    "float_value": .double(3.1415926535),
+                    "real_value": .double(1.25)
+                ])
 
                 // Query data back using SQLServerKit APIs
                 let rows = try await dbClient.query("SELECT * FROM [dbo].[\(tableName)]").get()
@@ -186,17 +184,15 @@ final class SQLServerDataTypeRoundTripTests: XCTestCase, @unchecked Sendable {
         }
         try await withTimeout(120) {
             // First: mixed non-variant literals
-            let rows1 = try await self.client.withConnection { conn in
-                try await conn.query("""
-                    SELECT
-                        CAST('ABCDE' AS CHAR(5)) AS char_value,
-                        CAST('swift-nio' AS VARCHAR(50)) AS varchar_value,
-                        CAST(N'HELLO' AS NCHAR(5)) AS nchar_value,
-                        CAST(N'Unicode Ω' AS NVARCHAR(50)) AS nvarchar_value,
-                        0x0102030405 AS varbinary_value,
-                        CAST('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' AS UNIQUEIDENTIFIER) AS uniqueidentifier_value
-                """)
-            }
+            let rows1 = try await self.client.query("""
+                SELECT
+                    CAST('ABCDE' AS CHAR(5)) AS char_value,
+                    CAST('swift-nio' AS VARCHAR(50)) AS varchar_value,
+                    CAST(N'HELLO' AS NCHAR(5)) AS nchar_value,
+                    CAST(N'Unicode Ω' AS NVARCHAR(50)) AS nvarchar_value,
+                    0x0102030405 AS varbinary_value,
+                    CAST('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' AS UNIQUEIDENTIFIER) AS uniqueidentifier_value
+            """).get()
             guard let row = rows1.first else { XCTFail("Missing character row"); return }
             XCTAssertEqual(row.column("char_value")?.string?.trimmingCharacters(in: .whitespaces), "ABCDE")
             XCTAssertEqual(row.column("varchar_value")?.string, "swift-nio")
@@ -205,9 +201,7 @@ final class SQLServerDataTypeRoundTripTests: XCTestCase, @unchecked Sendable {
             XCTAssertEqual(row.column("varbinary_value")?.bytes ?? [], [0x01, 0x02, 0x03, 0x04, 0x05])
             XCTAssertEqual(row.column("uniqueidentifier_value")?.uuid?.uuidString.lowercased(), "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
             // Second: variant-only literal to exercise sql_variant decode without mixing token streams
-            let rows2 = try await self.client.withConnection { conn in
-                try await conn.query("SELECT CAST('Variant payload' AS sql_variant) AS variant_value")
-            }
+            let rows2 = try await self.client.query("SELECT CAST('Variant payload' AS sql_variant) AS variant_value").get()
             XCTAssertEqual(rows2.first?.column("variant_value")?.string, "Variant payload")
         }
     }

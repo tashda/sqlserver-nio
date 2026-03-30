@@ -1,6 +1,6 @@
 import XCTest
 import NIOCore
-@testable import SQLServerKit
+import SQLServerKit
 
 final class SQLServerSpatialTests: XCTestCase {
     func testDecodePoint() throws {

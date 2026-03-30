@@ -1,6 +1,6 @@
 import XCTest
 import NIO
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 
 final class ConstraintOtherTests: ConstraintTestBase, @unchecked Sendable {
@@ -15,26 +15,22 @@ final class ConstraintOtherTests: ConstraintTestBase, @unchecked Sendable {
 
         let uniqueConstraintExists = try await self.constraintClient.constraintExists(name: constraintName, table: tableName)
         XCTAssertTrue(uniqueConstraintExists)
-        try await self.client.withConnection { connection in
-            try await connection.insertRow(into: tableName, values: [
-                "id": .int(1),
-                "name": .nString("J"),
-                "email": .nString("j@t.c"),
-                "age": .int(25),
-                "status": .nString("active")
-            ])
-        }
+        _ = try await self.adminClient.insertRow(into: tableName, values: [
+            "id": .int(1),
+            "name": .nString("J"),
+            "email": .nString("j@t.c"),
+            "age": .int(25),
+            "status": .nString("active")
+        ])
 
         do {
-            try await self.client.withConnection { connection in
-                try await connection.insertRow(into: tableName, values: [
-                    "id": .int(2),
-                    "name": .nString("K"),
-                    "email": .nString("j@t.c"),
-                    "age": .int(30),
-                    "status": .nString("active")
-                ])
-            }
+            _ = try await self.adminClient.insertRow(into: tableName, values: [
+                "id": .int(2),
+                "name": .nString("K"),
+                "email": .nString("j@t.c"),
+                "age": .int(30),
+                "status": .nString("active")
+            ])
             XCTFail("Should have failed")
         } catch {
             XCTAssertTrue(error is SQLServerError)
@@ -66,26 +62,22 @@ final class ConstraintOtherTests: ConstraintTestBase, @unchecked Sendable {
 
         let primaryKeyExists = try await self.constraintClient.constraintExists(name: constraintName, table: tableName)
         XCTAssertTrue(primaryKeyExists)
-        try await self.client.withConnection { connection in
-            try await connection.insertRow(into: tableName, values: [
-                "id": .int(1),
-                "name": .nString("J"),
-                "email": .nString("j@example.com"),
-                "age": .int(25),
-                "status": .nString("active")
-            ])
-        }
+        _ = try await self.adminClient.insertRow(into: tableName, values: [
+            "id": .int(1),
+            "name": .nString("J"),
+            "email": .nString("j@example.com"),
+            "age": .int(25),
+            "status": .nString("active")
+        ])
 
         do {
-            try await self.client.withConnection { connection in
-                try await connection.insertRow(into: tableName, values: [
-                    "id": .int(1),
-                    "name": .nString("K"),
-                    "email": .nString("k@example.com"),
-                    "age": .int(26),
-                    "status": .nString("active")
-                ])
-            }
+            _ = try await self.adminClient.insertRow(into: tableName, values: [
+                "id": .int(1),
+                "name": .nString("K"),
+                "email": .nString("k@example.com"),
+                "age": .int(26),
+                "status": .nString("active")
+            ])
             XCTFail("Should have failed")
         } catch {
             XCTAssertTrue(error is SQLServerError)
@@ -103,14 +95,12 @@ final class ConstraintOtherTests: ConstraintTestBase, @unchecked Sendable {
 
         let defaultConstraintExists = try await self.constraintClient.constraintExists(name: constraintName, table: tableName)
         XCTAssertTrue(defaultConstraintExists)
-        try await self.client.withConnection { connection in
-            try await connection.insertRow(into: tableName, values: [
-                "id": .int(1),
-                "name": .nString("J"),
-                "email": .nString("j@example.com"),
-                "age": .int(25)
-            ])
-        }
+        _ = try await self.adminClient.insertRow(into: tableName, values: [
+            "id": .int(1),
+            "name": .nString("J"),
+            "email": .nString("j@example.com"),
+            "age": .int(25)
+        ])
 
         let result = try await self.client.query("SELECT status FROM [\(tableName)] WHERE id = 1")
         XCTAssertEqual(result.first?.column("status")?.string, "pending")

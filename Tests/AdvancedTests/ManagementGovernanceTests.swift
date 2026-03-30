@@ -1,7 +1,6 @@
 import XCTest
 import Logging
-@testable import SQLServerTDS
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 
 /// Governance and Management tests (Phase 4)

@@ -489,7 +489,7 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
         LEFT JOIN sys.database_role_members rm
             ON rm.role_principal_id = r.principal_id
             AND rm.member_principal_id = (SELECT principal_id FROM sys.database_principals WHERE name = N'\(userLit)')
-        WHERE r.type = 'R' AND r.is_fixed_role = 1
+        WHERE r.type = 'R'
         ORDER BY r.name;
         """
         return run(sql: sql).map { rows in

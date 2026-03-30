@@ -1,5 +1,5 @@
 @testable import SQLServerKit
-@testable import SQLServerTDS
+import SQLServerTDS
 import SQLServerKitTesting
 import XCTest
 
@@ -40,9 +40,7 @@ final class SQLServerRPCTests: XCTestCase, @unchecked Sendable {
             // Call via RPC
             let pIn = SQLServerConnection.ProcedureParameter(name: "@InVal", value: SQLServerValue(int32: 7), direction: .in)
             let pOut = SQLServerConnection.ProcedureParameter(name: "@OutVal", value: SQLServerValue(int32: 0), direction: .out)
-            let result = try await dbClient.withConnection { conn in
-                try await conn.call(procedure: "dbo.\(procName)", parameters: [pIn, pOut]).get()
-            }
+            let result = try await dbClient.call(procedure: "dbo.\(procName)", parameters: [pIn, pOut])
 
             // Expect at least one return value (the OUT param), and potentially a return status
             XCTAssertTrue(result.returnValues.contains(where: { $0.name.caseInsensitiveCompare("@OutVal") == .orderedSame && $0.int == 17 }))
@@ -82,9 +80,7 @@ final class SQLServerRPCTests: XCTestCase, @unchecked Sendable {
                 value: SQLServerValue(base: try! TDSData(decimal: 0, precision: 10, scale: 2)),
                 direction: .out
             )
-            let result = try await dbClient.withConnection { conn in
-                try await conn.call(procedure: "dbo.\(procName)", parameters: [px, py]).get()
-            }
+            let result = try await dbClient.call(procedure: "dbo.\(procName)", parameters: [px, py])
             guard let out = result.returnValues.first(where: { $0.name.caseInsensitiveCompare("@Y") == .orderedSame }) else {
                 XCTFail("Missing @Y OUT param"); return
             }

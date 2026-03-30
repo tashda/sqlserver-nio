@@ -1,4 +1,4 @@
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 import XCTest
 import Logging
@@ -41,13 +41,11 @@ final class SQLServerLegacyLobRoundTripTests: XCTestCase, @unchecked Sendable {
                     let textPayload = String(repeating: "A", count: 8_192)
                     let ntextPayload = String(repeating: "Ω", count: 4_096)
                     let imagePayload = Array((0..<8192).map { UInt8($0 & 0xFF) })
-                    try await dbClient.withConnection { connection in
-                        try await connection.insertRow(into: table, values: [
-                            "t": .string(textPayload),
-                            "n": .nString(ntextPayload),
-                            "i": .bytes(imagePayload)
-                        ])
-                    }
+                    _ = try await dbAdminClient.insertRow(into: table, values: [
+                        "t": .string(textPayload),
+                        "n": .nString(ntextPayload),
+                        "i": .bytes(imagePayload)
+                    ])
 
                     // Query data back using SQLServerKit APIs
                     let rows = try await dbClient.query("SELECT DATALENGTH(t) AS tl, DATALENGTH(n) AS nl, DATALENGTH(i) AS il FROM [\(table)]").get()
@@ -58,9 +56,7 @@ final class SQLServerLegacyLobRoundTripTests: XCTestCase, @unchecked Sendable {
                     XCTAssertEqual(row.column("il")?.int, imagePayload.count)
 
                     // Also verify NBCROW behavior with nulls
-                    try await dbClient.withConnection { connection in
-                        try await connection.insertRow(into: table, values: ["t": .null, "n": .null, "i": .null])
-                    }
+                    _ = try await dbAdminClient.insertRow(into: table, values: ["t": .null, "n": .null, "i": .null])
                     let nullRow = try await dbClient.query("SELECT t, n, i FROM [\(table)] WHERE t IS NULL").get().first
                     XCTAssertNil(nullRow?.column("t")?.string)
                     XCTAssertNil(nullRow?.column("n")?.string)

@@ -45,8 +45,4 @@ extension SQLServerClient {
     @available(*, deprecated, message: "DAC operations are not yet implemented.")
     public var dac: SQLServerDACClient { SQLServerDACClient(client: self) }
     public var ssis: SQLServerSSISClient { SQLServerSSISClient(client: self) }
-    @available(*, deprecated, message: "SSAS requires an XMLA client, not TDS.")
-    public var ssas: SQLServerSSASClient { SQLServerSSASClient(client: self) }
-    @available(*, deprecated, message: "SSRS requires an HTTP client, not TDS.")
-    public var ssrs: SQLServerSSRSClient { SQLServerSSRSClient(client: self) }
 }

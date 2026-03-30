@@ -1,4 +1,4 @@
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 import XCTest
 import Logging
@@ -54,15 +54,13 @@ final class SQLServerTableIndexOptionsTests: XCTestCase, @unchecked Sendable {
         try await withDbClient(for: db) { dbClient in
             guard let def = try await withRetry(attempts: 5, operation: {
                 try await withTimeout(60, operation: {
-                    try await dbClient.withConnection { conn in
-                        do {
-                            return try await conn.objectDefinition(schema: "dbo", name: table, kind: .table)
-                        } catch {
-                            if error.localizedDescription == "Already closed" {
-                                throw SQLServerError.connectionClosed // Convert to retryable error
-                            } else {
-                                throw error
-                            }
+                    do {
+                        return try await dbClient.metadata.objectDefinition(schema: "dbo", name: table, kind: .table)
+                    } catch {
+                        if error.localizedDescription == "Already closed" {
+                            throw SQLServerError.connectionClosed // Convert to retryable error
+                        } else {
+                            throw error
                         }
                     }
                 })

@@ -1,8 +1,5 @@
 import XCTest
-import NIOCore
-import Logging
-@testable import SQLServerTDS
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 
 /// Consolidated query tests for SQLServerNIO

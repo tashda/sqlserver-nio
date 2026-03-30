@@ -1,5 +1,5 @@
 import XCTest
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 
 class ConstraintTestBase: XCTestCase, @unchecked Sendable {
@@ -60,10 +60,8 @@ class ConstraintTestBase: XCTestCase, @unchecked Sendable {
         ]
 
         try await self.adminClient.createTable(name: name, columns: columns)
-        try await self.client.withConnection { connection in
-            try await connection.insertRow(into: name, values: ["id": .int(1), "category_name": .nString("Category A")])
-            try await connection.insertRow(into: name, values: ["id": .int(2), "category_name": .nString("Category B")])
-            try await connection.insertRow(into: name, values: ["id": .int(3), "category_name": .nString("Category C")])
-        }
+        _ = try await adminClient.insertRow(into: name, values: ["id": .int(1), "category_name": .nString("Category A")])
+        _ = try await adminClient.insertRow(into: name, values: ["id": .int(2), "category_name": .nString("Category B")])
+        _ = try await adminClient.insertRow(into: name, values: ["id": .int(3), "category_name": .nString("Category C")])
     }
 }

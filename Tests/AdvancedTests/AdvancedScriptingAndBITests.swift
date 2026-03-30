@@ -1,7 +1,6 @@
 import XCTest
 import Logging
-@testable import SQLServerTDS
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 
 /// Advanced scripting and Data Movement tests (Phase 6 & 7)

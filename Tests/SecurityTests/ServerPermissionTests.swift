@@ -1,5 +1,5 @@
 import XCTest
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 
 /// Tests for server-level permissions: listAllServerPermissions, grantRaw/revokeRaw/denyRaw,

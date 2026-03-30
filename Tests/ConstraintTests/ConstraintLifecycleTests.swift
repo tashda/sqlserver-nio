@@ -1,6 +1,6 @@
 import XCTest
 import NIO
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 
 final class ConstraintLifecycleTests: ConstraintTestBase, @unchecked Sendable {
@@ -22,22 +22,18 @@ final class ConstraintLifecycleTests: ConstraintTestBase, @unchecked Sendable {
 
         let foreignKeyExists = try await self.constraintClient.constraintExists(name: constraintName, table: child)
         XCTAssertTrue(foreignKeyExists)
-        try await self.client.withConnection { connection in
-            try await connection.insertRow(into: child, values: [
-                "id": .int(1),
-                "parent_id": .int(1),
-                "description": .nString("Valid")
-            ])
-        }
+        _ = try await self.adminClient.insertRow(into: child, values: [
+            "id": .int(1),
+            "parent_id": .int(1),
+            "description": .nString("Valid")
+        ])
 
         do {
-            try await self.client.withConnection { connection in
-                try await connection.insertRow(into: child, values: [
-                    "id": .int(2),
-                    "parent_id": .int(999),
-                    "description": .nString("Invalid")
-                ])
-            }
+            _ = try await self.adminClient.insertRow(into: child, values: [
+                "id": .int(2),
+                "parent_id": .int(999),
+                "description": .nString("Invalid")
+            ])
             XCTFail("Should have failed")
         } catch {
             XCTAssertTrue(error is SQLServerError)
@@ -56,10 +52,8 @@ final class ConstraintLifecycleTests: ConstraintTestBase, @unchecked Sendable {
         ])
 
         try await self.constraintClient.addForeignKey(name: constraintName, table: child, columns: ["parent_id"], referencedTable: parent, referencedColumns: ["id"], options: ForeignKeyOptions(onDelete: .cascade, onUpdate: .cascade))
-        try await self.client.withConnection { connection in
-            try await connection.insertRow(into: child, values: ["id": .int(1), "parent_id": .int(1)])
-            try await connection.deleteRows(from: parent, where: "id = 1")
-        }
+        _ = try await self.adminClient.insertRow(into: child, values: ["id": .int(1), "parent_id": .int(1)])
+        _ = try await self.adminClient.deleteRows(from: parent, where: "id = 1")
 
         let count = try await self.client.queryScalar("SELECT COUNT(*) FROM [\(child)] WHERE parent_id = 1", as: Int.self)
         XCTAssertEqual(count, 0)
@@ -96,26 +90,22 @@ final class ConstraintLifecycleTests: ConstraintTestBase, @unchecked Sendable {
 
         let checkConstraintExists = try await self.constraintClient.constraintExists(name: constraintName, table: tableName)
         XCTAssertTrue(checkConstraintExists)
-        try await self.client.withConnection { connection in
-            try await connection.insertRow(into: tableName, values: [
-                "id": .int(1),
-                "name": .nString("J"),
-                "email": .nString("j@example.com"),
-                "age": .int(25),
-                "status": .nString("active")
-            ])
-        }
+        _ = try await self.adminClient.insertRow(into: tableName, values: [
+            "id": .int(1),
+            "name": .nString("J"),
+            "email": .nString("j@example.com"),
+            "age": .int(25),
+            "status": .nString("active")
+        ])
 
         do {
-            try await self.client.withConnection { connection in
-                try await connection.insertRow(into: tableName, values: [
-                    "id": .int(2),
-                    "name": .nString("J"),
-                    "email": .nString("bad@example.com"),
-                    "age": .int(200),
-                    "status": .nString("active")
-                ])
-            }
+            _ = try await self.adminClient.insertRow(into: tableName, values: [
+                "id": .int(2),
+                "name": .nString("J"),
+                "email": .nString("bad@example.com"),
+                "age": .int(200),
+                "status": .nString("active")
+            ])
             XCTFail("Should have failed")
         } catch {
             XCTAssertTrue(error is SQLServerError)

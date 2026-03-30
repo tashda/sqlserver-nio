@@ -1,22 +1,19 @@
 import XCTest
-import NIO
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 
 final class TriggerLifecycleTests: TriggerTestBase, @unchecked Sendable {
     private func insertPerson(into objectName: String, id: Int, name: String, email: String) async throws {
-        try await client.withConnection { connection in
-            try await connection.insertRow(
-                into: objectName,
-                values: [
-                    "id": .int(id),
-                    "name": .nString(name),
-                    "email": .nString(email),
-                    "created_date": .raw("GETDATE()"),
-                    "modified_date": .raw("GETDATE()")
-                ]
-            )
-        }
+        _ = try await adminClient.insertRow(
+            into: objectName,
+            values: [
+                "id": .int(id),
+                "name": .nString(name),
+                "email": .nString(email),
+                "created_date": .raw("GETDATE()"),
+                "modified_date": .raw("GETDATE()")
+            ]
+        )
     }
 
     // MARK: - Basic Trigger Tests
@@ -103,9 +100,7 @@ final class TriggerLifecycleTests: TriggerTestBase, @unchecked Sendable {
             body: body
         )
 
-        try await client.withConnection { connection in
-            try await connection.updateRows(in: tableName, set: ["name": .nString("Jane Doe"), "email": .nString("jane@example.com")], where: "id = 1")
-        }
+        _ = try await adminClient.updateRows(in: tableName, set: ["name": .nString("Jane Doe"), "email": .nString("jane@example.com")], where: "id = 1")
 
         let auditCount = try await client.queryScalar("SELECT COUNT(*) FROM [\(auditTableName)]", as: Int.self)
         XCTAssertEqual(auditCount, 1, "Audit table should have one record after update")
@@ -155,9 +150,7 @@ final class TriggerLifecycleTests: TriggerTestBase, @unchecked Sendable {
             body: body
         )
 
-        try await client.withConnection { connection in
-            try await connection.deleteRows(from: tableName, where: "id = 1")
-        }
+        _ = try await adminClient.deleteRows(from: tableName, where: "id = 1")
 
         let auditCount = try await client.queryScalar("SELECT COUNT(*) FROM [\(auditTableName)]", as: Int.self)
         XCTAssertEqual(auditCount, 1, "Audit table should have one record after delete")
@@ -224,10 +217,8 @@ final class TriggerLifecycleTests: TriggerTestBase, @unchecked Sendable {
         )
 
         try await insertPerson(into: tableName, id: 1, name: "John Doe", email: "john@example.com")
-        try await client.withConnection { connection in
-            try await connection.updateRows(in: tableName, set: ["name": .nString("Jane Doe")], where: "id = 1")
-            try await connection.deleteRows(from: tableName, where: "id = 1")
-        }
+        _ = try await adminClient.updateRows(in: tableName, set: ["name": .nString("Jane Doe")], where: "id = 1")
+        _ = try await adminClient.deleteRows(from: tableName, where: "id = 1")
 
         let auditCount = try await client.queryScalar("SELECT COUNT(*) FROM [\(auditTableName)]", as: Int.self)
         XCTAssertEqual(auditCount, 3, "Audit table should have three records")
@@ -266,9 +257,7 @@ final class TriggerLifecycleTests: TriggerTestBase, @unchecked Sendable {
             body: body
         )
 
-        try await client.withConnection { connection in
-            try await connection.insertRow(into: viewName, values: ["id": .int(1), "name": .nString("John Doe"), "email": .nString("john@example.com")])
-        }
+        _ = try await adminClient.insertRow(into: viewName, values: ["id": .int(1), "name": .nString("John Doe"), "email": .nString("john@example.com")])
 
         let count = try await client.queryScalar("SELECT COUNT(*) FROM [\(tableName)]", as: Int.self)
         XCTAssertEqual(count, 1, "Underlying table should have one record")

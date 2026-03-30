@@ -1,22 +1,19 @@
 import XCTest
-import NIO
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 
 final class TriggerManagementTests: TriggerTestBase, @unchecked Sendable {
     private func insertPerson(into tableName: String, id: Int, name: String, email: String) async throws {
-        try await client.withConnection { connection in
-            try await connection.insertRow(
-                into: tableName,
-                values: [
-                    "id": .int(id),
-                    "name": .nString(name),
-                    "email": .nString(email),
-                    "created_date": .raw("GETDATE()"),
-                    "modified_date": .raw("GETDATE()")
-                ]
-            )
-        }
+        _ = try await adminClient.insertRow(
+            into: tableName,
+            values: [
+                "id": .int(id),
+                "name": .nString(name),
+                "email": .nString(email),
+                "created_date": .raw("GETDATE()"),
+                "modified_date": .raw("GETDATE()")
+            ]
+        )
     }
 
     func testEnableDisableTrigger() async throws {

@@ -1,6 +1,6 @@
 import XCTest
 import NIO
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 
 final class ConstraintManagementTests: ConstraintTestBase, @unchecked Sendable {
@@ -21,27 +21,23 @@ final class ConstraintManagementTests: ConstraintTestBase, @unchecked Sendable {
         try await self.constraintClient.addCheckConstraint(name: constraintName, table: tableName, expression: "age >= 0 AND age <= 150")
 
         try await self.constraintClient.disableConstraint(name: constraintName, table: tableName)
-        try await self.client.withConnection { connection in
-            try await connection.insertRow(into: tableName, values: [
-                "id": .int(1),
-                "name": .nString("J"),
-                "email": .nString("j@example.com"),
-                "age": .int(200),
-                "status": .nString("active")
-            ])
-        }
+        _ = try await self.adminClient.insertRow(into: tableName, values: [
+            "id": .int(1),
+            "name": .nString("J"),
+            "email": .nString("j@example.com"),
+            "age": .int(200),
+            "status": .nString("active")
+        ])
 
         try await self.constraintClient.enableConstraint(name: constraintName, table: tableName)
         do {
-            try await self.client.withConnection { connection in
-                try await connection.insertRow(into: tableName, values: [
-                    "id": .int(2),
-                    "name": .nString("K"),
-                    "email": .nString("k@example.com"),
-                    "age": .int(300),
-                    "status": .nString("active")
-                ])
-            }
+            _ = try await self.adminClient.insertRow(into: tableName, values: [
+                "id": .int(2),
+                "name": .nString("K"),
+                "email": .nString("k@example.com"),
+                "age": .int(300),
+                "status": .nString("active")
+            ])
             XCTFail("Should have failed")
         } catch {
             XCTAssertTrue(error is SQLServerError)

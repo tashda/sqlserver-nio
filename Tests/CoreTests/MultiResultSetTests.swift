@@ -1,8 +1,5 @@
 import XCTest
-import NIOCore
-import Logging
-@testable import SQLServerTDS
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 
 /// Tests for multi-result-set streaming via SQL batch queries.

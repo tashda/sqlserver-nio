@@ -1,4 +1,4 @@
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 import XCTest
 import Logging
@@ -51,67 +51,65 @@ final class SQLServerForeignKeyCascadeMatrixTests: XCTestCase, @unchecked Sendab
                     Case(del: .setDefault, upd: .noAction, expectNullOnDelete: false, expectDefaultOnDelete: true),
                 ]
 
-                try await withDbConnection(client: dbClient, database: db) { connection in
-                    for (i, c) in cases.enumerated() {
-                        let fk = "FK_\(i)_\(UUID().uuidString.prefix(4))"
+                for (i, c) in cases.enumerated() {
+                    let fk = "FK_\(i)_\(UUID().uuidString.prefix(4))"
 
-                        // Clean up any existing constraints on both tables
-                        let parentConstraints = try await constraintClient.listTableConstraints(table: parent)
-                        let childConstraints = try await constraintClient.listTableConstraints(table: child)
+                    // Clean up any existing constraints on both tables
+                    let parentConstraints = try await constraintClient.listTableConstraints(table: parent)
+                    let childConstraints = try await constraintClient.listTableConstraints(table: child)
 
-                        // Drop any foreign key constraints that reference our tables
-                        for constraint in parentConstraints + childConstraints {
-                            if constraint.type == .foreignKey {
-                                try await constraintClient.dropForeignKey(name: constraint.name, table: constraint.tableName)
-                            }
+                    // Drop any foreign key constraints that reference our tables
+                    for constraint in parentConstraints + childConstraints {
+                        if constraint.type == .foreignKey {
+                            try await constraintClient.dropForeignKey(name: constraint.name, table: constraint.tableName)
                         }
-
-                        // Clear all data from both tables
-                        try await connection.deleteRows(from: child)
-                        try await connection.deleteRows(from: parent)
-                        // Maintain a default parent row so SET DEFAULT actions target a valid key
-                        try await connection.insertRow(into: parent, values: ["id": .int(0)])
-
-                        // Create the foreign key constraint with proper options
-                        let options = ForeignKeyOptions(onDelete: c.del, onUpdate: c.upd)
-                        try await constraintClient.addForeignKey(
-                            name: fk,
-                            table: child,
-                            columns: ["pid"],
-                            referencedTable: parent,
-                            referencedColumns: ["id"],
-                            options: options
-                        )
-
-                        // Insert test data
-                        try await connection.insertRow(into: parent, values: ["id": .int(1)])
-                        try await connection.insertRow(into: child, values: ["id": .int(11), "pid": .int(1), "v": .nString("x")])
-
-                        // Delete parent; for NO ACTION we expect a failure
-                        if c.del == .noAction {
-                            do {
-                                try await connection.deleteRows(from: parent, where: "id = 1")
-                                XCTFail("Expected NO ACTION delete to fail due to FK constraint")
-                            } catch {
-                                // expected — continue
-                            }
-                        } else {
-                            try await connection.deleteRows(from: parent, where: "id = 1")
-                        }
-
-                        // Check child table results
-                        let rows = try await connection.query("SELECT COUNT(*) AS cnt, SUM(CASE WHEN pid IS NULL THEN 1 ELSE 0 END) AS nulls, SUM(CASE WHEN pid = 0 THEN 1 ELSE 0 END) AS defs FROM [dbo].[\(child)]").get()
-                        guard let r = rows.first else { XCTFail("Missing row"); continue }
-                        let cnt = r.column("cnt")?.int ?? 0
-                        let nulls = r.column("nulls")?.int ?? 0
-                        let defs = r.column("defs")?.int ?? 0
-                        if c.del == .cascade { XCTAssertEqual(cnt, 0, "CASCADE should remove child") }
-                        if c.expectNullOnDelete { XCTAssertEqual(nulls, 1, "SET NULL should null pid") }
-                        if c.expectDefaultOnDelete { XCTAssertEqual(defs, 1, "SET DEFAULT should set pid=0") }
-
-                        // Drop FK for this case to avoid interference across cases
-                        try await constraintClient.dropForeignKey(name: fk, table: child)
                     }
+
+                    // Clear all data from both tables
+                    _ = try await adminClient.deleteRows(from: child)
+                    _ = try await adminClient.deleteRows(from: parent)
+                    // Maintain a default parent row so SET DEFAULT actions target a valid key
+                    _ = try await adminClient.insertRow(into: parent, values: ["id": .int(0)])
+
+                    // Create the foreign key constraint with proper options
+                    let options = ForeignKeyOptions(onDelete: c.del, onUpdate: c.upd)
+                    try await constraintClient.addForeignKey(
+                        name: fk,
+                        table: child,
+                        columns: ["pid"],
+                        referencedTable: parent,
+                        referencedColumns: ["id"],
+                        options: options
+                    )
+
+                    // Insert test data
+                    _ = try await adminClient.insertRow(into: parent, values: ["id": .int(1)])
+                    _ = try await adminClient.insertRow(into: child, values: ["id": .int(11), "pid": .int(1), "v": .nString("x")])
+
+                    // Delete parent; for NO ACTION we expect a failure
+                    if c.del == .noAction {
+                        do {
+                            _ = try await adminClient.deleteRows(from: parent, where: "id = 1")
+                            XCTFail("Expected NO ACTION delete to fail due to FK constraint")
+                        } catch {
+                            // expected — continue
+                        }
+                    } else {
+                        _ = try await adminClient.deleteRows(from: parent, where: "id = 1")
+                    }
+
+                    // Check child table results
+                    let rows = try await dbClient.query("SELECT COUNT(*) AS cnt, SUM(CASE WHEN pid IS NULL THEN 1 ELSE 0 END) AS nulls, SUM(CASE WHEN pid = 0 THEN 1 ELSE 0 END) AS defs FROM [dbo].[\(child)]")
+                    guard let r = rows.first else { XCTFail("Missing row"); continue }
+                    let cnt = r.column("cnt")?.int ?? 0
+                    let nulls = r.column("nulls")?.int ?? 0
+                    let defs = r.column("defs")?.int ?? 0
+                    if c.del == .cascade { XCTAssertEqual(cnt, 0, "CASCADE should remove child") }
+                    if c.expectNullOnDelete { XCTAssertEqual(nulls, 1, "SET NULL should null pid") }
+                    if c.expectDefaultOnDelete { XCTAssertEqual(defs, 1, "SET DEFAULT should set pid=0") }
+
+                    // Drop FK for this case to avoid interference across cases
+                    try await constraintClient.dropForeignKey(name: fk, table: child)
                 }
             }
         }

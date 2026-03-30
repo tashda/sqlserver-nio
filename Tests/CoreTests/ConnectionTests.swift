@@ -58,9 +58,7 @@ final class ConnectionTests: StandardTestBase, @unchecked Sendable {
     func testWithConnectionBasicQuery() async throws {
         logTestStart("WithConnection Basic Query Test")
 
-        let result = try await client.withConnection { connection in
-            return try await connection.query("SELECT 1 as test_col, 'working' as test_val")
-        }
+        let result = try await client.query("SELECT 1 as test_col, 'working' as test_val")
 
         XCTAssertEqual(result.count, 1)
         if let firstRow = result.first {
@@ -99,9 +97,7 @@ final class ConnectionTests: StandardTestBase, @unchecked Sendable {
 
         // Execute multiple operations to test connection pooling
         for i in 0..<3 {
-            let result = try await client.withConnection { connection in
-                return try await connection.query("SELECT '\(i)' as iteration")
-            }
+            let result = try await client.query("SELECT '\(i)' as iteration")
 
             XCTAssertEqual(result.count, 1)
             logger.info("Operation \(i) completed successfully")

@@ -1,7 +1,6 @@
 import XCTest
 import Logging
-@testable import SQLServerTDS
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 
 /// Standard base class for all SQLServer tests
