@@ -269,9 +269,16 @@ public struct LoginDatabaseMapping: Sendable {
 
 // MARK: - Login Editor Data
 
+public enum ConnectSQLPermissionState: String, Sendable, Codable {
+    case granted
+    case denied
+    case unspecified
+}
+
 public struct ServerLoginEditorData: Sendable {
     public let serverName: String?
     public let loginInfo: ServerLoginInfo?
+    public let permissionConnectToEngine: ConnectSQLPermissionState
     public let allServerRoles: [ServerRoleInfo]
     public let memberOfRoles: [String]
     public let allServerPermissions: [String]
@@ -282,6 +289,7 @@ public struct ServerLoginEditorData: Sendable {
     public init(
         serverName: String?,
         loginInfo: ServerLoginInfo?,
+        permissionConnectToEngine: ConnectSQLPermissionState,
         allServerRoles: [ServerRoleInfo],
         memberOfRoles: [String],
         allServerPermissions: [String],
@@ -291,6 +299,7 @@ public struct ServerLoginEditorData: Sendable {
     ) {
         self.serverName = serverName
         self.loginInfo = loginInfo
+        self.permissionConnectToEngine = permissionConnectToEngine
         self.allServerRoles = allServerRoles
         self.memberOfRoles = memberOfRoles
         self.allServerPermissions = allServerPermissions

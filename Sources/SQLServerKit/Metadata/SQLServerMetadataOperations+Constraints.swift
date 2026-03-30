@@ -478,7 +478,13 @@ extension SQLServerMetadataOperations {
     internal func objectDefinitionString(database: String? = nil, schema: String, name: String) -> EventLoopFuture<String?> {
         let escapedSchema = SQLServerSQL.escapeLiteral(schema)
         let escapedName = SQLServerSQL.escapeLiteral(name)
-        let sql = "SELECT OBJECT_DEFINITION(OBJECT_ID(N'\(escapedSchema).\(escapedName)')) AS definition;"
+        let qualifiedName: String
+        if let db = effectiveDatabase(database), !db.isEmpty {
+            qualifiedName = "[\(db.replacing("]", with: "]]"))].[\(escapedSchema)].[\(escapedName)]"
+        } else {
+            qualifiedName = "[\(escapedSchema)].[\(escapedName)]"
+        }
+        let sql = "SELECT OBJECT_DEFINITION(OBJECT_ID(N'\(qualifiedName)')) AS definition;"
         return queryExecutor(sql).map { rows in
             rows.first?.column("definition")?.string
         }

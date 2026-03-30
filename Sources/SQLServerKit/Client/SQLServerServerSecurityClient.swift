@@ -70,16 +70,32 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
                 case .availableDatabases(let v): dbs = v
                 }
             }
+let connectSQLPerm = loginPerms.first { $0.permission == ServerPermissionName.connectSql.rawValue }
+let connectPermissionState: ConnectSQLPermissionState
+if let connectSQLPerm = connectSQLPerm {
+    switch connectSQLPerm.state {
+    case "GRANT", "GRANT_WITH_GRANT_OPTION":
+        connectPermissionState = .granted
+    case "DENY":
+        connectPermissionState = .denied
+    default:
+        connectPermissionState = .unspecified
+    }
+} else {
+    connectPermissionState = .unspecified
+}
 
-            return ServerLoginEditorData(
-                loginInfo: loginInfo,
-                allServerRoles: allRoles,
-                memberOfRoles: memberOf,
-                allServerPermissions: allPerms,
-                loginPermissions: loginPerms,
-                databaseMappings: mappings,
-                availableDatabases: dbs
-            )
+return ServerLoginEditorData(
+    serverName: serverName,
+    loginInfo: loginInfo,
+    permissionConnectToEngine: connectPermissionState,
+    allServerRoles: allRoles,
+    memberOfRoles: memberOf,
+    allServerPermissions: allPerms,
+    loginPermissions: loginPerms.filter { $0.permission != ServerPermissionName.connectSql.rawValue },
+    databaseMappings: mappings,
+    availableDatabases: dbs
+)
         }
     }
 

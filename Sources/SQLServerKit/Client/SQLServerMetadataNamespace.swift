@@ -550,6 +550,65 @@ public final class SQLServerMetadataNamespace: @unchecked Sendable {
         }
     }
 
+    // MARK: - Scripting & Dependency Graph
+
+    /// Returns all scriptable objects in the current database.
+    @available(macOS 12.0, *)
+    public func listAllObjects(database: String? = nil) async throws -> [SQLServerObjectIdentifier] {
+        let prefix = database.map { "[\($0)]." } ?? ""
+        let sql = """
+        SELECT SCHEMA_NAME(o.schema_id) AS [schema], o.name, o.type
+        FROM \(prefix)sys.objects o
+        WHERE o.is_ms_shipped = 0
+          AND o.type IN ('U','V','P','FN','IF','TF','TR','SN','TT','SO')
+        ORDER BY [schema], o.name
+        """
+        let rows = try await client.query(sql)
+        return rows.compactMap { row in
+            guard let schema = row.column("schema")?.string,
+                  let name = row.column("name")?.string,
+                  let type = row.column("type")?.string else { return nil }
+            return SQLServerObjectIdentifier(schema: schema, name: name, type: type.trimmingCharacters(in: .whitespaces))
+        }
+    }
+
+    /// Fetches all cross-object dependencies in the current database.
+    @available(macOS 12.0, *)
+    public func fetchDependencies(database: String? = nil) async throws -> [SQLServerScriptingDependency] {
+        let prefix = database.map { "[\($0)]." } ?? ""
+        let sql = """
+        SELECT
+            SCHEMA_NAME(d.schema_id) AS dep_schema, d.name AS dep_name, d.type AS dep_type,
+            SCHEMA_NAME(r.schema_id) AS ref_schema, r.name AS ref_name, r.type AS ref_type
+        FROM \(prefix)sys.sql_expression_dependencies sed
+        JOIN \(prefix)sys.objects d ON sed.referencing_id = d.object_id
+        JOIN \(prefix)sys.objects r ON sed.referenced_id = r.object_id
+        WHERE d.is_ms_shipped = 0 AND r.is_ms_shipped = 0
+        """
+        let rows = try await client.query(sql)
+        return rows.compactMap { row in
+            guard let depSchema = row.column("dep_schema")?.string,
+                  let depName = row.column("dep_name")?.string,
+                  let depType = row.column("dep_type")?.string,
+                  let refSchema = row.column("ref_schema")?.string,
+                  let refName = row.column("ref_name")?.string,
+                  let refType = row.column("ref_type")?.string else { return nil }
+
+            return SQLServerScriptingDependency(
+                dependentObject: SQLServerObjectIdentifier(schema: depSchema, name: depName, type: depType.trimmingCharacters(in: .whitespaces)),
+                referencedObject: SQLServerObjectIdentifier(schema: refSchema, name: refName, type: refType.trimmingCharacters(in: .whitespaces))
+            )
+        }
+    }
+
+    /// Builds a full dependency graph for the current database.
+    @available(macOS 12.0, *)
+    public func buildGraph(database: String? = nil) async throws -> SQLServerDependencyGraph {
+        async let objects = listAllObjects(database: database)
+        async let dependencies = fetchDependencies(database: database)
+        return try await SQLServerDependencyGraph(objects: objects, dependencies: dependencies)
+    }
+
     // MARK: - Search
 
     @available(macOS 12.0, *)
