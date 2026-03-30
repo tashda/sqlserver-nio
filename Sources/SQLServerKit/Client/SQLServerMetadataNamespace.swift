@@ -232,6 +232,18 @@ public final class SQLServerMetadataNamespace: @unchecked Sendable {
         }
     }
 
+    /// Lists foreign keys from other tables that reference the given table (inbound relationships).
+    @available(macOS 12.0, *)
+    public func listReferencingForeignKeys(
+        database: String? = nil,
+        schema: String,
+        table: String
+    ) async throws -> [ForeignKeyMetadata] {
+        try await client.withConnection { connection in
+            try await connection.listReferencingForeignKeys(database: database, schema: schema, table: table)
+        }
+    }
+
     // MARK: - Indexes
 
     @available(macOS 12.0, *)

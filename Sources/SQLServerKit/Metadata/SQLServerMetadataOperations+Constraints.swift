@@ -251,6 +251,55 @@ extension SQLServerMetadataOperations {
         }
     }
 
+    /// Lists foreign keys from OTHER tables that reference the given table (inbound relationships).
+    /// This is the reverse of `listForeignKeys` which lists outbound FKs.
+    internal func listReferencingForeignKeys(database: String? = nil, schema: String, table: String) -> EventLoopFuture<[ForeignKeyMetadata]> {
+        let sql = """
+        SELECT
+            fk_schema = fs.name,
+            fk_table = ft.name,
+            fk_name = fk.name,
+            pk_schema = ps.name,
+            pk_table = pt.name,
+            delete_rule = fk.delete_referential_action,
+            update_rule = fk.update_referential_action,
+            ordinal = fkc.constraint_column_id,
+            fk_column = fc.name,
+            pk_column = pc.name
+        FROM \(qualified(database, object: "sys.foreign_keys")) AS fk
+        JOIN \(qualified(database, object: "sys.tables")) AS ft ON fk.parent_object_id = ft.object_id
+        JOIN \(qualified(database, object: "sys.schemas")) AS fs ON ft.schema_id = fs.schema_id
+        JOIN \(qualified(database, object: "sys.tables")) AS pt ON fk.referenced_object_id = pt.object_id
+        JOIN \(qualified(database, object: "sys.schemas")) AS ps ON pt.schema_id = ps.schema_id
+        JOIN \(qualified(database, object: "sys.foreign_key_columns")) AS fkc ON fk.object_id = fkc.constraint_object_id
+        JOIN \(qualified(database, object: "sys.columns")) AS fc ON fkc.parent_object_id = fc.object_id AND fkc.parent_column_id = fc.column_id
+        JOIN \(qualified(database, object: "sys.columns")) AS pc ON fkc.referenced_object_id = pc.object_id AND fkc.referenced_column_id = pc.column_id
+        WHERE ps.name = N'\(SQLServerSQL.escapeLiteral(schema))'
+          AND pt.name = N'\(SQLServerSQL.escapeLiteral(table))'
+          AND NOT (fs.name = N'\(SQLServerSQL.escapeLiteral(schema))' AND ft.name = N'\(SQLServerSQL.escapeLiteral(table))')
+        ORDER BY fs.name, ft.name, fk.name, fkc.constraint_column_id;
+        """
+        return queryExecutor(sql).map { rows in
+            var grouped: [String: (schema: String, table: String, name: String, refSchema: String, refTable: String, del: Int, upd: Int, cols: [ForeignKeyColumnMetadata])] = [:]
+            for row in rows {
+                guard let fs = row.column("fk_schema")?.string,
+                      let ft = row.column("fk_table")?.string,
+                      let n = row.column("fk_name")?.string,
+                      let ps = row.column("pk_schema")?.string,
+                      let pt = row.column("pk_table")?.string else { continue }
+                let key = "\(fs)|\(ft)|\(n)"
+                var entry = grouped[key] ?? (schema: fs, table: ft, name: n, refSchema: ps, refTable: pt, del: row.column("delete_rule")?.int ?? 1, upd: row.column("update_rule")?.int ?? 1, cols: [])
+                if let pc = row.column("fk_column")?.string, let rc = row.column("pk_column")?.string, let ord = row.column("ordinal")?.int {
+                    entry.cols.append(ForeignKeyColumnMetadata(parentColumn: pc, referencedColumn: rc, ordinal: ord))
+                }
+                grouped[key] = entry
+            }
+            return grouped.values.map { e in
+                ForeignKeyMetadata(schema: e.schema, table: e.table, name: e.name, referencedSchema: e.refSchema, referencedTable: e.refTable, deleteAction: ForeignKeyMetadata.mapAction(e.del), updateAction: ForeignKeyMetadata.mapAction(e.upd), columns: e.cols.sorted { $0.ordinal < $1.ordinal })
+            }.sorted { $0.name < $1.name }
+        }
+    }
+
     // MARK: - Dependencies
 
     internal func listDependencies(database: String? = nil, schema: String, object: String) -> EventLoopFuture<[DependencyMetadata]> {

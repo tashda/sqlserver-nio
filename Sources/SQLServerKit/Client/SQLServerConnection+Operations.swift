@@ -95,6 +95,11 @@ extension SQLServerConnection {
     }
 
     @available(macOS 12.0, *)
+    public func listReferencingForeignKeys(database: String? = nil, schema: String, table: String) async throws -> [ForeignKeyMetadata] {
+        try await listReferencingForeignKeys(database: database, schema: schema, table: table).get()
+    }
+
+    @available(macOS 12.0, *)
     public func listDependencies(database: String? = nil, schema: String, object: String) async throws -> [DependencyMetadata] {
         try await listDependencies(database: database, schema: schema, object: object).get()
     }
@@ -232,6 +237,10 @@ extension SQLServerConnection {
 
     internal func listForeignKeys(database: String? = nil, schema: String, table: String) -> EventLoopFuture<[ForeignKeyMetadata]> {
         metadataClient.listForeignKeys(database: database, schema: schema, table: table)
+    }
+
+    internal func listReferencingForeignKeys(database: String? = nil, schema: String, table: String) -> EventLoopFuture<[ForeignKeyMetadata]> {
+        metadataClient.listReferencingForeignKeys(database: database, schema: schema, table: table)
     }
 
     internal func listDependencies(database: String? = nil, schema: String, object: String) -> EventLoopFuture<[DependencyMetadata]> {
