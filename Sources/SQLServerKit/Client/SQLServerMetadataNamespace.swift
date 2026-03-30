@@ -373,6 +373,35 @@ public final class SQLServerMetadataNamespace: @unchecked Sendable {
         }
     }
 
+    // MARK: - Object Comments
+
+    /// Fetch the MS_Description extended property for any schema-scoped object.
+    @available(macOS 12.0, *)
+    public func objectComment(
+        database: String? = nil,
+        schema: String,
+        name: String
+    ) async throws -> String? {
+        try await client.withConnection { connection in
+            try await connection.objectComment(database: database, schema: schema, name: name)
+        }
+    }
+
+    // MARK: - Trigger Details
+
+    /// Fetch detailed metadata for a specific trigger including definition, events, and comment.
+    @available(macOS 12.0, *)
+    public func triggerDetails(
+        database: String? = nil,
+        schema: String,
+        table: String,
+        name: String
+    ) async throws -> TriggerDetails? {
+        try await client.withConnection { connection in
+            try await connection.triggerDetails(database: database, schema: schema, table: table, name: name)
+        }
+    }
+
     // MARK: - Routines
 
     @available(macOS 12.0, *)

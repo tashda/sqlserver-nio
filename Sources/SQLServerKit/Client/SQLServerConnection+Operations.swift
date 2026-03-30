@@ -155,6 +155,16 @@ extension SQLServerConnection {
     }
 
     @available(macOS 12.0, *)
+    public func objectComment(database: String? = nil, schema: String, name: String) async throws -> String? {
+        try await objectComment(database: database, schema: schema, name: name).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func triggerDetails(database: String? = nil, schema: String, table: String, name: String) async throws -> TriggerDetails? {
+        try await triggerDetails(database: database, schema: schema, table: table, name: name).get()
+    }
+
+    @available(macOS 12.0, *)
     public func listObjectDefinitions(_ identifiers: [SQLServerMetadataObjectIdentifier]) async throws -> [ObjectDefinition] {
         try await listObjectDefinitions(identifiers).get()
     }
@@ -262,6 +272,14 @@ extension SQLServerConnection {
 
     internal func sequenceDetails(database: String? = nil, schema: String, name: String) -> EventLoopFuture<SequenceMetadata?> {
         metadataClient.sequenceDetails(database: database, schema: schema, name: name)
+    }
+
+    internal func objectComment(database: String? = nil, schema: String, name: String) -> EventLoopFuture<String?> {
+        metadataClient.objectComment(database: database, schema: schema, name: name)
+    }
+
+    internal func triggerDetails(database: String? = nil, schema: String, table: String, name: String) -> EventLoopFuture<TriggerDetails?> {
+        metadataClient.triggerDetails(database: database, schema: schema, table: table, name: name)
     }
 
     internal func listUserTypes(database: String? = nil, schema: String? = nil, includeComments: Bool = false) -> EventLoopFuture<[UserTypeMetadata]> {
