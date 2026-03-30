@@ -28,11 +28,8 @@ public final class SQLServerServerSecurityClient: @unchecked Sendable {
             group.addTask { .allRoles(try await self.listServerRoles()) }
             group.addTask { .allPermissions(try await self.listAllServerPermissions()) }
             
-            // List databases - use internal execution since we might not have a full client here
-            group.addTask {
-                let rows = try await self.run(sql: "SELECT name FROM sys.databases WHERE state = 0 AND database_id > 0 ORDER BY name").get()
-                return .availableDatabases(rows.compactMap { $0.column("name")?.string })
-            }
+            // List databases
+            group.addTask { .availableDatabases(try await self.listDatabases()) }
 
             if let name = name {
                 group.addTask {

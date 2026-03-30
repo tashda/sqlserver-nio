@@ -666,6 +666,13 @@ extension SQLServerAdministrationClient {
         return result.messages
     }
 
+    /// List all online user databases.
+    @available(macOS 12.0, *)
+    public func listDatabases() async throws -> [String] {
+        let rows = try await client.query("SELECT name FROM sys.databases WHERE state = 0 AND database_id > 0 ORDER BY name")
+        return rows.compactMap { $0.column("name")?.string }
+    }
+
 }
 
 /// An active connection to a database.
