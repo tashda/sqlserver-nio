@@ -382,10 +382,14 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
             qs.last_execution_time,
             st.text AS sql_text,
             CAST(qp.query_plan AS NVARCHAR(MAX)) AS plan_xml,
-            DB_NAME(st.dbid) AS database_name
+            DB_NAME(CONVERT(INT, pa.value)) AS database_name
         FROM sys.dm_exec_query_stats AS qs
         OUTER APPLY sys.dm_exec_sql_text(qs.sql_handle) AS st
         OUTER APPLY sys.dm_exec_query_plan(qs.plan_handle) AS qp
+        OUTER APPLY (
+            SELECT TOP(1) value FROM sys.dm_exec_plan_attributes(qs.plan_handle)
+            WHERE attribute = 'dbid'
+        ) AS pa
         ORDER BY qs.total_worker_time DESC;
         """
 
