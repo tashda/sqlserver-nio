@@ -75,6 +75,8 @@ public struct SQLServerMailQueueItem: Sendable, Equatable, Identifiable {
     public let profileID: Int?
     public let recipients: String?
     public let subject: String?
+    public let body: String?
+    public let bodyFormat: String?
     public let sendRequestDate: Date?
     public let sentDate: Date?
     public let sentStatus: String?
@@ -84,6 +86,8 @@ public struct SQLServerMailQueueItem: Sendable, Equatable, Identifiable {
         profileID: Int?,
         recipients: String?,
         subject: String?,
+        body: String? = nil,
+        bodyFormat: String? = nil,
         sendRequestDate: Date?,
         sentDate: Date?,
         sentStatus: String?
@@ -92,6 +96,8 @@ public struct SQLServerMailQueueItem: Sendable, Equatable, Identifiable {
         self.profileID = profileID
         self.recipients = recipients
         self.subject = subject
+        self.body = body
+        self.bodyFormat = bodyFormat
         self.sendRequestDate = sendRequestDate
         self.sentDate = sentDate
         self.sentStatus = sentStatus
@@ -412,6 +418,7 @@ public final class SQLServerDatabaseMailClient: @unchecked Sendable {
         let sql = """
         SELECT TOP (\(max(1, min(limit, 1000))))
             mailitem_id, profile_id, recipients, subject,
+            body, body_format,
             send_request_date, sent_date, sent_status
         FROM msdb.dbo.sysmail_allitems
         ORDER BY send_request_date DESC
@@ -424,6 +431,8 @@ public final class SQLServerDatabaseMailClient: @unchecked Sendable {
                 profileID: row.column("profile_id")?.int,
                 recipients: row.column("recipients")?.string,
                 subject: row.column("subject")?.string,
+                body: row.column("body")?.string,
+                bodyFormat: row.column("body_format")?.string,
                 sendRequestDate: row.column("send_request_date")?.date,
                 sentDate: row.column("sent_date")?.date,
                 sentStatus: row.column("sent_status")?.string
