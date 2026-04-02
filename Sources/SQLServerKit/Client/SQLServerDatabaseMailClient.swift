@@ -69,38 +69,120 @@ public struct SQLServerMailStatus: Sendable, Equatable {
     }
 }
 
-/// An item from the Database Mail queue.
+/// An item from the Database Mail queue (maps to `msdb.dbo.sysmail_allitems`).
 public struct SQLServerMailQueueItem: Sendable, Equatable, Identifiable {
     public let id: Int
     public let profileID: Int?
     public let recipients: String?
+    public let copyRecipients: String?
+    public let blindCopyRecipients: String?
     public let subject: String?
     public let body: String?
     public let bodyFormat: String?
+    public let importance: String?
+    public let sensitivity: String?
+    public let fileAttachments: String?
     public let sendRequestDate: Date?
+    public let sendRequestUser: String?
+    public let sentAccountID: Int?
     public let sentDate: Date?
     public let sentStatus: String?
+    public let lastModDate: Date?
+    public let lastModUser: String?
 
     public init(
         id: Int,
         profileID: Int?,
         recipients: String?,
+        copyRecipients: String? = nil,
+        blindCopyRecipients: String? = nil,
         subject: String?,
         body: String? = nil,
         bodyFormat: String? = nil,
+        importance: String? = nil,
+        sensitivity: String? = nil,
+        fileAttachments: String? = nil,
         sendRequestDate: Date?,
+        sendRequestUser: String? = nil,
+        sentAccountID: Int? = nil,
         sentDate: Date?,
-        sentStatus: String?
+        sentStatus: String?,
+        lastModDate: Date? = nil,
+        lastModUser: String? = nil
     ) {
         self.id = id
         self.profileID = profileID
         self.recipients = recipients
+        self.copyRecipients = copyRecipients
+        self.blindCopyRecipients = blindCopyRecipients
         self.subject = subject
         self.body = body
         self.bodyFormat = bodyFormat
+        self.importance = importance
+        self.sensitivity = sensitivity
+        self.fileAttachments = fileAttachments
         self.sendRequestDate = sendRequestDate
+        self.sendRequestUser = sendRequestUser
+        self.sentAccountID = sentAccountID
         self.sentDate = sentDate
         self.sentStatus = sentStatus
+        self.lastModDate = lastModDate
+        self.lastModUser = lastModUser
+    }
+}
+
+/// An entry from the Database Mail event log (`msdb.dbo.sysmail_event_log`).
+public struct SQLServerMailEventLogEntry: Sendable, Equatable, Identifiable {
+    public let id: Int
+    public let eventType: String
+    public let logDate: Date?
+    public let description: String?
+    public let processID: Int?
+    public let mailItemID: Int?
+    public let accountID: Int?
+    public let lastModDate: Date?
+    public let lastModUser: String?
+
+    public init(
+        id: Int,
+        eventType: String,
+        logDate: Date?,
+        description: String?,
+        processID: Int?,
+        mailItemID: Int?,
+        accountID: Int?,
+        lastModDate: Date?,
+        lastModUser: String?
+    ) {
+        self.id = id
+        self.eventType = eventType
+        self.logDate = logDate
+        self.description = description
+        self.processID = processID
+        self.mailItemID = mailItemID
+        self.accountID = accountID
+        self.lastModDate = lastModDate
+        self.lastModUser = lastModUser
+    }
+}
+
+/// An attachment associated with a Database Mail item (`msdb.dbo.sysmail_mailattachments`).
+public struct SQLServerMailAttachment: Sendable, Equatable, Identifiable {
+    public let id: Int
+    public let mailItemID: Int
+    public let filename: String?
+    public let filesize: Int?
+
+    public init(
+        id: Int,
+        mailItemID: Int,
+        filename: String?,
+        filesize: Int?
+    ) {
+        self.id = id
+        self.mailItemID = mailItemID
+        self.filename = filename
+        self.filesize = filesize
     }
 }
 
@@ -413,16 +495,23 @@ public final class SQLServerDatabaseMailClient: @unchecked Sendable {
     // MARK: - Mail Queue
 
     /// Returns recent items from the Database Mail queue.
+    ///
+    /// Queries `msdb.dbo.sysmail_allitems` with all columns.
+    /// Use the `status` parameter to filter by sent status (e.g. "failed", "sent", "unsent", "retrying").
     @available(macOS 12.0, *)
-    public func mailQueue(limit: Int = 100) async throws -> [SQLServerMailQueueItem] {
-        let sql = """
+    public func mailQueue(limit: Int = 100, status: String? = nil) async throws -> [SQLServerMailQueueItem] {
+        var sql = """
         SELECT TOP (\(max(1, min(limit, 1000))))
-            mailitem_id, profile_id, recipients, subject,
-            body, body_format,
-            send_request_date, sent_date, sent_status
+            mailitem_id, profile_id, recipients, copy_recipients, blind_copy_recipients,
+            subject, body, body_format, importance, sensitivity, file_attachments,
+            send_request_date, send_request_user, sent_account_id, sent_date, sent_status,
+            last_mod_date, last_mod_user
         FROM msdb.dbo.sysmail_allitems
-        ORDER BY send_request_date DESC
         """
+        if let status {
+            sql += " WHERE sent_status = '\(status)'"
+        }
+        sql += " ORDER BY send_request_date DESC"
         let rows = try await run(sql: sql)
         return rows.compactMap { row in
             guard let mailID = row.column("mailitem_id")?.int else { return nil }
@@ -430,13 +519,124 @@ public final class SQLServerDatabaseMailClient: @unchecked Sendable {
                 id: mailID,
                 profileID: row.column("profile_id")?.int,
                 recipients: row.column("recipients")?.string,
+                copyRecipients: row.column("copy_recipients")?.string,
+                blindCopyRecipients: row.column("blind_copy_recipients")?.string,
                 subject: row.column("subject")?.string,
                 body: row.column("body")?.string,
                 bodyFormat: row.column("body_format")?.string,
+                importance: row.column("importance")?.string,
+                sensitivity: row.column("sensitivity")?.string,
+                fileAttachments: row.column("file_attachments")?.string,
                 sendRequestDate: row.column("send_request_date")?.date,
+                sendRequestUser: row.column("send_request_user")?.string,
+                sentAccountID: row.column("sent_account_id")?.int,
                 sentDate: row.column("sent_date")?.date,
-                sentStatus: row.column("sent_status")?.string
+                sentStatus: row.column("sent_status")?.string,
+                lastModDate: row.column("last_mod_date")?.date,
+                lastModUser: row.column("last_mod_user")?.string
             )
         }
+    }
+
+    // MARK: - Event Log
+
+    /// Returns recent entries from the Database Mail event log.
+    ///
+    /// Queries `msdb.dbo.sysmail_event_log`. Use `mailItemID` to filter entries for a specific mail item.
+    @available(macOS 12.0, *)
+    public func eventLog(limit: Int = 100, mailItemID: Int? = nil) async throws -> [SQLServerMailEventLogEntry] {
+        var sql = """
+        SELECT TOP (\(max(1, min(limit, 1000))))
+            log_id, event_type, log_date, description,
+            process_id, mailitem_id, account_id,
+            last_mod_date, last_mod_user
+        FROM msdb.dbo.sysmail_event_log
+        """
+        if let mailItemID {
+            sql += " WHERE mailitem_id = \(mailItemID)"
+        }
+        sql += " ORDER BY log_date DESC"
+        let rows = try await run(sql: sql)
+        return rows.compactMap { row in
+            guard let logID = row.column("log_id")?.int else { return nil }
+            return SQLServerMailEventLogEntry(
+                id: logID,
+                eventType: row.column("event_type")?.string ?? "unknown",
+                logDate: row.column("log_date")?.date,
+                description: row.column("description")?.string,
+                processID: row.column("process_id")?.int,
+                mailItemID: row.column("mailitem_id")?.int,
+                accountID: row.column("account_id")?.int,
+                lastModDate: row.column("last_mod_date")?.date,
+                lastModUser: row.column("last_mod_user")?.string
+            )
+        }
+    }
+
+    // MARK: - Attachments
+
+    /// Returns attachments for a specific mail item.
+    ///
+    /// Queries `msdb.dbo.sysmail_mailattachments`. Does not include the binary content.
+    @available(macOS 12.0, *)
+    public func attachments(mailItemID: Int) async throws -> [SQLServerMailAttachment] {
+        let sql = """
+        SELECT attachment_id, mailitem_id, filename, filesize
+        FROM msdb.dbo.sysmail_mailattachments
+        WHERE mailitem_id = \(mailItemID)
+        ORDER BY attachment_id
+        """
+        let rows = try await run(sql: sql)
+        return rows.compactMap { row in
+            guard let attachID = row.column("attachment_id")?.int else { return nil }
+            return SQLServerMailAttachment(
+                id: attachID,
+                mailItemID: row.column("mailitem_id")?.int ?? mailItemID,
+                filename: row.column("filename")?.string,
+                filesize: row.column("filesize")?.int
+            )
+        }
+    }
+
+    // MARK: - Delete Mail Items
+
+    /// Deletes mail items from the Database Mail queue.
+    ///
+    /// Calls `msdb.dbo.sysmail_delete_mailitems_sp`. Pass a `sentBefore` date to delete
+    /// items older than a specific date, or `status` to delete only items with a given status.
+    @available(macOS 12.0, *)
+    public func deleteMailItems(sentBefore: Date? = nil, status: String? = nil) async throws {
+        var params: [String] = []
+        if let sentBefore {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withFullDate, .withFullTime]
+            params.append("@sent_before = '\(formatter.string(from: sentBefore))'")
+        }
+        if let status {
+            params.append("@sent_status = '\(status)'")
+        }
+        let paramStr = params.isEmpty ? "" : " " + params.joined(separator: ", ")
+        try await exec(sql: "EXEC msdb.dbo.sysmail_delete_mailitems_sp\(paramStr)")
+    }
+
+    // MARK: - Delete Event Log
+
+    /// Deletes entries from the Database Mail event log.
+    ///
+    /// Calls `msdb.dbo.sysmail_delete_log_sp`. Pass `loggedBefore` to delete entries older
+    /// than a specific date, or `eventType` to delete only a specific type ("success", "warning", "error", "information").
+    @available(macOS 12.0, *)
+    public func deleteEventLog(loggedBefore: Date? = nil, eventType: String? = nil) async throws {
+        var params: [String] = []
+        if let loggedBefore {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withFullDate, .withFullTime]
+            params.append("@logged_before = '\(formatter.string(from: loggedBefore))'")
+        }
+        if let eventType {
+            params.append("@event_type = '\(eventType)'")
+        }
+        let paramStr = params.isEmpty ? "" : " " + params.joined(separator: ", ")
+        try await exec(sql: "EXEC msdb.dbo.sysmail_delete_log_sp\(paramStr)")
     }
 }
