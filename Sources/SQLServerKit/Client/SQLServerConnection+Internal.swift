@@ -54,7 +54,12 @@ extension SQLServerConnection {
             },
             onDone: { token in
                 accumulator.withLockedValue {
-                    $0.dones.append(SQLServerStreamDone(status: token.status, rowCount: token.doneRowCount))
+                    $0.dones.append(SQLServerStreamDone(
+                        kind: .init(tokenType: token.type),
+                        status: token.status,
+                        curCmd: token.curCmd,
+                        rowCount: token.doneRowCount
+                    ))
                 }
             },
             onMessage: { token, isError in
@@ -65,6 +70,8 @@ extension SQLServerConnection {
                         message: token.messageText,
                         state: token.state,
                         severity: token.classValue,
+                        serverName: token.serverName,
+                        procedureName: token.procName,
                         lineNumber: token.lineNumber
                     ))
                 }

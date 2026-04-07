@@ -158,12 +158,26 @@ extension SQLServerConnection {
             },
             onDone: { token in
                 accumulator.withLockedValue {
-                    $0.dones.append(SQLServerStreamDone(status: token.status, rowCount: token.doneRowCount))
+                    $0.dones.append(SQLServerStreamDone(
+                        kind: .init(tokenType: token.type),
+                        status: token.status,
+                        curCmd: token.curCmd,
+                        rowCount: token.doneRowCount
+                    ))
                 }
             },
             onMessage: { token, isError in
                 accumulator.withLockedValue {
-                    $0.messages.append(SQLServerStreamMessage(kind: isError ? .error : .info, number: Int32(token.number), message: token.messageText, state: token.state, severity: token.classValue, lineNumber: token.lineNumber))
+                    $0.messages.append(SQLServerStreamMessage(
+                        kind: isError ? .error : .info,
+                        number: Int32(token.number),
+                        message: token.messageText,
+                        state: token.state,
+                        severity: token.classValue,
+                        serverName: token.serverName,
+                        procedureName: token.procName,
+                        lineNumber: token.lineNumber
+                    ))
                 }
             },
             onReturnValue: { token in
@@ -226,11 +240,25 @@ extension SQLServerConnection {
             },
             onDone: { done in
                 batcher.flush()
-                _ = source.yield(.done(SQLServerStreamDone(status: done.status, rowCount: done.doneRowCount)))
+                _ = source.yield(.done(SQLServerStreamDone(
+                    kind: .init(tokenType: done.type),
+                    status: done.status,
+                    curCmd: done.curCmd,
+                    rowCount: done.doneRowCount
+                )))
             },
             onMessage: { token, isError in
                 batcher.flush()
-                _ = source.yield(.message(SQLServerStreamMessage(kind: isError ? .error : .info, number: Int32(token.number), message: token.messageText, state: token.state, severity: token.classValue, lineNumber: token.lineNumber)))
+                _ = source.yield(.message(SQLServerStreamMessage(
+                    kind: isError ? .error : .info,
+                    number: Int32(token.number),
+                    message: token.messageText,
+                    state: token.state,
+                    severity: token.classValue,
+                    serverName: token.serverName,
+                    procedureName: token.procName,
+                    lineNumber: token.lineNumber
+                )))
             }
         )
         let future = self.base.send(request, logger: self.logger)
