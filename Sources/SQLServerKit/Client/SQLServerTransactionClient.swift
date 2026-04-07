@@ -32,39 +32,51 @@ public final class SQLServerTransactionClient: @unchecked Sendable {
 
     /// Begins a new transaction
     internal func beginTransaction() -> EventLoopFuture<Void> {
-        return client.execute("BEGIN TRANSACTION").map { _ in () }
+        client.withConnection { connection in
+            connection.beginTransaction()
+        }
     }
 
     /// Begins a new transaction (async version)
     @available(macOS 12.0, *)
     public func beginTransaction() async throws {
-        _ = try await client.execute("BEGIN TRANSACTION")
+        try await client.withConnection { connection in
+            try await connection.beginTransaction()
+        }
     }
 
     /// Commits the current transaction
     internal func commitTransaction() -> EventLoopFuture<Void> {
         activeSavepoints.removeAll()
-        return client.execute("COMMIT").map { _ in () }
+        return client.withConnection { connection in
+            connection.commit()
+        }
     }
 
     /// Commits the current transaction (async version)
     @available(macOS 12.0, *)
     public func commitTransaction() async throws {
         activeSavepoints.removeAll()
-        _ = try await client.execute("COMMIT")
+        try await client.withConnection { connection in
+            try await connection.commit()
+        }
     }
 
     /// Rolls back the current transaction
     internal func rollbackTransaction() -> EventLoopFuture<Void> {
         activeSavepoints.removeAll()
-        return client.execute("ROLLBACK").map { _ in () }
+        return client.withConnection { connection in
+            connection.rollback()
+        }
     }
 
     /// Rolls back the current transaction (async version)
     @available(macOS 12.0, *)
     public func rollbackTransaction() async throws {
         activeSavepoints.removeAll()
-        _ = try await client.execute("ROLLBACK")
+        try await client.withConnection { connection in
+            try await connection.rollback()
+        }
     }
 
     // MARK: - Savepoint Management
@@ -319,17 +331,11 @@ public final class SQLServerTransactionClient: @unchecked Sendable {
     public func executeInTransaction<T: Sendable>(_ operation: @Sendable @escaping () async throws -> T) async throws -> T {
         try await client.withConnection { connection in
             try await ClientScopedConnection.$current.withValue(connection) {
-                _ = try await self.client.execute("BEGIN TRANSACTION")
-                do {
-                    let result = try await operation()
-                    _ = try await self.client.execute("COMMIT")
-                    self.activeSavepoints.removeAll()
-                    return result
-                } catch {
-                    _ = try? await self.client.execute("ROLLBACK")
-                    self.activeSavepoints.removeAll()
-                    throw error
+                let result = try await connection.withTransaction { _ in
+                    try await operation()
                 }
+                self.activeSavepoints.removeAll()
+                return result
             }
         }
     }
