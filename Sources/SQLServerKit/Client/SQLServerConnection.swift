@@ -248,6 +248,7 @@ public final class SQLServerConnection: @unchecked Sendable {
             configuration: configuration.metadataConfiguration,
             sharedCache: metadataCache,
             defaultDatabase: configuration.login.database,
+            serverMajorVersion: base.serverMajorVersion,
             logger: logger,
             queryExecutor: { [weak self, eventLoop = base.eventLoop] sql in
                 guard let self else {

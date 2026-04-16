@@ -367,6 +367,23 @@ extension SQLServerMetadataOperations {
         WHERE s.name = N'\(escapedSchema)' AND o.name = N'\(escapedTable)' AND p.index_id IN (0, 1);
         """
 
+        // Version-gated columns/JOINs.
+        // temporal_type / history_table_id / sys.periods were added in SQL Server 2016 (major 13).
+        // is_memory_optimized / durability_desc were added in SQL Server 2014 (major 12).
+        let temporalPropsSelect: String
+        let temporalPropsJoins: String
+        if supportsTemporalTables {
+            temporalPropsSelect = "t.temporal_type,\n            hs.name AS history_schema,\n            ht.name AS history_table,\n            pc_start.name AS period_start_column,\n            pc_end.name AS period_end_column,"
+            temporalPropsJoins = "LEFT JOIN \(qualified(database, object: "sys.tables")) ht ON ht.object_id = t.history_table_id\n        LEFT JOIN \(qualified(database, object: "sys.schemas")) hs ON hs.schema_id = ht.schema_id\n        LEFT JOIN \(qualified(database, object: "sys.periods")) pr ON pr.object_id = t.object_id\n        LEFT JOIN \(qualified(database, object: "sys.columns")) pc_start\n            ON pc_start.object_id = t.object_id AND pc_start.column_id = pr.start_column_id\n        LEFT JOIN \(qualified(database, object: "sys.columns")) pc_end\n            ON pc_end.object_id = t.object_id AND pc_end.column_id = pr.end_column_id"
+        } else {
+            temporalPropsSelect = ""
+            temporalPropsJoins = ""
+        }
+
+        let memOptPropsSelect = supportsMemoryOptimized
+            ? "t.is_memory_optimized,\n            t.durability_desc,"
+            : ""
+
         // Query table metadata: dates, storage config, partitioning, temporal, in-memory, change tracking
         let propsSql = """
         SELECT
@@ -376,15 +393,10 @@ extension SQLServerMetadataOperations {
             p.data_compression_desc,
             fg.name AS filegroup_name,
             t.lock_escalation_desc,
-            t.temporal_type,
+            \(temporalPropsSelect)
             t.uses_ansi_nulls,
             t.is_replicated,
-            t.is_memory_optimized,
-            t.durability_desc,
-            hs.name AS history_schema,
-            ht.name AS history_table,
-            pc_start.name AS period_start_column,
-            pc_end.name AS period_end_column,
+            \(memOptPropsSelect)
             fg_lob.name AS text_filegroup,
             fg_fs.name AS filestream_filegroup,
             CASE WHEN ps.data_space_id IS NOT NULL THEN 1 ELSE 0 END AS is_partitioned,
@@ -402,13 +414,7 @@ extension SQLServerMetadataOperations {
             ON i.object_id = t.object_id AND i.index_id IN (0, 1)
         JOIN \(qualified(database, object: "sys.filegroups")) fg
             ON fg.data_space_id = i.data_space_id
-        LEFT JOIN \(qualified(database, object: "sys.tables")) ht ON ht.object_id = t.history_table_id
-        LEFT JOIN \(qualified(database, object: "sys.schemas")) hs ON hs.schema_id = ht.schema_id
-        LEFT JOIN \(qualified(database, object: "sys.periods")) pr ON pr.object_id = t.object_id
-        LEFT JOIN \(qualified(database, object: "sys.columns")) pc_start
-            ON pc_start.object_id = t.object_id AND pc_start.column_id = pr.start_column_id
-        LEFT JOIN \(qualified(database, object: "sys.columns")) pc_end
-            ON pc_end.object_id = t.object_id AND pc_end.column_id = pr.end_column_id
+        \(temporalPropsJoins)
         LEFT JOIN \(qualified(database, object: "sys.filegroups")) fg_lob
             ON fg_lob.data_space_id = t.lob_data_space_id
         LEFT JOIN \(qualified(database, object: "sys.filegroups")) fg_fs

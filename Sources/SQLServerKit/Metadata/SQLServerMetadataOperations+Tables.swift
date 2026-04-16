@@ -31,8 +31,6 @@ extension SQLServerMetadataOperations {
         let qualifiedObjects = qualified(database, object: "sys.objects")
         let qualifiedSchemas = qualified(database, object: "sys.schemas")
         let qualifiedTables = qualified(database, object: "sys.tables")
-        let qualifiedPeriods = qualified(database, object: "sys.periods")
-        let qualifiedColumns = qualified(database, object: "sys.columns")
         let qualifiedExtended = qualified(database, object: "sys.extended_properties")
 
         var predicates: [String] = [
@@ -49,8 +47,43 @@ extension SQLServerMetadataOperations {
 
         let whereClause = predicates.isEmpty ? "" : "WHERE " + predicates.joined(separator: " AND ")
 
-        let commentSelect = includeComments ? ", CAST(ep.value AS NVARCHAR(4000)) AS comment" : ""
         let commentJoin = includeComments ? "LEFT JOIN \(qualifiedExtended) AS ep WITH (NOLOCK) ON ep.major_id = o.object_id AND ep.minor_id = 0 AND ep.class = 1 AND ep.name = N'MS_Description'" : ""
+
+        // Version-gated SELECT columns and JOINs.
+        // temporal_type / history_table_id / sys.periods were added in SQL Server 2016 (major 13).
+        // is_memory_optimized / durability_desc were added in SQL Server 2014 (major 12).
+        let temporalSelect: String
+        let temporalJoins: String
+        if supportsTemporalTables {
+            let qualifiedPeriods = qualified(database, object: "sys.periods")
+            let qualifiedColumns = qualified(database, object: "sys.columns")
+            temporalSelect = ",\n            t.temporal_type,"
+                + "\n            ht.name AS history_table,"
+                + "\n            hs.name AS history_schema,"
+                + "\n            pc_start.name AS period_start_column,"
+                + "\n            pc_end.name AS period_end_column"
+            temporalJoins = "\n        LEFT JOIN \(qualifiedTables) AS ht WITH (NOLOCK)"
+                + "\n            ON ht.object_id = t.history_table_id"
+                + "\n        LEFT JOIN \(qualifiedSchemas) AS hs WITH (NOLOCK)"
+                + "\n            ON hs.schema_id = ht.schema_id"
+                + "\n        LEFT JOIN \(qualifiedPeriods) AS p WITH (NOLOCK)"
+                + "\n            ON p.object_id = t.object_id"
+                + "\n        LEFT JOIN \(qualifiedColumns) AS pc_start WITH (NOLOCK)"
+                + "\n            ON pc_start.object_id = t.object_id AND pc_start.column_id = p.start_column_id"
+                + "\n        LEFT JOIN \(qualifiedColumns) AS pc_end WITH (NOLOCK)"
+                + "\n            ON pc_end.object_id = t.object_id AND pc_end.column_id = p.end_column_id"
+        } else {
+            temporalSelect = ""
+            temporalJoins = ""
+        }
+
+        let memOptSelect: String
+        if supportsMemoryOptimized {
+            let commentPart = includeComments ? ",\n            CAST(ep.value AS NVARCHAR(4000)) AS comment" : ""
+            memOptSelect = ",\n            t.is_memory_optimized,\n            t.durability_desc" + commentPart
+        } else {
+            memOptSelect = includeComments ? ",\n            CAST(ep.value AS NVARCHAR(4000)) AS comment" : ""
+        }
 
         let sql = """
         SELECT
@@ -63,29 +96,12 @@ extension SQLServerMetadataOperations {
                 WHEN o.type = 'S' OR o.is_ms_shipped = 1 THEN 'SYSTEM TABLE'
                 ELSE o.type_desc
             END AS table_type,
-            o.is_ms_shipped,
-            t.temporal_type,
-            ht.name AS history_table,
-            hs.name AS history_schema,
-            pc_start.name AS period_start_column,
-            pc_end.name AS period_end_column,
-            t.is_memory_optimized,
-            t.durability_desc\(commentSelect)
+            o.is_ms_shipped\(temporalSelect)\(memOptSelect)
         FROM \(qualifiedObjects) AS o WITH (NOLOCK)
         INNER JOIN \(qualifiedSchemas) AS s WITH (NOLOCK)
             ON s.schema_id = o.schema_id
         LEFT JOIN \(qualifiedTables) AS t WITH (NOLOCK)
-            ON t.object_id = o.object_id
-        LEFT JOIN \(qualifiedTables) AS ht WITH (NOLOCK)
-            ON ht.object_id = t.history_table_id
-        LEFT JOIN \(qualifiedSchemas) AS hs WITH (NOLOCK)
-            ON hs.schema_id = ht.schema_id
-        LEFT JOIN \(qualifiedPeriods) AS p WITH (NOLOCK)
-            ON p.object_id = t.object_id
-        LEFT JOIN \(qualifiedColumns) AS pc_start WITH (NOLOCK)
-            ON pc_start.object_id = t.object_id AND pc_start.column_id = p.start_column_id
-        LEFT JOIN \(qualifiedColumns) AS pc_end WITH (NOLOCK)
-            ON pc_end.object_id = t.object_id AND pc_end.column_id = p.end_column_id
+            ON t.object_id = o.object_id\(temporalJoins)
         \(commentJoin)
         \(whereClause)
         ORDER BY s.name, o.name;

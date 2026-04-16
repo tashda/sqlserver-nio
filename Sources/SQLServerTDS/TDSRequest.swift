@@ -171,6 +171,9 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
     var firstEncoder: MessageToByteHandler<TDSPacketEncoder>
     var tlsConfiguration: TLSConfiguration?
     var serverHostname: String?
+    /// SQL Server product major version captured from the LOGINACK token (e.g. 10 for 2008 R2, 13 for 2016, 16 for 2022).
+    /// Zero until a LOGINACK has been received.
+    internal var serverMajorVersion: UInt8 = 0
     private let firstDecoderName: String
     private let firstEncoderName: String
     private let pipelineCoordinatorName: String
@@ -417,6 +420,9 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
                     }
                 case .loginAck:
                     loginAckReceived = true
+                    if let ackToken = token as? TDSTokens.LoginAckToken {
+                        self.serverMajorVersion = ackToken.majorVer
+                    }
                     logger.info("Received LOGINACK token; connection authenticated.")
                     self.state = .loggedIn
                 case .envchange:

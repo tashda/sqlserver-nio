@@ -13,6 +13,8 @@ public final class SQLServerMetadataOperations: @unchecked Sendable {
     internal let configuration: Configuration
     internal let defaultDatabaseLock = NIOLock()
     internal var defaultDatabase: String?
+    /// SQL Server product major version captured from LOGINACK. Zero means unknown (assume modern).
+    internal let serverMajorVersion: UInt8
 
     public convenience init(
         connection: SQLServerConnection,
@@ -35,6 +37,7 @@ public final class SQLServerMetadataOperations: @unchecked Sendable {
             configuration: configuration,
             sharedCache: nil,
             defaultDatabase: connection.currentDatabase,
+            serverMajorVersion: connection.base.serverMajorVersion,
             logger: connection.logger,
             queryExecutor: executor
         )
@@ -46,11 +49,13 @@ public final class SQLServerMetadataOperations: @unchecked Sendable {
         configuration: Configuration,
         sharedCache: MetadataCache<[ColumnMetadata]>?,
         defaultDatabase: String?,
+        serverMajorVersion: UInt8 = 0,
         logger: Logger? = nil,
         queryExecutor: (@Sendable (String) -> EventLoopFuture<[TDSRow]>)? = nil
     ) {
         self.connection = connection
         self.eventLoop = eventLoop
+        self.serverMajorVersion = serverMajorVersion
         if let providedLogger = logger {
             self.logger = providedLogger
         } else {
@@ -83,6 +88,18 @@ public final class SQLServerMetadataOperations: @unchecked Sendable {
                 return connection.execute(sql).map(\.rawRows)
             }
         }
+    }
+
+    /// True when the server supports temporal tables (sys.periods, history_table_id, temporal_type).
+    /// Introduced in SQL Server 2016 (major version 13).
+    internal var supportsTemporalTables: Bool {
+        serverMajorVersion == 0 || serverMajorVersion >= 13
+    }
+
+    /// True when the server supports In-Memory OLTP columns (is_memory_optimized, durability_desc).
+    /// Introduced in SQL Server 2014 (major version 12).
+    internal var supportsMemoryOptimized: Bool {
+        serverMajorVersion == 0 || serverMajorVersion >= 12
     }
 
     internal func effectiveDatabase(_ override: String?) -> String? {

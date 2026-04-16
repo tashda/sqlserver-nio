@@ -620,25 +620,28 @@ extension SQLServerMetadataOperations {
     }
 
     private func fetchTemporalAndMemoryOptions(database: String?, schema: String, table: String) -> EventLoopFuture<TemporalAndMemoryOptions> {
+        // temporal_type, history_table_id, and sys.periods don't exist before SQL Server 2016 (major 13).
+        // is_memory_optimized / durability_desc don't exist before SQL Server 2014 (major 12).
+        // Return empty options for servers that predate these features.
+        guard supportsMemoryOptimized else {
+            return eventLoop.makeSucceededFuture(TemporalAndMemoryOptions())
+        }
+
         let dbPrefix = effectiveDatabase(database).map { "\(SQLServerSQL.escapeIdentifier($0))." } ?? ""
-        let sql = """
-        SELECT
-            t.temporal_type,
-            t.history_table_id,
-            t.is_memory_optimized,
-            t.durability_desc,
-            p.start_column_id,
-            p.end_column_id,
-            hs.name AS history_schema,
-            ht.name AS history_table
-        FROM \(dbPrefix)sys.tables AS t
-        JOIN \(dbPrefix)sys.schemas AS s ON s.schema_id = t.schema_id
-        LEFT JOIN \(dbPrefix)sys.tables AS ht ON ht.object_id = t.history_table_id
-        LEFT JOIN \(dbPrefix)sys.schemas AS hs ON hs.schema_id = ht.schema_id
-        LEFT JOIN \(dbPrefix)sys.periods AS p ON p.object_id = t.object_id
-        WHERE s.name = N'\(SQLServerSQL.escapeLiteral(schema))'
-          AND t.name = N'\(SQLServerSQL.escapeLiteral(table))';
-        """
+
+        let temporalColumns: String
+        let temporalJoins: String
+        if supportsTemporalTables {
+            temporalColumns = "t.history_table_id,\n            p.start_column_id,\n            p.end_column_id,\n            hs.name AS history_schema,\n            ht.name AS history_table,"
+            temporalJoins = "LEFT JOIN \(dbPrefix)sys.tables AS ht ON ht.object_id = t.history_table_id\n        LEFT JOIN \(dbPrefix)sys.schemas AS hs ON hs.schema_id = ht.schema_id\n        LEFT JOIN \(dbPrefix)sys.periods AS p ON p.object_id = t.object_id"
+        } else {
+            temporalColumns = ""
+            temporalJoins = ""
+        }
+
+        let temporalTypeColumn = supportsTemporalTables ? "t.temporal_type," : ""
+
+        let sql = "SELECT\n            \(temporalTypeColumn)\n            \(temporalColumns)\n            t.is_memory_optimized,\n            t.durability_desc\n        FROM \(dbPrefix)sys.tables AS t\n        JOIN \(dbPrefix)sys.schemas AS s ON s.schema_id = t.schema_id\n        \(temporalJoins)\n        WHERE s.name = N'\(SQLServerSQL.escapeLiteral(schema))'\n          AND t.name = N'\(SQLServerSQL.escapeLiteral(table))';"
 
         @Sendable
         func resolvePeriodColumnName(columnID: Int?) -> EventLoopFuture<String?> {

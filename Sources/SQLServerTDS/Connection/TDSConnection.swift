@@ -74,6 +74,11 @@ public final class TDSConnection {
         }
     }
     
+    /// SQL Server product major version from the LOGINACK token. Zero until login completes.
+    public var serverMajorVersion: UInt8 {
+        requestHandler.serverMajorVersion
+    }
+
     // Transaction state accessors
     public var transactionDescriptor: [UInt8] {
         return currentTransactionDescriptor
