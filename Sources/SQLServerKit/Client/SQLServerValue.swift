@@ -49,7 +49,19 @@ public struct SQLServerValue: Sendable, CustomStringConvertible {
     public init(uuid: UUID) {
         var buffer = ByteBufferAllocator().buffer(capacity: 16)
         _ = withUnsafeBytes(of: uuid.uuid) { raw in
-            buffer.writeBytes(raw)
+            guard raw.count == 16 else { return }
+            let b = raw.bindMemory(to: UInt8.self)
+            // SQL Server stores uniqueidentifier in mixed-endian format:
+            // the first three groups are little-endian, the last two are big-endian.
+            // Swap from RFC 4122 byte order so SQL Server reads the correct GUID.
+            let swapped: [UInt8] = [
+                b[3], b[2], b[1], b[0],
+                b[5], b[4],
+                b[7], b[6],
+                b[8], b[9], b[10], b[11],
+                b[12], b[13], b[14], b[15]
+            ]
+            buffer.writeBytes(swapped)
         }
         self.base = TDSData(
             metadata: TypeMetadata(dataType: .guid, length: 16),

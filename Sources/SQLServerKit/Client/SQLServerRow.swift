@@ -83,9 +83,9 @@ public struct SQLServerRow: Sendable {
                 else if let v = tdsData.double { result.append(String(v)) }
                 else { result.append(nil) }
 
-            // UUID
+            // UUID — use .string which applies the correct SQL Server mixed-endian byte swap
             case .guid:
-                if let u = tdsData.uuid { result.append(u.uuidString) } else { result.append(nil) }
+                result.append(tdsData.string)
 
             // Binary
             case .varbinary, .varbinaryLegacy, .binary, .image:
