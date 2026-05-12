@@ -34,7 +34,16 @@ internal final class PreloginRequest: TDSRequest {
         case .mandatory, .strict:
             self.clientEncryption = .encryptOn
         case .optional:
-            self.clientEncryption = hasTLSConfiguration ? .encryptOn : .encryptNotSup
+            // TDS spec distinguishes:
+            //   ENCRYPT_OFF      → "I can encrypt, I just don't want to"
+            //   ENCRYPT_NOT_SUP  → "I cannot encrypt at all"
+            // SSMS sends ENCRYPT_OFF in Optional mode so a server that
+            // requires TLS (ENCRYPT_REQ) can still upgrade us. We do the
+            // same whenever TLS infrastructure is available. Only when no
+            // TLSConfiguration is supplied do we honestly advertise
+            // ENCRYPT_NOT_SUP — and that path will fail against any server
+            // that mandates encryption.
+            self.clientEncryption = hasTLSConfiguration ? .encryptOff : .encryptNotSup
         }
     }
 
@@ -79,19 +88,31 @@ internal final class PreloginRequest: TDSRequest {
             }
 
         case .optional:
+            // Per TDS spec negotiation matrix. Client may send:
+            //   ENCRYPT_OFF      — has TLS, doesn't insist (SSMS Optional default)
+            //   ENCRYPT_ON       — explicit request (legacy path)
+            //   ENCRYPT_NOT_SUP  — no TLS infrastructure available
             switch (server, clientEncryption) {
-            case (.encryptReq, .encryptOn),
-                 (.encryptOn, .encryptOn),
-                 (.encryptClientCertOn, .encryptOn),
-                 (.encryptClientCertReq, .encryptOn):
+            // Any combination where either side wants/needs TLS and the other can do it.
+            case (.encryptReq, .encryptOn),       (.encryptReq, .encryptOff),
+                 (.encryptOn,  .encryptOn),       (.encryptOn,  .encryptOff),
+                 (.encryptOff, .encryptOn),       (.encryptOff, .encryptOff),
+                 (.encryptClientCertOn, .encryptOn),  (.encryptClientCertOn, .encryptOff),
+                 (.encryptClientCertReq, .encryptOn), (.encryptClientCertReq, .encryptOff):
                 return .kickoffSSL
+            // Server can't encrypt and client didn't insist — plain TDS.
             case (.encryptNotSup, .encryptNotSup),
-                 (.encryptOff, .encryptNotSup):
+                 (.encryptNotSup, .encryptOn),
+                 (.encryptNotSup, .encryptOff):
                 return .done
-            case (.encryptNotSup, .encryptOn),
-                 (.encryptOff, .encryptOn):
-                // Server doesn't support encryption — optional mode allows fallback
+            // Client has no TLS but server only offers/forces it — fall back to plain
+            // when server merely supports it, fail when server requires it.
+            case (.encryptOff, .encryptNotSup),
+                 (.encryptOn,  .encryptNotSup):
                 return .done
+            case (.encryptReq, .encryptNotSup),
+                 (.encryptClientCertReq, .encryptNotSup):
+                throw TDSError.protocolError("PRELOGIN Error: Server requires encryption but client has no TLS configuration. Provide a TLSConfiguration or use a different encryption mode.")
             default:
                 throw TDSError.protocolError("PRELOGIN Error: Incompatible client/server encryption configuration. Client: \(clientEncryption), Server: \(server)")
             }
