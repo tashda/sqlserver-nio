@@ -113,14 +113,45 @@ extension TDSConnection {
             logger.info("TDS channel created to \(socketAddress)")
             return channel.eventLoop.makeSucceededFuture(connection)
         }.flatMap { (conn: TDSConnection) -> EventLoopFuture<TDSConnection> in
-            return conn.prelogin(encryptionMode: encryptionMode, hasTLSConfiguration: tlsConfiguration != nil)
+            let attemptedTLS = tlsConfiguration != nil
+            return conn.prelogin(encryptionMode: encryptionMode, hasTLSConfiguration: attemptedTLS)
                 .flatMapError { error in
-                    conn.close().flatMap {
-                        conn.channel.eventLoop.makeFailedFuture(error)
+                    let translated = translatePreloginError(error, attemptedTLS: attemptedTLS)
+                    return conn.close().flatMap {
+                        conn.channel.eventLoop.makeFailedFuture(translated)
                     }
                 }.map { conn }
         }
     }
+}
+
+/// Translates raw NIOSSL handshake failures that occur during PRELOGIN into a
+/// `TDSError.sslError` with an actionable message. Without this, a self-signed
+/// or otherwise-untrusted server certificate surfaces to the caller as the
+/// opaque string "uncleanShutdown" — which gives the user no hint that they
+/// can enable `trustServerCertificate` to bypass verification.
+internal func translatePreloginError(_ error: Error, attemptedTLS: Bool) -> Error {
+    guard attemptedTLS else { return error }
+
+    if let sslError = error as? NIOSSLError {
+        switch sslError {
+        case .handshakeFailed(let reason):
+            return TDSError.sslError(
+                "TLS handshake failed: \(reason). If the server uses a self-signed or internal-CA certificate, enable 'Trust Server Certificate' to connect anyway."
+            )
+        case .uncleanShutdown:
+            // During PRELOGIN, an unclean shutdown almost always means the
+            // server (or our own SSL handler) tore down the connection because
+            // the certificate could not be verified. The peer often closes
+            // without sending close_notify, which is what produces this error.
+            return TDSError.sslError(
+                "TLS handshake aborted by peer (unclean shutdown). The server certificate is likely not trusted by the system. Enable 'Trust Server Certificate' to connect anyway."
+            )
+        default:
+            return TDSError.sslError("TLS error during handshake: \(sslError)")
+        }
+    }
+    return error
 }
 
 private final class TDSErrorHandler: ChannelInboundHandler {
