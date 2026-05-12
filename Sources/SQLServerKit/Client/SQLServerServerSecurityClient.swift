@@ -518,20 +518,24 @@ return ServerLoginEditorData(
     }
 
     /// List all database roles in a specific database, with membership status for a given user.
+    ///
+    /// Excludes the implicit `public` role: every database user is automatically a member of
+    /// `public` and that membership cannot be added or removed (SQL Server returns
+    /// "Membership of the public role cannot be changed."). Exposing it via this API would
+    /// invite callers to render an unchangeable toggle, so it is filtered at the source.
     internal func listDatabaseRolesForUser(database: String, userName: String) -> EventLoopFuture<[DatabaseUserRoleMembership]> {
         let userLit = SQLServerSQL.escapeLiteral(userName)
         let sql = """
-        USE \(SQLServerSQL.escapeIdentifier(database));
         SELECT r.name AS role_name,
                CASE WHEN rm.member_principal_id IS NOT NULL THEN 1 ELSE 0 END AS is_member
         FROM sys.database_principals r
         LEFT JOIN sys.database_role_members rm
             ON rm.role_principal_id = r.principal_id
             AND rm.member_principal_id = (SELECT principal_id FROM sys.database_principals WHERE name = N'\(userLit)')
-        WHERE r.type = 'R'
+        WHERE r.type = 'R' AND r.name <> 'public'
         ORDER BY r.name;
         """
-        return run(sql: sql).map { rows in
+        return runInDatabase(database, sql: sql).map { rows in
             rows.compactMap { row -> DatabaseUserRoleMembership? in
                 guard let roleName = row.column("role_name")?.string else { return nil }
                 let isMember = row.column("is_member")?.int == 1
@@ -541,15 +545,21 @@ return ServerLoginEditorData(
     }
 
     /// Add a user to a database role.
+    ///
+    /// Database-level role membership (`db_datareader`, `db_owner`, etc.) must be modified
+    /// in the database where the role lives — NOT in `master`. We switch the connection's
+    /// current database first, then run `ALTER ROLE` as its own batch. Combining `USE` and
+    /// `ALTER ROLE` in a single multi-statement batch was unreliable on pooled connections
+    /// and produced misleading errors like "must use the master database".
     internal func addUserToDatabaseRole(database: String, userName: String, role: String) -> EventLoopFuture<Void> {
-        let sql = "USE \(SQLServerSQL.escapeIdentifier(database)); ALTER ROLE \(SQLServerSQL.escapeIdentifier(role)) ADD MEMBER \(SQLServerSQL.escapeIdentifier(userName));"
-        return exec(sql: sql).map { _ in () }
+        let sql = "ALTER ROLE \(SQLServerSQL.escapeIdentifier(role)) ADD MEMBER \(SQLServerSQL.escapeIdentifier(userName));"
+        return execInDatabase(database, sql: sql)
     }
 
-    /// Remove a user from a database role.
+    /// Remove a user from a database role. See `addUserToDatabaseRole` for context rules.
     internal func removeUserFromDatabaseRole(database: String, userName: String, role: String) -> EventLoopFuture<Void> {
-        let sql = "USE \(SQLServerSQL.escapeIdentifier(database)); ALTER ROLE \(SQLServerSQL.escapeIdentifier(role)) DROP MEMBER \(SQLServerSQL.escapeIdentifier(userName));"
-        return exec(sql: sql).map { _ in () }
+        let sql = "ALTER ROLE \(SQLServerSQL.escapeIdentifier(role)) DROP MEMBER \(SQLServerSQL.escapeIdentifier(userName));"
+        return execInDatabase(database, sql: sql)
     }
 
     // MARK: - Role Membership Check
@@ -648,6 +658,73 @@ return ServerLoginEditorData(
         switch backing {
         case .client(let c): return c.execute(sql)
         case .connection(let conn): return conn.execute(sql)
+        }
+    }
+
+    /// Run a query with the connection's current database set to `database` for the duration
+    /// of the call. On the client backing this uses `withDatabase`, which checks out a
+    /// connection, switches DB, runs the work, and restores the original DB on return.
+    /// On a single-connection backing it switches in-place and restores after.
+    private func runInDatabase(_ database: String, sql: String) -> EventLoopFuture<[SQLServerRow]> {
+        switch backing {
+        case .client(let c):
+            let promise = c.eventLoopGroup.next().makePromise(of: [SQLServerRow].self)
+            if #available(macOS 12.0, *) {
+                promise.completeWithTask {
+                    try await c.withDatabase(database) { conn in
+                        try await conn.query(sql)
+                    }
+                }
+            } else {
+                promise.fail(SQLServerError.unsupportedPlatform)
+            }
+            return promise.futureResult
+        case .connection(let conn):
+            return runOnConnectionWithDatabase(conn, database: database) { $0.query(sql) }
+        }
+    }
+
+    private func execInDatabase(_ database: String, sql: String) -> EventLoopFuture<Void> {
+        switch backing {
+        case .client(let c):
+            let promise = c.eventLoopGroup.next().makePromise(of: Void.self)
+            if #available(macOS 12.0, *) {
+                promise.completeWithTask {
+                    try await c.withDatabase(database) { conn in
+                        _ = try await conn.execute(sql)
+                    }
+                }
+            } else {
+                promise.fail(SQLServerError.unsupportedPlatform)
+            }
+            return promise.futureResult
+        case .connection(let conn):
+            return runOnConnectionWithDatabase(conn, database: database) { conn in
+                conn.execute(sql).map { _ in () }
+            }
+        }
+    }
+
+    private func runOnConnectionWithDatabase<T: Sendable>(
+        _ conn: SQLServerConnection,
+        database: String,
+        _ body: @escaping (SQLServerConnection) -> EventLoopFuture<T>
+    ) -> EventLoopFuture<T> {
+        let originalDatabase = conn.currentDatabase
+        let needsReset = originalDatabase.caseInsensitiveCompare(database) != .orderedSame
+        let switched: EventLoopFuture<Void> = needsReset
+            ? conn.changeDatabase(database)
+            : conn.eventLoop.makeSucceededFuture(())
+        return switched.flatMap { body(conn) }.flatMap { result in
+            if needsReset {
+                return conn.changeDatabase(originalDatabase).map { result }
+            }
+            return conn.eventLoop.makeSucceededFuture(result)
+        }.flatMapError { error in
+            if needsReset {
+                return conn.changeDatabase(originalDatabase).flatMapThrowing { _ in throw error }
+            }
+            return conn.eventLoop.makeFailedFuture(error)
         }
     }
     private func futureSucceeded<T: Sendable>(_ value: T) -> EventLoopFuture<T> {
