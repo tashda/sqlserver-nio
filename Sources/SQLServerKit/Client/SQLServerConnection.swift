@@ -21,6 +21,11 @@ public final class SQLServerConnection: @unchecked Sendable {
         public var login: Login
         public var tlsConfiguration: SQLServerTLSConfiguration?
         public var encryptionMode: SQLServerEncryptionMode
+        /// Overrides the hostname used to validate the server certificate's
+        /// CN / subject alternative names. Mirrors SSMS's "Host Name In
+        /// Certificate" / JDBC's `hostNameInCertificate`. When nil, the
+        /// connection's `hostname` is used (the default).
+        public var hostNameInCertificate: String?
         public var transparentNetworkIPResolution: Bool
         public var metadataConfiguration: SQLServerMetadataOperations.Configuration
         public var retryConfiguration: SQLServerRetryConfiguration
@@ -36,6 +41,7 @@ public final class SQLServerConnection: @unchecked Sendable {
             login: Login,
             tlsConfiguration: SQLServerTLSConfiguration? = .makeClientConfiguration(),
             encryptionMode: SQLServerEncryptionMode = .optional,
+            hostNameInCertificate: String? = nil,
             metadataConfiguration: SQLServerMetadataOperations.Configuration = .init(),
             retryConfiguration: SQLServerRetryConfiguration = .init(),
             sessionOptions: SessionOptions = .ssmsDefaults,
@@ -48,6 +54,7 @@ public final class SQLServerConnection: @unchecked Sendable {
             self.login = login
             self.tlsConfiguration = tlsConfiguration
             self.encryptionMode = encryptionMode
+            self.hostNameInCertificate = hostNameInCertificate
             self.metadataConfiguration = metadataConfiguration
             self.retryConfiguration = retryConfiguration
             self.sessionOptions = sessionOptions
@@ -157,7 +164,7 @@ public final class SQLServerConnection: @unchecked Sendable {
                 Self.establishTDSConnection(
                     addresses: addresses,
                     tlsConfiguration: cfg.tlsConfiguration,
-                    serverHostname: cfg.hostname,
+                    serverHostname: cfg.hostNameInCertificate ?? cfg.hostname,
                     encryptionMode: cfg.encryptionMode.asTDSMode,
                     connectTimeout: .seconds(Int64(cfg.connectTimeoutSeconds)),
                     on: eventLoop,

@@ -150,7 +150,7 @@ public final class SQLServerClient: @unchecked Sendable {
                         SQLServerConnection.establishTDSConnection(
                             addresses: addresses,
                             tlsConfiguration: configuration.connection.tlsConfiguration,
-                            serverHostname: configuration.connection.hostname,
+                            serverHostname: configuration.connection.hostNameInCertificate ?? configuration.connection.hostname,
                             encryptionMode: configuration.connection.encryptionMode.asTDSMode,
                             connectTimeout: .seconds(Int64(configuration.connection.connectTimeoutSeconds)),
                             on: eventLoop,
