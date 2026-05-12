@@ -34,16 +34,11 @@ internal final class PreloginRequest: TDSRequest {
         case .mandatory, .strict:
             self.clientEncryption = .encryptOn
         case .optional:
-            // TDS spec distinguishes:
-            //   ENCRYPT_OFF      → "I can encrypt, I just don't want to"
-            //   ENCRYPT_NOT_SUP  → "I cannot encrypt at all"
-            // SSMS sends ENCRYPT_OFF in Optional mode so a server that
-            // requires TLS (ENCRYPT_REQ) can still upgrade us. We do the
-            // same whenever TLS infrastructure is available. Only when no
-            // TLSConfiguration is supplied do we honestly advertise
-            // ENCRYPT_NOT_SUP — and that path will fail against any server
-            // that mandates encryption.
-            self.clientEncryption = hasTLSConfiguration ? .encryptOff : .encryptNotSup
+            // Match SSMS 19+ and the Microsoft JDBC driver: Optional means
+            // "do not attempt TLS." Client advertises ENCRYPT_NOT_SUP. If the
+            // server requires encryption (ENCRYPT_REQ), the connection fails
+            // and the user must switch to Mandatory/Strict.
+            self.clientEncryption = hasTLSConfiguration ? .encryptOn : .encryptNotSup
         }
     }
 
@@ -88,31 +83,24 @@ internal final class PreloginRequest: TDSRequest {
             }
 
         case .optional:
-            // Per TDS spec negotiation matrix. Client may send:
-            //   ENCRYPT_OFF      — has TLS, doesn't insist (SSMS Optional default)
-            //   ENCRYPT_ON       — explicit request (legacy path)
-            //   ENCRYPT_NOT_SUP  — no TLS infrastructure available
             switch (server, clientEncryption) {
-            // Any combination where either side wants/needs TLS and the other can do it.
-            case (.encryptReq, .encryptOn),       (.encryptReq, .encryptOff),
-                 (.encryptOn,  .encryptOn),       (.encryptOn,  .encryptOff),
-                 (.encryptOff, .encryptOn),       (.encryptOff, .encryptOff),
-                 (.encryptClientCertOn, .encryptOn),  (.encryptClientCertOn, .encryptOff),
-                 (.encryptClientCertReq, .encryptOn), (.encryptClientCertReq, .encryptOff):
+            // Client requested encryption and server can do it → TLS handshake.
+            case (.encryptReq, .encryptOn),
+                 (.encryptOn,  .encryptOn),
+                 (.encryptOff, .encryptOn),
+                 (.encryptClientCertOn, .encryptOn),
+                 (.encryptClientCertReq, .encryptOn):
                 return .kickoffSSL
-            // Server can't encrypt and client didn't insist — plain TDS.
+            // Client did not request encryption and server doesn't require it → plain TDS.
             case (.encryptNotSup, .encryptNotSup),
-                 (.encryptNotSup, .encryptOn),
-                 (.encryptNotSup, .encryptOff):
+                 (.encryptOff, .encryptNotSup),
+                 (.encryptOn,  .encryptNotSup),
+                 (.encryptNotSup, .encryptOn):
                 return .done
-            // Client has no TLS but server only offers/forces it — fall back to plain
-            // when server merely supports it, fail when server requires it.
-            case (.encryptOff, .encryptNotSup),
-                 (.encryptOn,  .encryptNotSup):
-                return .done
+            // Server requires encryption but client cannot provide it — hard fail per spec.
             case (.encryptReq, .encryptNotSup),
                  (.encryptClientCertReq, .encryptNotSup):
-                throw TDSError.protocolError("PRELOGIN Error: Server requires encryption but client has no TLS configuration. Provide a TLSConfiguration or use a different encryption mode.")
+                throw TDSError.protocolError("PRELOGIN Error: Server requires encryption. Switch encryption mode to Mandatory or Strict.")
             default:
                 throw TDSError.protocolError("PRELOGIN Error: Incompatible client/server encryption configuration. Client: \(clientEncryption), Server: \(server)")
             }
