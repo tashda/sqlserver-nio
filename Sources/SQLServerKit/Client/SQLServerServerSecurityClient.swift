@@ -267,8 +267,13 @@ return ServerLoginEditorData(
         exec(sql: buildCreateSqlLogin(name: name, password: password, options: options)).map { _ in () }
     }
 
-    internal func createWindowsLogin(name: String) -> EventLoopFuture<Void> {
-        let sql = "CREATE LOGIN \(SQLServerSQL.escapeIdentifier(name)) FROM WINDOWS;"
+    internal func createWindowsLogin(name: String, defaultDatabase: String? = nil, defaultLanguage: String? = nil) -> EventLoopFuture<Void> {
+        var sql = "CREATE LOGIN \(SQLServerSQL.escapeIdentifier(name)) FROM WINDOWS"
+        var withs: [String] = []
+        if let db = defaultDatabase { withs.append("DEFAULT_DATABASE = \(SQLServerSQL.escapeIdentifier(db))") }
+        if let lang = defaultLanguage { withs.append("DEFAULT_LANGUAGE = \(SQLServerSQL.escapeIdentifier(lang))") }
+        if !withs.isEmpty { sql += " WITH \(withs.joined(separator: ", "))" }
+        sql += ";"
         return exec(sql: sql).map { _ in () }
     }
 
@@ -585,7 +590,9 @@ return ServerLoginEditorData(
     @available(macOS 12.0, *)
     public func createSqlLogin(name: String, password: String, options: LoginOptions = .init()) async throws { _ = try await createSqlLogin(name: name, password: password, options: options).get() }
     @available(macOS 12.0, *)
-    public func createWindowsLogin(name: String) async throws { _ = try await createWindowsLogin(name: name).get() }
+    public func createWindowsLogin(name: String, defaultDatabase: String? = nil, defaultLanguage: String? = nil) async throws {
+        _ = try await createWindowsLogin(name: name, defaultDatabase: defaultDatabase, defaultLanguage: defaultLanguage).get()
+    }
     @available(macOS 12.0, *)
     public func createCertificateLogin(name: String, certificateName: String, defaultDatabase: String? = nil, defaultLanguage: String? = nil) async throws { _ = try await createCertificateLogin(name: name, certificateName: certificateName, defaultDatabase: defaultDatabase, defaultLanguage: defaultLanguage).get() }
     @available(macOS 12.0, *)
