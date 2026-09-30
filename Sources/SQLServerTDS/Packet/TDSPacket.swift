@@ -91,7 +91,14 @@ public struct TDSPacket: Sendable {
 }
 
 extension TDSPacket {
+    /// The packet size before login completes (PRELOGIN, LOGIN7, SSPI).
     public static let defaultPacketLength = 4096
+    /// What LOGIN7 asks for unless configured otherwise: Microsoft's current
+    /// drivers ask for 8000. The server confirms the size it accepts in an
+    /// ENVCHANGE, and requests use that size from then on.
+    public static let requestedPacketLength = 8000
+    /// The range SQL Server accepts for the network packet size.
+    public static let packetLengthRange = 512...32767
     public static let headerLength = 8
     public static let maximumPacketDataLength = TDSPacket.defaultPacketLength - 8
 

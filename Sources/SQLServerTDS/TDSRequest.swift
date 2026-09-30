@@ -117,10 +117,10 @@ public protocol TDSRequest {
 }
 
 extension TDSRequest {
-    func start(allocator: ByteBufferAllocator) throws -> [TDSPacket] {
+    func start(allocator: ByteBufferAllocator, packetLength: Int = TDSPacket.defaultPacketLength) throws -> [TDSPacket] {
         var buffer = allocator.buffer(capacity: TDSPacket.maximumPacketDataLength)
         try self.serialize(into: &buffer)
-        return try TDSMessage(from: &buffer, ofType: self.packetType, allocator: allocator).packets
+        return try TDSMessage(from: &buffer, ofType: self.packetType, allocator: allocator, packetLength: packetLength).packets
     }
 
     public var stream: Bool { false }
@@ -310,6 +310,9 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
     private var queue = CircularBuffer<TDSRequestContext>()
     /// The request whose response is currently being received.
     private var active: TDSRequestContext?
+    /// Packet size for outgoing requests: 4096 until the login response's
+    /// ENVCHANGE says what the server accepted.
+    private var packetLength = TDSPacket.defaultPacketLength
     /// Set while an ATTENTION has been sent and its acknowledgement is pending.
     private var attentionAckTimeout: Scheduled<Void>?
     private var attentionPending: Bool { attentionAckTimeout != nil }
@@ -485,7 +488,7 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
                 raw.transactionDescriptorOverride = connection.transactionDescriptor
                 raw.outstandingRequestCountOverride = connection.requestCount
             }
-            var packets = try next.delegate.start(allocator: context.channel.allocator)
+            var packets = try next.delegate.start(allocator: context.channel.allocator, packetLength: packetLength)
             try trackState(for: packets.first?.type)
             let reset = next.delegate.resetsConnection || (connection?.consumeConnectionResetRequest() ?? false)
             if reset, !packets.isEmpty {
@@ -775,8 +778,12 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
         case .database:
             connection?.updateCurrentDatabase(envToken.newValue)
         case .packetSize:
-            if let size = Int(envToken.newValue), size != TDSPacket.defaultPacketLength {
-                logger.warning("Server negotiated packet size \(size); requests are sent in \(TDSPacket.defaultPacketLength)-byte packets")
+            // The size the server accepted for this session; requests after login use it.
+            if let size = Int(envToken.newValue), TDSPacket.packetLengthRange.contains(size) {
+                packetLength = size
+                connection?.updateNegotiatedPacketLength(size)
+            } else {
+                logger.warning("Ignoring a packet size ENVCHANGE outside 512...32767: \(envToken.newValue)")
             }
         default:
             break

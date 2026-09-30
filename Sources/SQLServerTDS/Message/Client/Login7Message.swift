@@ -38,6 +38,8 @@ extension TDSMessages {
         var readOnlyIntent: Bool = false
         /// Reported as APP_NAME() and sys.dm_exec_sessions program_name.
         var applicationName: String = Login7Message.defaultApplicationName
+        /// The network packet size to ask for (the server may accept less).
+        var packetSize: Int = TDSPacket.requestedPacketLength
 
         public func serialize(into buffer: inout ByteBuffer) throws {
             let passwordField = useIntegratedSecurity ? "" : password
@@ -67,7 +69,11 @@ extension TDSMessages {
 
             buffer.writeBytes([
                 0x04, 0x00, 0x00, 0x74, // TDS version 7.4 (SQL Server 2012+, required for SQL Server 2025)
-                0x00, 0x10, 0x00, 0x00, // Packet length negotiation
+            ])
+            // PacketSize: what the client asks for; the server answers with an ENVCHANGE.
+            let requested = min(max(packetSize, TDSPacket.packetLengthRange.lowerBound), TDSPacket.packetLengthRange.upperBound)
+            buffer.writeInteger(UInt32(requested), endianness: .little)
+            buffer.writeBytes([
                 0x00, 0x00, 0x00, 0x01, // Client version, 0x07 in example
             ])
 

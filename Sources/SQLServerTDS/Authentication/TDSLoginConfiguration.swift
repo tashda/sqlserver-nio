@@ -16,6 +16,8 @@ public struct TDSLoginConfiguration: Sendable {
     public var readOnlyIntent: Bool
     /// Reported to the server as APP_NAME().
     public var applicationName: String
+    /// The network packet size to ask for at login (512...32767; the server may accept less).
+    public var packetSize: Int
 
     public init(
         serverName: String,
@@ -23,7 +25,8 @@ public struct TDSLoginConfiguration: Sendable {
         database: String,
         authentication: TDSAuthentication,
         readOnlyIntent: Bool = false,
-        applicationName: String = TDSMessages.Login7Message.defaultApplicationName
+        applicationName: String = TDSMessages.Login7Message.defaultApplicationName,
+        packetSize: Int = TDSPacket.requestedPacketLength
     ) {
         self.serverName = serverName
         self.port = port
@@ -31,5 +34,6 @@ public struct TDSLoginConfiguration: Sendable {
         self.authentication = authentication
         self.readOnlyIntent = readOnlyIntent
         self.applicationName = applicationName
+        self.packetSize = packetSize
     }
 }

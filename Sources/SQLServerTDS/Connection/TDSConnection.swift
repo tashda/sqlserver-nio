@@ -59,6 +59,7 @@ public final class TDSConnection {
     private let sessionLock = NIOLock()
     private var _currentDatabase: String?
     private var _routingTarget: TDSRoutingTarget?
+    private var _negotiatedPacketLength = TDSPacket.defaultPacketLength
 
     // Stall detection support
     var lastStallSnapshot: String = ""
@@ -121,6 +122,15 @@ public final class TDSConnection {
     /// The server a login response redirected this connection to, if any.
     public var routingTarget: TDSRoutingTarget? {
         sessionLock.withLock { _routingTarget }
+    }
+
+    /// The packet size the server accepted at login (ENVCHANGE); requests use it.
+    public var negotiatedPacketLength: Int {
+        sessionLock.withLock { _negotiatedPacketLength }
+    }
+
+    internal func updateNegotiatedPacketLength(_ length: Int) {
+        sessionLock.withLock { _negotiatedPacketLength = length }
     }
 
     internal func updateCurrentDatabase(_ database: String) {

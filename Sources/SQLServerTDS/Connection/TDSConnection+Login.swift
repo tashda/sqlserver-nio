@@ -26,7 +26,8 @@ extension TDSConnection {
                 useIntegratedSecurity: false,
                 sspiData: nil,
                 readOnlyIntent: configuration.readOnlyIntent,
-                applicationName: configuration.applicationName
+                applicationName: configuration.applicationName,
+                packetSize: configuration.packetSize
             )
 
         case .windowsIntegrated(let username, let password, let domain):
@@ -48,7 +49,8 @@ extension TDSConnection {
                     useIntegratedSecurity: true,
                     sspiData: initialToken,
                     readOnlyIntent: configuration.readOnlyIntent,
-                    applicationName: configuration.applicationName
+                    applicationName: configuration.applicationName,
+                packetSize: configuration.packetSize
                 )
                 authenticator = authenticatorInstance
             } catch {
@@ -65,7 +67,8 @@ extension TDSConnection {
                 sspiData: nil,
                 fedAuthAccessToken: token,
                 readOnlyIntent: configuration.readOnlyIntent,
-                applicationName: configuration.applicationName
+                applicationName: configuration.applicationName,
+                packetSize: configuration.packetSize
             )
         }
         // Create a promise and publish immediately to prevent a second LoginRequest enqueuing.

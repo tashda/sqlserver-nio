@@ -158,7 +158,8 @@ extension SQLServerConnection {
                         database: cfg.login.database,
                         authentication: cfg.login.authentication.tdsAuthentication,
                         readOnlyIntent: cfg.readOnlyIntent,
-                        applicationName: cfg.applicationName
+                        applicationName: cfg.applicationName,
+                        packetSize: cfg.packetSize
                     )
                     return connection.login(configuration: login)
                         .flatMap { () -> EventLoopFuture<TDSConnection> in

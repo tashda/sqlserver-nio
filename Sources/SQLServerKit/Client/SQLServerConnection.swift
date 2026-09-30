@@ -42,6 +42,10 @@ public final class SQLServerConnection: @unchecked Sendable {
         /// versions are deprecated and weak; leave this off unless the
         /// server cannot be updated. Never applies to `.strict`.
         public var allowLegacyTLS: Bool = false
+        /// The network packet size to ask for at login, 512 to 32767 bytes. Larger packets mean fewer
+        /// round trips for big results, scripts and imports; the server may accept less (its
+        /// `network packet size` option). Defaults to 8000, like Microsoft's current drivers.
+        public var packetSize: Int = 8000
 
         public init(
             hostname: String,
@@ -101,6 +105,10 @@ public final class SQLServerConnection: @unchecked Sendable {
     public var isInTransaction: Bool {
         !base.transactionDescriptor.allSatisfy { $0 == 0 }
     }
+
+    /// The network packet size the server accepted at login (`packetSize` asks for one); requests
+    /// are sent in packets of this size.
+    public var negotiatedPacketSize: Int { base.negotiatedPacketLength }
 
     /// Completes when the physical connection closes, for any reason. Use it
     /// to tell the user at once that a session was lost, rather than on the
