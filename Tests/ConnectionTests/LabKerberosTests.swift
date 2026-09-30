@@ -33,13 +33,13 @@ final class LabKerberosTests: XCTestCase, @unchecked Sendable {
         return Lab(host: host, port: port, username: username, password: password, domain: domain, login: login)
     }
 
-    private func configuration(_ lab: Lab, password: String? = nil) -> SQLServerConnection.Configuration {
+    private func configuration(_ lab: Lab, password: String? = nil, domain: String? = nil) -> SQLServerConnection.Configuration {
         var configuration = SQLServerConnection.Configuration(
             hostname: lab.host,
             port: lab.port,
             login: .init(
                 database: "master",
-                authentication: .windowsIntegrated(username: lab.username, password: password ?? lab.password, domain: lab.domain)
+                authentication: .windowsIntegrated(username: lab.username, password: password ?? lab.password, domain: domain ?? lab.domain)
             ),
             tlsConfiguration: .trustingServerCertificate
         )
@@ -81,6 +81,20 @@ final class LabKerberosTests: XCTestCase, @unchecked Sendable {
         } catch {
             XCTAssertLessThan(ContinuousClock.now - started, .seconds(15))
             XCTAssertFalse("\(error)".isEmpty)
+        }
+    }
+
+    /// Negotiate: without a KDC for the realm the driver falls back to NTLMv2 at once (SQL Server on
+    /// Linux then refuses it). The Kerberos attempt must not hold up the login.
+    func testUnknownRealmFallsBackToNTLMQuickly() async throws {
+        let lab = try lab()
+        let started = ContinuousClock.now
+        do {
+            let connection = try await SQLServerConnection.connect(configuration: configuration(lab, domain: "NO-SUCH-REALM.TEST"))
+            try? await connection.close()
+            XCTFail("SQL Server on Linux accepts only Kerberos")
+        } catch {
+            XCTAssertLessThan(ContinuousClock.now - started, .seconds(5), "The Kerberos attempt delayed the login")
         }
     }
 }

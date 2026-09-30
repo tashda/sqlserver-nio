@@ -31,29 +31,14 @@ extension TDSConnection {
 
         case .windowsIntegrated(let username, let password, let domain):
             do {
-                // If explicit credentials are provided, use NTLMv2 (direct challenge-response,
-                // no KDC needed). If credentials are empty, fall back to Kerberos (GSS.framework).
-                let authenticatorInstance: any TDSAuthenticator
-                if !username.isEmpty && !password.isEmpty {
-                    authenticatorInstance = try NTLMv2Authenticator(
-                        username: username,
-                        password: password,
-                        domain: domain ?? "",
-                        server: configuration.serverName,
-                        port: configuration.port,
-                        logger: logger
-                    )
-                } else {
-                    authenticatorInstance = try KerberosAuthenticator(
-                        username: username,
-                        password: password,
-                        domain: domain,
-                        server: configuration.serverName,
-                        port: configuration.port,
-                        logger: logger
-                    )
-                }
-                let initialToken = try authenticatorInstance.initialToken()
+                let (authenticatorInstance, initialToken) = try Self.windowsAuthenticator(
+                    username: username,
+                    password: password,
+                    domain: domain,
+                    server: configuration.serverName,
+                    port: configuration.port,
+                    logger: logger
+                )
                 let loginUsername = domain.flatMap { "\($0)\\\(username)" } ?? username
                 payload = TDSMessages.Login7Message(
                     username: loginUsername,
@@ -119,5 +104,38 @@ extension TDSConnection {
             authentication: .sqlPassword(username: username, password: password)
         )
         return login(configuration: configuration)
+    }
+}
+
+extension TDSConnection {
+    /// Windows authentication chooses like SSPI's Negotiate package (what SqlClient uses): Kerberos
+    /// first, with a ticket from the given password or, without one, from the ticket cache; NTLMv2
+    /// when Kerberos is not available for this server (no KDC for the realm, no service principal,
+    /// no GSS on this platform). SQL Server on Linux accepts only Kerberos.
+    static func windowsAuthenticator(
+        username: String,
+        password: String,
+        domain: String?,
+        server: String,
+        port: Int,
+        logger: Logger
+    ) throws -> (any TDSAuthenticator, Data) {
+        do {
+            let kerberos = try KerberosAuthenticator(
+                username: username, password: password, domain: domain,
+                server: server, port: port, logger: logger
+            )
+            let token = try kerberos.initialToken()
+            logger.debug("[login] Windows authentication: Kerberos")
+            return (kerberos, token)
+        } catch {
+            guard !username.isEmpty, !password.isEmpty else { throw error }
+            logger.debug("[login] Kerberos unavailable (\(error)); Windows authentication: NTLMv2")
+            let ntlm = try NTLMv2Authenticator(
+                username: username, password: password, domain: domain ?? "",
+                server: server, port: port, logger: logger
+            )
+            return (ntlm, try ntlm.initialToken())
+        }
     }
 }
