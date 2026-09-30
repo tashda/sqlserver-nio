@@ -109,7 +109,7 @@ public final class SQLServerLinkedServersClient: @unchecked Sendable {
 
     internal func addLinkedServer(
         name: String,
-        provider: String = "SQLNCLI",
+        provider: String = "MSOLEDBSQL",
         dataSource: String,
         product: String = "",
         catalog: String? = nil,
@@ -188,10 +188,12 @@ public final class SQLServerLinkedServersClient: @unchecked Sendable {
         try await listLinkedServers().get()
     }
 
+    /// Adds a linked server. `MSOLEDBSQL` is the provider from SQL Server 2019 on (and the only SQL
+    /// Server provider on Linux 2019+ and on SQL Server 2022); SQL Server 2017 and earlier use `SQLNCLI`.
     @available(macOS 12.0, *)
     public func add(
         name: String,
-        provider: String = "SQLNCLI",
+        provider: String = "MSOLEDBSQL",
         dataSource: String,
         product: String = "",
         catalog: String? = nil,
