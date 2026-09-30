@@ -44,8 +44,11 @@ final class PacketSizeLiveTests: XCTestCase, @unchecked Sendable {
         for size in [512, 8000, 32767] {
             let connection = try await connect(packetSize: size)
             defer { Task { try? await connection.close() } }
-            XCTAssertEqual(connection.negotiatedPacketSize, size, "negotiated size for \(size)")
-            try await assertServerPacketSize(connection, size)
+            // SQL Server may grant less than asked (16384 for the largest size on some encrypted
+            // sessions); the driver then uses the size it was granted.
+            let granted = connection.negotiatedPacketSize
+            XCTAssertTrue(granted == size || (size > 16384 && granted >= 16383 && granted < size), "negotiated \(granted) for \(size)")
+            try await assertServerPacketSize(connection, granted)
 
             // A 200 KB batch (UTF-16) spans hundreds of 512-byte packets.
             let text = String(repeating: "packet-", count: 14_286)
