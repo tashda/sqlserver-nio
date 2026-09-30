@@ -258,7 +258,13 @@ private final class TDSErrorHandler: ChannelInboundHandler {
     }
     
     func errorCaught(context: ChannelHandlerContext, error: Error) {
-        self.logger.error("Uncaught error: \(error)")
+        if let sslError = error as? NIOSSLError,
+           case .uncleanShutdown = sslError,
+           !context.channel.isActive {
+            self.logger.debug("TLS peer closed without close_notify after the TDS channel became inactive")
+        } else {
+            self.logger.error("Uncaught error: \(error)")
+        }
         context.close(promise: nil)
         context.fireErrorCaught(error)
     }

@@ -653,7 +653,20 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
     }
     
     public func errorCaught(context: ChannelHandlerContext, error: Error) {
-        logger.error("TDS pipeline error: \(error.localizedDescription)")
+        // SQL Server commonly closes the TLS session without sending a
+        // close_notify after an explicit client close. At this point the
+        // channel is already inactive and no request can be affected, so
+        // reporting it as an error creates false alarms for healthy closes.
+        // Keep unclean shutdowns at error level while a request is pending or
+        // while the channel is still active; those cases can affect work.
+        if let sslError = error as? NIOSSLError,
+           case .uncleanShutdown = sslError,
+           !context.channel.isActive,
+           queue.isEmpty {
+            logger.debug("TLS peer closed without close_notify after the TDS channel became inactive")
+        } else {
+            logger.error("TDS pipeline error: \(error.localizedDescription)")
+        }
         context.fireErrorCaught(error)
         if !queue.isEmpty {
             let req = queue.removeFirst()
