@@ -21,6 +21,10 @@ public class RawSqlRequest: TDSRequest, @unchecked Sendable {
     /// When set by the connection pipeline, these values are propagated into the ALL_HEADERS block.
     public var transactionDescriptorOverride: [UInt8]?
     public var outstandingRequestCountOverride: UInt32?
+    /// Sets RESETCONNECTION on the request so the server restores the
+    /// session to its post-login state before running the batch.
+    public var resetConnection = false
+    public var resetsConnection: Bool { resetConnection }
 
     public var packetType: TDSPacket.HeaderType { .sqlBatch }
 

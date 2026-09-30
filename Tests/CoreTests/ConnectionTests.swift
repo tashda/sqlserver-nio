@@ -25,7 +25,7 @@ final class ConnectionTests: StandardTestBase, @unchecked Sendable {
 
         let connection = try await TDSConnection.connect(
             to: socketAddress,
-            tlsConfiguration: nil,
+            tlsConfiguration: baseConfig.connection.tlsConfiguration,
             serverHostname: baseConfig.connection.hostname,
             on: group.next()
         ).get()

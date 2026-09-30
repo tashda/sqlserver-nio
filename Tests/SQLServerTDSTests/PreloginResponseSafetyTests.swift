@@ -45,7 +45,7 @@ final class PreloginResponseSafetyTests: XCTestCase, @unchecked Sendable {
                 0x09, 0x00, 0x00, 0x00, 0x00, 0x00,
                 serverEncryption
             ])
-            XCTAssertThrowsError(try request.handle(dataStream: response, allocator: ByteBufferAllocator()))
+            XCTAssertThrowsError(try request.handle(dataStream: response, isEndOfMessage: true))
         }
     }
 }

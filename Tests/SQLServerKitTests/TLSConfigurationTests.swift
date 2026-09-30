@@ -91,14 +91,17 @@ final class TLSConfigurationTests: XCTestCase, @unchecked Sendable {
             database: "master",
             authentication: .sqlPassword(username: "sa", password: "secret"),
             tlsEnabled: false,
-            encryptionMode: .optional
+            encryptionMode: .mandatory
         )
         do {
             let client = try await SQLServerClient.connect(configuration: config, numberOfThreads: 1)
             try await client.shutdownGracefully()
-            XCTFail("Unencrypted LOGIN7 should be refused")
+            XCTFail("Mandatory encryption without a TLS configuration should be refused")
         } catch {
-            XCTAssertTrue(String(describing: error).contains("TLS configuration is required"))
+            // `.optional` without a configuration encrypts without validation
+            // (see ErrorAndConfigurationContractTests); nothing sends LOGIN7
+            // in clear text.
+            XCTAssertTrue(String(describing: error).contains("requires a TLS configuration"), "\(error)")
         }
     }
 

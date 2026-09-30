@@ -170,7 +170,7 @@ final class SQLServerBulkCopyTests: XCTestCase, @unchecked Sendable {
             )
             XCTFail("Constraint violation should throw")
         } catch {
-            guard case SQLServerError.sqlExecutionError(let message) = error else {
+            guard case SQLServerError.sqlExecutionError(let message, _) = error else {
                 XCTFail("Expected SQL execution error, got \(error)")
                 return
             }
@@ -261,16 +261,17 @@ final class SQLServerBulkCopyTests: XCTestCase, @unchecked Sendable {
                     try await self.closeUnderlyingConnection(connection)
                 }
             })
-            XCTFail("Connection drop should force retry failure")
+            XCTFail("A dropped connection must fail the copy")
         } catch {
             XCTAssertEqual(dropCount.withLockedValue { $0 }, 1)
-            guard case SQLServerError.sqlExecutionError(let message) = error else {
-                XCTFail("Expected SQL execution error after retry exhaustion, got \(error)")
+            // Writes are never replayed on another connection: the batch in
+            // flight has an unknown outcome, so the loss is reported instead.
+            guard let sqlError = error as? SQLServerError, sqlError.isConnectionLost else {
+                XCTFail("Expected a lost-connection error, got \(error)")
                 return
             }
-            XCTAssertTrue(message.contains("PRIMARY KEY") || message.localizedCaseInsensitiveContains("connection"), "Unexpected error message: \(message)")
         }
-        
+
         let persisted = try await client.query("SELECT COUNT(*) AS inserted FROM [\(tableName)]")
         XCTAssertEqual(persisted.first?.column("inserted")?.int, options.batchSize)
         

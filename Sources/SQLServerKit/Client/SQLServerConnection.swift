@@ -34,6 +34,9 @@ public final class SQLServerConnection: @unchecked Sendable {
         public var connectTimeoutSeconds: Int
         /// When true, signals read-only application intent for AG secondary routing.
         public var readOnlyIntent: Bool
+        /// Reported to SQL Server as APP_NAME() and program_name, which DBAs
+        /// use in monitoring, auditing and Resource Governor classification.
+        public var applicationName: String = "sqlserver-nio"
 
         public init(
             hostname: String,
@@ -84,15 +87,27 @@ public final class SQLServerConnection: @unchecked Sendable {
     public var lastSessionStatePayload: [UInt8] { base.snapshotSessionStatePayload() }
     public var lastDataClassificationPayload: [UInt8] { base.snapshotDataClassificationPayload() }
 
+    /// Opens a dedicated connection on NIO's shared event loop group, so
+    /// many dedicated connections do not each start their own thread.
     public static func connect(
         configuration: Configuration,
         logger: Logger = Logger(label: "tds.sqlserver.connection")
     ) async throws -> SQLServerConnection {
+        try await connect(configuration: configuration, eventLoopGroup: MultiThreadedEventLoopGroup.singleton, logger: logger)
+    }
+
+    /// Opens a dedicated connection on a caller-owned event loop group. The
+    /// group is not shut down when the connection closes.
+    public static func connect(
+        configuration: Configuration,
+        eventLoopGroup: EventLoopGroup,
+        logger: Logger = Logger(label: "tds.sqlserver.connection")
+    ) async throws -> SQLServerConnection {
         try await connect(
             configuration: configuration,
-            numberOfThreads: 1,
+            eventLoopGroupProvider: .shared(eventLoopGroup),
             logger: logger
-        )
+        ).get()
     }
 
     public static func connect(
@@ -145,95 +160,18 @@ public final class SQLServerConnection: @unchecked Sendable {
         on eventLoop: EventLoop,
         logger: Logger = Logger(label: "tds.sqlserver.connection")
     ) -> EventLoopFuture<SQLServerConnection> {
-        @Sendable
-        func attempt(_ cfg: Configuration) -> EventLoopFuture<SQLServerConnection> {
-            let loginConfiguration = TDSLoginConfiguration(
-                serverName: cfg.hostname,
-                port: cfg.port,
-                database: cfg.login.database,
-                authentication: cfg.login.authentication.tdsAuthentication,
-                readOnlyIntent: cfg.readOnlyIntent
+        openSession(configuration: configuration, on: eventLoop, logger: logger).map { connection in
+            let sqlConnection = SQLServerConnection(
+                base: connection,
+                configuration: configuration,
+                metadataCache: nil,
+                logger: logger,
+                reuseOnClose: false,
+                releaseClosure: { _ in connection.close() }
             )
-
-            return resolveSocketAddresses(
-                hostname: cfg.hostname,
-                port: cfg.port,
-                transparentResolution: cfg.transparentNetworkIPResolution,
-                on: eventLoop
-            ).flatMap { addresses in
-                Self.establishTDSConnection(
-                    addresses: addresses,
-                    tlsConfiguration: cfg.tlsConfiguration,
-                    serverHostname: cfg.hostNameInCertificate ?? cfg.hostname,
-                    encryptionMode: cfg.encryptionMode.asTDSMode,
-                    connectTimeout: .seconds(Int64(cfg.connectTimeoutSeconds)),
-                    on: eventLoop,
-                    logger: logger
-                )
-            }.flatMap { connection in
-                connection.login(configuration: loginConfiguration)
-                    .map { connection }
-                    .flatMapError { error in
-                        let normalized = SQLServerError.normalize(error)
-                        guard case .authenticationFailed = normalized,
-                              cfg.login.database.caseInsensitiveCompare("master") != .orderedSame
-                        else {
-                            return connection.close().flatMapThrowing { throw normalized }
-                        }
-
-                        logger.warning("Login to database \(cfg.login.database) failed; retrying via master and issuing USE")
-                        let masterLogin = TDSLoginConfiguration(
-                            serverName: cfg.hostname,
-                            port: cfg.port,
-                            database: "master",
-                            authentication: cfg.login.authentication.tdsAuthentication,
-                            readOnlyIntent: cfg.readOnlyIntent
-                        )
-                        return connection.login(configuration: masterLogin)
-                            .flatMap {
-                                connection.rawSql("USE \(SQLServerSQL.escapeIdentifier(cfg.login.database));")
-                            }
-                            .map { _ in connection }
-                            .flatMapError { fallbackError in
-                                connection.close().flatMapThrowing {
-                                    throw SQLServerError.normalize(fallbackError)
-                                }
-                            }
-                    }
-            }.flatMap { connection in
-                let sqlConnection = SQLServerConnection(
-                    base: connection,
-                    configuration: cfg,
-                    metadataCache: nil,
-                    logger: logger,
-                    reuseOnClose: false,
-                    releaseClosure: { close in
-                        if close || connection.isClosed {
-                            return connection.close()
-                        } else {
-                            return connection.eventLoop.makeSucceededFuture(())
-                        }
-                    }
-                )
-                logger.info("Connected to \(cfg.hostname):\(cfg.port)/\(cfg.login.database)")
-                return sqlConnection.bootstrapSession().map { sqlConnection }
-            }
-        }
-
-        return attempt(configuration).flatMapError { error in
-            let normalized = SQLServerError.normalize(error)
-            switch normalized {
-            case .connectionClosed, .transient, .timeout:
-                if configuration.port != 1433 {
-                    var fallback = configuration
-                    fallback.port = 1433
-                    logger.warning("Primary port \(configuration.port) connect failed; attempting fallback to 1433")
-                    return attempt(fallback)
-                }
-                return eventLoop.makeFailedFuture(normalized)
-            default:
-                return eventLoop.makeFailedFuture(normalized)
-            }
+            sqlConnection.syncCurrentDatabaseFromServer()
+            logger.info("Connected to \(configuration.hostname):\(configuration.port)/\(sqlConnection.currentDatabase)")
+            return sqlConnection
         }
     }
 
@@ -281,8 +219,8 @@ public final class SQLServerConnection: @unchecked Sendable {
         guard shouldClose else {
             return eventLoop.makeSucceededFuture(())
         }
-        logger.debug("Connection closed")
-        return release(true).map { _ in self.fireAndForgetGroupShutdown() }
+        logger.debug(reuseOnClose ? "Connection returned to pool" : "Connection closed")
+        return release(!reuseOnClose).map { _ in self.fireAndForgetGroupShutdown() }
     }
 
     public func close() async throws {
@@ -294,9 +232,11 @@ public final class SQLServerConnection: @unchecked Sendable {
             return true
         }
         guard shouldClose else { return }
-        logger.debug("Connection closed")
+        logger.debug(reuseOnClose ? "Connection returned to pool" : "Connection closed")
 
-        try await release(true).get()
+        // A pooled session is returned and reset before reuse; a dedicated
+        // connection is closed.
+        try await release(!reuseOnClose).get()
 
         if let group = ownsEventLoopGroup {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -311,6 +251,15 @@ public final class SQLServerConnection: @unchecked Sendable {
         }
     }
 
+    /// Runs `body` in a transaction on this connection, committing when it
+    /// returns and rolling back when it throws. The body runs once and is
+    /// never retried.
+    ///
+    /// If SQL Server rejects the COMMIT, the transaction did not commit and
+    /// that server error is thrown. If the connection fails while the COMMIT
+    /// is in flight, `SQLServerError.commitOutcomeUnknown` is thrown: the
+    /// transaction may or may not be durable, and the caller must check
+    /// before repeating any writes.
     @available(macOS 12.0, *)
     public func withTransaction<T>(body: @escaping (SQLServerConnection) async throws -> T) async throws -> T {
         try await beginTransaction()
@@ -318,15 +267,17 @@ public final class SQLServerConnection: @unchecked Sendable {
         do {
             result = try await body(self)
         } catch {
-            _ = try? await rollback()
+            _ = try? await rollback().get()
             throw error
         }
         do {
-            try await commit()
+            try await commit().get()
             return result
+        } catch let error as SQLServerError where error.serverDetails != nil && !error.isConnectionLost {
+            // The server answered: the transaction was not committed.
+            _ = try? await rollback().get()
+            throw error
         } catch {
-            // A lost COMMIT response cannot tell us whether SQL Server made the
-            // transaction durable. Replaying the body could duplicate writes.
             throw SQLServerError.commitOutcomeUnknown(error)
         }
     }

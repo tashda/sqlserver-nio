@@ -25,7 +25,8 @@ extension TDSConnection {
                 database: configuration.database,
                 useIntegratedSecurity: false,
                 sspiData: nil,
-                readOnlyIntent: configuration.readOnlyIntent
+                readOnlyIntent: configuration.readOnlyIntent,
+                applicationName: configuration.applicationName
             )
 
         case .windowsIntegrated(let username, let password, let domain):
@@ -61,7 +62,8 @@ extension TDSConnection {
                     database: configuration.database,
                     useIntegratedSecurity: true,
                     sspiData: initialToken,
-                    readOnlyIntent: configuration.readOnlyIntent
+                    readOnlyIntent: configuration.readOnlyIntent,
+                    applicationName: configuration.applicationName
                 )
                 authenticator = authenticatorInstance
             } catch {
@@ -77,7 +79,8 @@ extension TDSConnection {
                 useIntegratedSecurity: false,
                 sspiData: nil,
                 fedAuthAccessToken: token,
-                readOnlyIntent: configuration.readOnlyIntent
+                readOnlyIntent: configuration.readOnlyIntent,
+                applicationName: configuration.applicationName
             )
         }
         // Create a promise and publish immediately to prevent a second LoginRequest enqueuing.
@@ -92,9 +95,7 @@ extension TDSConnection {
         )
 
         self.logger.debug("[login] Sending LoginRequest to server \(configuration.serverName) database \(configuration.database)")
-        self.send(loginRequest, logger: self.logger).flatMap { _ in
-            return self.send(RawSqlRequest(sql: "SET FMTONLY OFF;"), logger: self.logger)
-        }.whenComplete { result in
+        self.send(loginRequest, logger: self.logger).whenComplete { result in
             switch result {
             case .success:
                 // Replace with succeeded future for subsequent calls.

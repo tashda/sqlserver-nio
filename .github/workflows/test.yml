@@ -78,6 +78,19 @@ jobs:
           TDS_AW_DATABASE: "AdventureWorks"
           LOG_LEVEL: "debug"
         run: swift test --filter SimpleTDSTests.testBasicConnection
+      - name: Reliability contract (cancellation, deadlines, back-pressure, pool reset)
+        env:
+          USE_DOCKER: "1"
+          TDS_DOCKER_PORT: "14331"
+          TDS_VERSION: "2022-latest"
+        run: swift test --filter 'ProductionHardeningTests|TDSRequestPipelineTests'
+      - name: Incremental parser stress (every packet split into 7-byte fragments)
+        env:
+          USE_DOCKER: "1"
+          TDS_DOCKER_PORT: "14331"
+          TDS_VERSION: "2022-latest"
+          TDS_DEBUG_FRAGMENT_SIZE: "7"
+        run: swift test --filter 'QueryTests|MultiResultSetTests|LargeResultSetTests|OutputParameterTests|SQLServerDataTypeRoundTripTests|SQLServerLegacyLobRoundTripTests|SQLServerSpatialTests|SQLServerClrUdtDisplayTests|ExecutionPlanTests|ProductionHardeningTests'
       - name: Run full tests against SQL Server 2022
         env:
           USE_DOCKER: "1"

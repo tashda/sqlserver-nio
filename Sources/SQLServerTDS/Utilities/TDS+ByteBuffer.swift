@@ -70,40 +70,48 @@ extension ByteBuffer {
     }
 
     mutating func readPLPBytes() throws -> ByteBuffer? {
-        guard let totalLength: UInt64 = self.readInteger(endianness: .little) else {
+        guard let totalLength: UInt64 = self.getInteger(at: self.readerIndex, endianness: .little) else {
             throw TDSError.needMoreData
         }
 
         if totalLength == UInt64.max {
+            self.moveReaderIndex(forwardBy: 8)
             return nil
         }
-
-        let initialCapacity: Int
-        if totalLength == UInt64.max - 1 {
-            initialCapacity = 0
-        } else if totalLength <= UInt64(Int.max) {
-            initialCapacity = Int(totalLength)
-        } else {
-            throw TDSError.protocolError("PLP payload length exceeds supported buffer size")
+        if totalLength != UInt64.max - 1, totalLength > UInt64(Int32.max) {
+            throw TDSError.protocolError("PLP payload length \(totalLength) exceeds the supported size")
         }
 
-        var result = ByteBufferAllocator().buffer(capacity: initialCapacity)
+        // Verify every chunk has arrived before copying anything. A large
+        // value spans many packets, and it is re-examined each time a packet
+        // arrives, so copying on every incomplete attempt would be quadratic.
+        var index = self.readerIndex + 8
+        var dataLength = 0
         while true {
-            guard let chunkLength: UInt32 = self.readInteger(endianness: .little) else {
+            guard let chunkLength: UInt32 = self.getInteger(at: index, endianness: .little) else {
                 throw TDSError.needMoreData
             }
-
+            index += 4
             if chunkLength == 0 || chunkLength == UInt32.max {
                 break
             }
-
-            guard var chunk = self.readSlice(length: Int(chunkLength)) else {
+            index += Int(chunkLength)
+            dataLength += Int(chunkLength)
+            guard index <= self.writerIndex else {
                 throw TDSError.needMoreData
             }
-
-            result.writeBuffer(&chunk)
         }
 
+        self.moveReaderIndex(forwardBy: 8)
+        var result = ByteBufferAllocator().buffer(capacity: dataLength)
+        while true {
+            let chunkLength: UInt32 = self.readInteger(endianness: .little)!
+            if chunkLength == 0 || chunkLength == UInt32.max {
+                break
+            }
+            var chunk = self.readSlice(length: Int(chunkLength))!
+            result.writeBuffer(&chunk)
+        }
         return result
     }
 }

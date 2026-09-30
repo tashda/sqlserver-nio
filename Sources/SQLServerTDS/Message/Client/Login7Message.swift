@@ -12,6 +12,20 @@ extension TDSMessages {
 
         static let clientPID = UInt32(ProcessInfo.processInfo.processIdentifier)
 
+        /// The workstation name reported to the server (sys.dm_exec_sessions
+        /// host_name). Read once with gethostname(): Foundation's
+        /// Host.current() performs reverse DNS lookups that can block the
+        /// event loop for seconds.
+        static let clientHostName: String = {
+            var buffer = [CChar](repeating: 0, count: 256)
+            guard gethostname(&buffer, buffer.count) == 0 else { return "" }
+            let name = String(cString: buffer)
+            // HostName is limited to 128 characters.
+            return String(name.prefix(128))
+        }()
+
+        public static let defaultApplicationName = "sqlserver-nio"
+
         var username: String
         var password: String
         var serverName: String
@@ -22,6 +36,8 @@ extension TDSMessages {
         var fedAuthAccessToken: String?
         /// When true, signals read-only intent to enable AG secondary routing.
         var readOnlyIntent: Bool = false
+        /// Reported as APP_NAME() and sys.dm_exec_sessions program_name.
+        var applicationName: String = Login7Message.defaultApplicationName
 
         public func serialize(into buffer: inout ByteBuffer) throws {
             let passwordField = useIntegratedSecurity ? "" : password
@@ -31,13 +47,13 @@ extension TDSMessages {
 
             // Each basic field needs to serialize the length & offset
             let basicFields = [
-                (Host.current().name ?? "", false),
+                (Self.clientHostName, false),
                 (username, false),
                 (passwordField, true),
                 ("", false),
                 (serverName, false),
                 ("", false), // extension field (patched below for fedAuth)
-                ("swift-tds", false),
+                (String(applicationName.prefix(128)), false),
                 ("", false),
                 (database, false)
             ]

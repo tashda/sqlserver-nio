@@ -52,27 +52,25 @@ internal final class PreloginRequest: TDSRequest {
         try TDSMessages.PreloginMessage(version: "9.0.0", encryption: clientEncryption, fedAuthRequired: fedAuthRequired).serialize(into: &buffer)
     }
 
-    func handle(dataStream: ByteBuffer, allocator: ByteBufferAllocator) throws -> TDSPacketResponse {
+    func handle(dataStream: ByteBuffer, isEndOfMessage: Bool) throws -> TDSPacketResponse {
         var mutableDataStream = dataStream
         accumulatedData.writeBuffer(&mutableDataStream)
         guard accumulatedData.readableBytes <= 128 * 1024 else {
             throw TDSError.protocolError("PRELOGIN response exceeds maximum supported size")
         }
-
-        if accumulatedData.readableBytes >= 8 {
-            var dataCopy = accumulatedData
-            let parsedMessage: TDSMessages.PreloginResponse
-            do {
-                parsedMessage = try TDSMessages.PreloginResponse.parse(from: &dataCopy)
-            } catch TDSError.needMoreData {
-                return .continue
-            }
-
-            let serverEncryption = parsedMessage.encryption
-            return try negotiateEncryption(server: serverEncryption)
+        // Parse only a complete message; a partial option table can look
+        // valid while its offsets point past the data received so far.
+        guard isEndOfMessage else {
+            return .continue
         }
-
-        return .continue
+        var dataCopy = accumulatedData
+        let parsedMessage: TDSMessages.PreloginResponse
+        do {
+            parsedMessage = try TDSMessages.PreloginResponse.parse(from: &dataCopy)
+        } catch TDSError.needMoreData {
+            throw TDSError.protocolError("PRELOGIN response is truncated")
+        }
+        return try negotiateEncryption(server: parsedMessage.encryption)
     }
 
     private func negotiateEncryption(server: TDSMessages.PreloginEncryption) throws -> TDSPacketResponse {

@@ -44,37 +44,17 @@ extension SQLServerClient {
         }
     }
 
-    internal func healthProbe(_ connection: SQLServerConnection, on loop: EventLoop) -> EventLoopFuture<Void> {
-        let request = RawSqlRequest(
-            sql: "SELECT 1 AS __ping__;"
-        )
-        return connection.underlying.send(request, logger: connection.logger).map { _ in () }
-    }
-
-    /// Retry only acquisition and health validation. The caller's operation has
-    /// not started yet, so there is no SQL outcome to duplicate.
-    internal func acquireHealthyConnection(on loop: EventLoop, attempt: Int = 1) -> EventLoopFuture<SQLServerConnection> {
+    /// Checks out a session. Validation and reset happen inside the pool,
+    /// and session creation already retries transient network failures, so
+    /// no caller operation has started when this fails.
+    internal func acquireHealthyConnection(on loop: EventLoop) -> EventLoopFuture<SQLServerConnection> {
         guard !isClientShutdown else { return loop.makeFailedFuture(SQLServerError.clientShutdown) }
-        return pool.checkout(on: loop).flatMap { pooled in
-            let connection = self.makeConnection(from: pooled)
-            return self.healthProbe(connection, on: loop).map { connection }.flatMapError { error in
-                connection.invalidate().recover { _ in () }.flatMap {
-                    loop.makeFailedFuture(SQLServerError.normalize(error))
-                }
+        return pool.checkout(on: loop)
+            .map { self.makeConnection(from: $0) }
+            .flatMapErrorThrowing { error in
+                if case SQLServerConnectionPool.Error.poolClosed = error { throw SQLServerError.clientShutdown }
+                if case SQLServerConnectionPool.Error.shutdown = error { throw SQLServerError.clientShutdown }
+                throw SQLServerError.normalize(error)
             }
-        }.flatMapError { error in
-            let normalized = SQLServerError.normalize(error)
-            guard attempt < self.retryConfiguration.maximumAttempts,
-                  !self.isClientShutdown,
-                  self.retryConfiguration.shouldRetry(normalized)
-            else { return loop.makeFailedFuture(normalized) }
-            let proposed = self.retryConfiguration.backoffStrategy(attempt)
-            let seconds = proposed.isFinite ? min(max(proposed, 0), 30) : 30
-            self.logger.debug("Connection acquisition attempt \(attempt) failed; retrying after \(seconds)s")
-            return loop.scheduleTask(in: seconds.nioTimeAmount) {}.futureResult.flatMap {
-                self.acquireHealthyConnection(on: loop, attempt: attempt + 1)
-            }
-        }
     }
-
 }

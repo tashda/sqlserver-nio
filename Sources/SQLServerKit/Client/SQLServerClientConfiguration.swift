@@ -6,11 +6,14 @@ public typealias SQLServerTLSConfiguration = TLSConfiguration
 /// Controls how encryption is negotiated with the SQL Server.
 ///
 /// Inspired by the ENCRYPT connection string option in JDBC/ODBC:
-/// - `optional`: A compatibility alias that currently requires full-session encryption.
+/// - `optional`: Encrypts the whole session. With no TLS configuration the
+///   server certificate is not validated (Microsoft's Encrypt=Optional
+///   validates nothing either, and only encrypts the login).
 /// - `mandatory`: Require full-session encryption (the default).
 /// - `strict`: TDS 8.0 strict mode; TLS is established before PRELOGIN.
 public enum SQLServerEncryptionMode: String, Sendable, CaseIterable {
-    /// Compatibility alias for full-session encryption until login-only TLS is supported.
+    /// Full-session encryption; without a TLS configuration the server
+    /// certificate is not validated. Credentials are never sent unencrypted.
     case optional
     /// Encryption is mandatory. Connection fails if the server doesn't support encryption.
     case mandatory

@@ -90,10 +90,12 @@ extension TDSTokenOperations {
             var scale: UInt8 = 0
             var udtInfo: TDSTokens.ColMetadataToken.ColumnData.UDTInfo?
             if dataType == .decimal || dataType == .numeric || dataType == .decimalLegacy || dataType == .numericLegacy {
-                precision = buffer.readInteger() ?? 0
-                scale = buffer.readInteger() ?? 0
+                guard let p: UInt8 = buffer.readInteger(), let sc: UInt8 = buffer.readInteger() else { throw TDSError.needMoreData }
+                precision = p
+                scale = sc
             } else if dataType == .time || dataType == .datetime2 || dataType == .datetimeOffset {
-                scale = buffer.readInteger() ?? 0
+                guard let sc: UInt8 = buffer.readInteger() else { throw TDSError.needMoreData }
+                scale = sc
             }
 
             // Legacy LOB metadata includes an owning table name after TYPE_INFO.

@@ -51,6 +51,16 @@ public final class SQLServerTransactionClient: @unchecked Sendable {
         self.client = client
     }
 
+    /// A server-reported COMMIT failure means the transaction did not commit.
+    /// Any other failure leaves the outcome unknown.
+    private static func commitError(_ error: Error) -> SQLServerError {
+        let normalized = SQLServerError.normalize(error)
+        if normalized.serverDetails != nil, !normalized.isConnectionLost {
+            return normalized
+        }
+        return .commitOutcomeUnknown(error)
+    }
+
     // MARK: - Transaction Management
 
     /// Begins a new transaction
@@ -78,7 +88,7 @@ public final class SQLServerTransactionClient: @unchecked Sendable {
         return connection.commit().map {
             self.updateSavepoints(connection) { $0.removeAll() }
         }.flatMapErrorThrowing { error in
-            throw SQLServerError.commitOutcomeUnknown(error)
+            throw Self.commitError(error)
         }
     }
 
@@ -92,7 +102,7 @@ public final class SQLServerTransactionClient: @unchecked Sendable {
             try await connection.commit()
             updateSavepoints(connection) { $0.removeAll() }
         } catch {
-            throw SQLServerError.commitOutcomeUnknown(error)
+            throw Self.commitError(error)
         }
     }
 

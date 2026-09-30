@@ -4,7 +4,7 @@ SQLServerNIO is a non-blocking Swift client for Microsoft SQL Server built on Sw
 
 ## Key Features
 
-- **Connection Management**: `SQLServerClient` for pooled connections with automatic retries, `SQLServerConnection` for direct connection control
+- **Connection Management**: `SQLServerClient` for pooled sessions that are reset (RESETCONNECTION) before reuse, `SQLServerConnection` for dedicated sessions that keep their state
 - **Modern Swift APIs**: Full async/await support with EventLoopFuture fallbacks for compatibility
 - **Transaction Support**: Proper transaction descriptor management with savepoints and isolation levels
 - **Batch Processing**: Execute pre-split batches sequentially on a single connection via `executeBatches(_:)` with continue-on-error support
@@ -12,7 +12,7 @@ SQLServerNIO is a non-blocking Swift client for Microsoft SQL Server built on Sw
 - **Administrative Tools**: Server management via `SQLServerAdministrationClient` and SQL Agent via `SQLServerAgentClient`
 - **Activity Monitor**: SSMS-like activity snapshots and streaming via `SQLServerActivityMonitor` (2008+)
 - **Security Parity**: Securable-aware GRANT/REVOKE/DENY, application roles, schema helpers; extended server login types
-- **Streaming Support**: AsyncSequence-based result streaming for large datasets
+- **Streaming Support**: AsyncSequence-based result streaming with socket back-pressure, so memory stays bounded for any result size
 - **Error Handling**: Robust error handling with proper SQL Server error propagation
 
 
@@ -93,6 +93,18 @@ configuration.connection.sessionOptions = .init(
 )
 configuration.connection.transparentNetworkIPResolution = true // try all DNS answers before failing
 ```
+
+## Reliability Contract
+
+These rules follow the behaviour of Microsoft's ODBC, JDBC and SqlClient drivers.
+
+- **Encryption.** Credentials are never sent unencrypted. `.mandatory` (default) and `.strict` (TDS 8.0, TLS before any TDS traffic) require a TLS configuration and validate the server certificate unless you opt out with `.trustingServerCertificate`. `.optional` without a TLS configuration encrypts the whole session but does not validate the certificate.
+- **No automatic replay.** A SQL batch, RPC or transaction body runs at most once. Only connection establishment is retried, and only for network failures (never for login or TLS failures, which would count towards account lockout). If a connection fails while a statement is running, the error has `isConnectionLost == true` and the statement's outcome is unknown.
+- **Transactions.** `withTransaction` commits once. A COMMIT that SQL Server rejects throws that server error (the transaction did not commit). A connection failure during COMMIT throws `commitOutcomeUnknown`. Deadlock victims (1205) are rolled back by SQL Server; only a retry of the whole transaction is safe, and that decision is left to the caller.
+- **Cancellation and deadlines.** Cancelling the task that awaits `execute`, `query`, `call` or a stream sends a TDS ATTENTION, waits for SQL Server to acknowledge it, and throws `CancellationError`; the connection stays usable. `execute(_:timeout:)` and `SessionOptions.defaultQueryTimeout` cancel the same way and throw `SQLServerError.timeout`. If SQL Server does not acknowledge a cancellation within 15 seconds, the connection is closed. With `XACT_ABORT ON` (the default session option) a cancelled statement rolls back the open transaction.
+- **Pooled sessions.** A session returned to the pool is reset by SQL Server (`sp_reset_connection` via RESETCONNECTION: open transactions rolled back, temporary objects dropped, SET options, database, isolation level, CONTEXT_INFO and SESSION_CONTEXT restored) and the configured session options are re-applied before anyone else can use it. A session that cannot be reset, for example after an `EXECUTE AS` that was never reverted, is closed. Sessions idle longer than 30 seconds are validated before reuse and closed after 5 minutes idle.
+- **Dedicated sessions.** `SQLServerConnection` keeps temp tables, SET options, database and transactions across calls. `currentDatabase` follows every `USE`, including one inside a batch.
+- **Errors.** Server errors carry number, severity, state, line, procedure and every message of the batch (`error.serverDetails`). `isTransient` marks errors Microsoft documents as transient; `isConnectionLost` marks errors after which the connection cannot be used.
 
 ## Core Operations
 

@@ -88,3 +88,18 @@ public enum SQLServerStreamEvent: Sendable {
     case done(SQLServerStreamDone)
     case message(SQLServerStreamMessage)
 }
+
+extension SQLServerStreamMessage {
+    internal init(token: TDSTokens.ErrorInfoToken, isError: Bool) {
+        self.init(
+            kind: isError ? .error : .info,
+            number: Int32(token.number),
+            message: token.messageText,
+            state: token.state,
+            severity: token.classValue,
+            serverName: token.serverName,
+            procedureName: token.procName,
+            lineNumber: token.lineNumber
+        )
+    }
+}

@@ -42,10 +42,14 @@ public final class TDSConnection {
     // Session state & data classification snapshots (raw payloads)
     private var lastSessionStatePayload: [UInt8] = []
     private var lastDataClassificationPayload: [UInt8] = []
-    // Connection reset flag — set when a pooled connection is returned.
-    // The next outbound request will carry the RESETCONNECTION bit in its
-    // TDS packet header, telling SQL Server to reset session state.
+    // Connection reset flag. The next request started carries the
+    // RESETCONNECTION bit in its first packet header.
     internal var needsConnectionReset: Bool = false
+    // Session facts reported by the server through ENVCHANGE tokens. Written
+    // on the event loop, read from any thread.
+    private let sessionLock = NIOLock()
+    private var _currentDatabase: String?
+    private var _routingTarget: TDSRoutingTarget?
 
     // Stall detection support
     var lastStallSnapshot: String = ""
@@ -97,6 +101,31 @@ public final class TDSConnection {
         self.isInTransaction = !descriptor.allSatisfy { $0 == 0 }
     }
 
+    /// The database the server reports as current. Updated by every `USE`,
+    /// including one inside a user batch or stored procedure. Nil until login.
+    public var currentDatabase: String? {
+        sessionLock.withLock { _currentDatabase }
+    }
+
+    /// The server a login response redirected this connection to, if any.
+    public var routingTarget: TDSRoutingTarget? {
+        sessionLock.withLock { _routingTarget }
+    }
+
+    internal func updateCurrentDatabase(_ database: String) {
+        sessionLock.withLock { _currentDatabase = database }
+    }
+
+    internal func updateRouting(_ target: TDSRoutingTarget?) {
+        sessionLock.withLock { _routingTarget = target }
+    }
+
+    internal func consumeConnectionResetRequest() -> Bool {
+        guard needsConnectionReset else { return false }
+        needsConnectionReset = false
+        return true
+    }
+
     public func updateSessionStatePayload(_ payload: [UInt8]) {
         self.lastSessionStatePayload = payload
     }
@@ -143,41 +172,25 @@ public final class TDSConnection {
         }
     }
 
-    // Sends an ATTENTION signal to the server to cancel the currently running request.
-    // This is best-effort and does not remove the current request from the queue; the
-    // server will respond by terminating the active operation.
-    /// Marks this connection for a TDS RESETCONNECTION on the next outbound request.
-    /// Called when a connection is returned to a pool and will be reused.
+    /// Marks this connection for a TDS RESETCONNECTION on the next request.
     public func markForReset() {
-        needsConnectionReset = true
+        eventLoop.execute { self.needsConnectionReset = true }
     }
 
+    /// Cancels the request currently executing on this connection, if any.
+    /// Prefer `TDSRequestHandle.cancel()`, which cannot affect a later request.
     public func sendAttention() {
         self.channel.triggerUserOutboundEvent(TDSUserEvent.attention, promise: nil)
     }
 
-    /// Disables auto-read on the underlying channel so that data is only read
-    /// when explicitly requested via `requestRead()`. Used for back-pressure
-    /// in streaming queries.
-    public func suspendAutoRead() -> EventLoopFuture<Void> {
-        channel.setOption(ChannelOptions.autoRead, value: false)
+    /// How long to wait for the server to acknowledge a cancellation before
+    /// the connection is closed.
+    public func setAttentionAcknowledgementTimeout(_ timeout: TimeAmount) {
+        eventLoop.execute { self.requestHandler.attentionAcknowledgementTimeout = timeout }
     }
 
-    /// Re-enables auto-read on the underlying channel. Should be called when
-    /// a streaming query completes to restore normal read behavior.
-    public func resumeAutoRead() {
-        channel.setOption(ChannelOptions.autoRead, value: true).whenFailure { _ in }
-        channel.read()
-    }
-
-    /// Requests a single read from the channel. When auto-read is disabled,
-    /// this triggers the next batch of data to be read from the socket.
-    public func requestRead() {
-        channel.read()
-    }
-
-    // Fails the currently active request on this connection with a timeout-like
-    // error without closing the underlying channel. Useful for watchdogs.
+    // Fails the currently active request with a timeout error and cancels it
+    // on the server.
     public func failActiveRequestTimeout() {
         self.channel.triggerUserOutboundEvent(TDSUserEvent.failCurrentRequestTimeout, promise: nil)
     }

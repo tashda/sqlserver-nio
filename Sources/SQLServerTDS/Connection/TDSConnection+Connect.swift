@@ -80,6 +80,11 @@ extension TDSConnection {
         }
         let bootstrap = ClientBootstrap(group: eventLoop)
             .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
+            .channelOption(ChannelOptions.socketOption(.tcp_nodelay), value: 1)
+            // Detect a peer or network path that disappears while a
+            // connection is idle, as the Microsoft drivers do (30s KeepAlive).
+            .channelOption(ChannelOptions.socketOption(.so_keepalive), value: 1)
+            .channelOption(ChannelOptions.socket(SocketOptionLevel(IPPROTO_TCP), tdsKeepAliveIdleOption), value: 30)
             .connectTimeout(connectTimeout)
 
         let firstDecoderName = "tds.firstDecoder"
@@ -164,6 +169,12 @@ extension TDSConnection {
         }
     }
 }
+
+#if canImport(Darwin)
+private let tdsKeepAliveIdleOption = TCP_KEEPALIVE
+#else
+private let tdsKeepAliveIdleOption = TCP_KEEPIDLE
+#endif
 
 /// TLS SNI permits DNS names only. For an IP address, NIOSSL validates the
 /// certificate's IP subject alternative name against the connected socket.
