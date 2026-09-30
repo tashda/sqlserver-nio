@@ -162,6 +162,24 @@ final class TDSRequestPipelineTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    func testDrainingAfterCancellationKeepsConnectionWhileDataArrives() throws {
+        let request = submit("SELECT * FROM big")
+        _ = try outboundPacketTypes()
+        handler.cancel(request, reason: TDSError.cancelled)
+        let timeout = TDSRequestHandler.defaultAttentionAcknowledgementTimeout
+        // The server keeps sending the rows it had already produced for
+        // longer than the timeout in total, but never goes silent.
+        for _ in 0..<4 {
+            channel.embeddedEventLoop.advanceTime(by: .nanoseconds(timeout.nanoseconds * 3 / 4))
+            try receive(Self.done(status: 0x0011, rows: 1), endOfMessage: false)
+            XCTAssertTrue(channel.isActive, "A draining connection is still responsive")
+        }
+        try receive(Self.done(status: 0x0020))
+        guard case .failure(let error)? = result(of: request) else { return XCTFail("Request should be cancelled") }
+        XCTAssertEqual(error as? TDSError, .cancelled)
+        XCTAssertTrue(channel.isActive)
+    }
+
     func testUnsolicitedDataClosesConnection() throws {
         try receive(Self.done(status: 0x0000))
         XCTAssertFalse(channel.isActive)

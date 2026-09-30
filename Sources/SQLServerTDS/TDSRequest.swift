@@ -446,14 +446,23 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
             allocator: context.channel.allocator
         )
         context.writeAndFlush(self.wrapOutboundOut(packet), promise: nil)
+        scheduleAttentionAcknowledgementTimeout(context: context)
+        logger.debug("ATTENTION sent; discarding response until acknowledgement")
+        flushPendingRead()
+    }
+
+    /// The acknowledgement follows everything the server had already sent,
+    /// which can be a lot after cancelling a large result. The deadline
+    /// therefore measures silence: it restarts whenever data arrives, and
+    /// only a server that stops sending is treated as unresponsive.
+    private func scheduleAttentionAcknowledgementTimeout(context: ChannelHandlerContext) {
+        attentionAckTimeout?.cancel()
         let deadline = attentionAcknowledgementTimeout
         attentionAckTimeout = context.eventLoop.scheduleTask(in: deadline) { [weak self] in
             guard let self, let context = self.handlerContext else { return }
-            self.logger.warning("SQL Server did not acknowledge cancellation within \(deadline); closing connection")
+            self.logger.warning("SQL Server sent nothing for \(deadline) while a cancellation was pending; closing connection")
             self.fatal(TDSError.protocolError("cancellation was not acknowledged by the server"), context: context)
         }
-        logger.debug("ATTENTION sent; discarding response until acknowledgement")
-        flushPendingRead()
     }
 
     private func startNextIfPossible(context: ChannelHandlerContext) {
@@ -554,6 +563,9 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
             throw TDSError.protocolError("Received \(chunk.payload.readableBytes) unexpected bytes with no request outstanding")
         }
 
+        if attentionPending {
+            scheduleAttentionAcknowledgementTimeout(context: context)
+        }
         var payload = chunk.payload
         streamParser.buffer.writeBuffer(&payload)
         atEndOfMessage = chunk.isEndOfMessage
