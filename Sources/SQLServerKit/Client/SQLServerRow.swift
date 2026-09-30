@@ -40,6 +40,11 @@ public struct SQLServerRow: Sendable {
     /// `SQLServerCellFormatter`, so live and spooled cells cannot differ.
     /// Direct type dispatch avoids a cascade of failed type conversions.
     internal static func format(metadata: TDSTokens.ColMetadataToken.ColumnData, buffer: ByteBuffer) -> String? {
+        // Dates, times and money are formatted from the wire bytes: going
+        // through Date or Double loses fractional seconds, offsets and digits.
+        if let exact = SQLServerExactFormat.format(metadata: metadata, buffer: buffer) {
+            return exact
+        }
         let tdsData = TDSData(metadata: metadata, value: buffer)
         switch metadata.dataType {
         // String types — direct decode
@@ -123,7 +128,10 @@ public struct SQLServerRow: Sendable {
                     typeName.caseInsensitiveCompare("geography") == .orderedSame {
                     var spatialBuffer = buffer
                     if let spatial = SQLServerSpatial.decode(from: &spatialBuffer) {
-                        return spatial.wkt
+                        // geography stores latitude first; WKT (and STAsText)
+                        // put longitude first.
+                        let isGeography = typeName.caseInsensitiveCompare("geography") == .orderedSame
+                        return (isGeography ? spatial.swappingAxes() : spatial).wkt
                     }
                 }
             }

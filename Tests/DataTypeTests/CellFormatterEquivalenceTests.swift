@@ -55,8 +55,21 @@ final class CellFormatterEquivalenceTests: StandardTestBase, @unchecked Sendable
             let spooled = SQLServerCellFormatter.string(data: stored, type: decodedType)
             XCTAssertEqual(spooled, live[index], "column \(row.columns[index].name) (\(type.encoded)) differs when spooled")
         }
-        XCTAssertEqual(live[row.columns.firstIndex { $0.name == "c_varchar_latin1" }!], "café")
-        XCTAssertEqual(live[row.columns.firstIndex { $0.name == "c_varchar_cyrillic" }!], "Привет")
+        // Exact values as SQL Server shows them (CONVERT style 121, SSMS).
+        let expected: [String: String?] = [
+            "c_money": "922337203685477.5807", "c_smallmoney": "-214748.3648",
+            "c_date": "2026-09-30", "c_time7": "23:59:59.1234567", "c_time0": "01:02:03",
+            "c_datetime": "2026-09-30 12:34:56.123", "c_smalldatetime": "2026-09-30 12:34:00",
+            "c_datetime2": "2026-09-30 12:34:56.1234567", "c_datetime2_2": "2026-09-30 12:34:56.12",
+            "c_dto": "2026-09-30 12:34:56.1234567 +02:00",
+            "c_varchar_latin1": "café", "c_varchar_cyrillic": "Привет",
+            "c_decimal": "12345.6789", "c_geography": "POINT(-122.34 47.65)",
+            "c_guid": "6F9619FF-8B86-D011-B42D-00C04FC964FF", "c_null_int": nil,
+        ]
+        for (name, value) in expected {
+            let index = try XCTUnwrap(row.columns.firstIndex { $0.name == name })
+            XCTAssertEqual(live[index], value, name)
+        }
     }
 
     func testStreamedColumnDescriptionsCarryTheRowCellTypes() async throws {

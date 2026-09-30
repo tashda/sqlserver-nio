@@ -113,6 +113,12 @@ public struct SQLServerSpatial: Sendable, Equatable {
         return SQLServerSpatial(srid: srid, type: type, points: points)
     }
 
+    /// The same shape with x and y exchanged. The geography serialization
+    /// stores latitude before longitude, while WKT lists longitude first.
+    public func swappingAxes() -> SQLServerSpatial {
+        SQLServerSpatial(srid: srid, type: type, points: points.map { Point(x: $0.y, y: $0.x) })
+    }
+
     /// Returns the Well-Known Text (WKT) representation (e.g., "POINT(10 20)").
     public var wkt: String {
         switch type {
