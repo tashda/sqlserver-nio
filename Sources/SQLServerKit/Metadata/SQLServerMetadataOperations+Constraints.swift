@@ -352,10 +352,13 @@ extension SQLServerMetadataOperations {
         let escapedSchema = SQLServerSQL.escapeLiteral(schema)
         let escapedTable = SQLServerSQL.escapeLiteral(table)
 
-        // Query space usage from sys.allocation_units
+        // Query space usage from sys.allocation_units. Rows are counted from sys.partitions alone:
+        // a partition has up to three allocation units (in-row, LOB, row-overflow), so summing
+        // p.rows across the join would count each row once per unit.
         let spaceSql = """
         SELECT
-            SUM(p.rows) AS row_count,
+            (SELECT SUM(pr.rows) FROM \(qualified(database, object: "sys.partitions")) pr
+             WHERE pr.object_id = o.object_id AND pr.index_id IN (0, 1)) AS row_count,
             SUM(a.total_pages) * 8 AS reserved_kb,
             SUM(a.data_pages) * 8 AS data_kb,
             SUM(CASE WHEN a.type <> 1 THEN a.used_pages ELSE 0 END) * 8 AS index_kb,
@@ -364,7 +367,8 @@ extension SQLServerMetadataOperations {
         JOIN \(qualified(database, object: "sys.allocation_units")) a ON p.partition_id = a.container_id
         JOIN \(qualified(database, object: "sys.objects")) o ON p.object_id = o.object_id
         JOIN \(qualified(database, object: "sys.schemas")) s ON o.schema_id = s.schema_id
-        WHERE s.name = N'\(escapedSchema)' AND o.name = N'\(escapedTable)' AND p.index_id IN (0, 1);
+        WHERE s.name = N'\(escapedSchema)' AND o.name = N'\(escapedTable)' AND p.index_id IN (0, 1)
+        GROUP BY o.object_id;
         """
 
         // Version-gated columns/JOINs.
