@@ -80,7 +80,7 @@ extension TDSConnection {
         }
         let bootstrap = ClientBootstrap(group: eventLoop)
             .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
-            .channelOption(ChannelOptions.socketOption(.tcp_nodelay), value: 1)
+            .channelOption(ChannelOptions.tcpOption(.tcp_nodelay), value: 1)
             // Detect a peer or network path that disappears while a
             // connection is idle, as the Microsoft drivers do (30s KeepAlive).
             .channelOption(ChannelOptions.socketOption(.so_keepalive), value: 1)
