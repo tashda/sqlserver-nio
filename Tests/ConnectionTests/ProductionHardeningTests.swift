@@ -324,6 +324,30 @@ final class ProductionHardeningTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(rows.first?.column("v")?.int, 1)
     }
 
+    func testTransactionStateAndCloseAreObservable() async throws {
+        let connection = try await dedicatedConnection()
+        let observer = try await dedicatedConnection()
+        defer { Task { try? await observer.close() } }
+
+        XCTAssertFalse(connection.isInTransaction)
+        _ = try await connection.execute("BEGIN TRANSACTION;")
+        XCTAssertTrue(connection.isInTransaction)
+        _ = try await connection.execute("COMMIT;")
+        XCTAssertFalse(connection.isInTransaction)
+
+        _ = try await connection.execute("BEGIN TRANSACTION;")
+        let spid = try await connection.queryScalar("SELECT @@SPID", as: Int.self)!
+        let closed = NIOLockedValueBox<Bool?>(nil)
+        connection.closeFuture.whenComplete { _ in closed.withLockedValue { $0 = connection.isInTransaction } }
+        _ = try await observer.execute("KILL \(spid);")
+        // The close is noticed without running anything on the killed session.
+        for _ in 0..<50 where closed.withLockedValue({ $0 }) == nil {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTAssertEqual(closed.withLockedValue { $0 }, true, "closeFuture fires and reports the open transaction")
+        XCTAssertTrue(connection.isClosed)
+    }
+
     func testCurrentDatabaseFollowsUseInsideBatch() async throws {
         let connection = try await dedicatedConnection()
         defer { Task { try? await connection.close() } }

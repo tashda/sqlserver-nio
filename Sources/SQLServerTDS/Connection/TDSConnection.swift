@@ -97,17 +97,19 @@ public final class TDSConnection {
 
     // Transaction state accessors
     public var transactionDescriptor: [UInt8] {
-        return currentTransactionDescriptor
+        sessionLock.withLock { currentTransactionDescriptor }
     }
-    
+
     public var requestCount: UInt32 {
-        return outstandingRequestCount
+        sessionLock.withLock { outstandingRequestCount }
     }
-    
+
     public func updateTransactionState(descriptor: [UInt8], requestCount: UInt32) {
-        self.currentTransactionDescriptor = descriptor
-        self.outstandingRequestCount = requestCount
-        self.isInTransaction = !descriptor.allSatisfy { $0 == 0 }
+        sessionLock.withLock {
+            self.currentTransactionDescriptor = descriptor
+            self.outstandingRequestCount = requestCount
+            self.isInTransaction = !descriptor.allSatisfy { $0 == 0 }
+        }
     }
 
     /// The database the server reports as current. Updated by every `USE`,

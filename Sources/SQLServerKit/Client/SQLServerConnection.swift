@@ -94,6 +94,20 @@ public final class SQLServerConnection: @unchecked Sendable {
     /// SET options, open transaction) is gone.
     public var isClosed: Bool { base.isClosed }
 
+    /// True while the session has an open transaction (BEGIN TRANSACTION,
+    /// implicit transactions, or `withTransaction`), as SQL Server reports
+    /// it through ENVCHANGE. If the connection drops while this is true, the
+    /// server rolls the transaction back.
+    public var isInTransaction: Bool {
+        !base.transactionDescriptor.allSatisfy { $0 == 0 }
+    }
+
+    /// Completes when the physical connection closes, for any reason. Use it
+    /// to tell the user at once that a session was lost, rather than on the
+    /// next statement. Read `isInTransaction` inside the callback to learn
+    /// whether an open transaction was rolled back.
+    public var closeFuture: EventLoopFuture<Void> { base.closeFuture }
+
     public var lastSessionStatePayload: [UInt8] { base.snapshotSessionStatePayload() }
     public var lastDataClassificationPayload: [UInt8] { base.snapshotDataClassificationPayload() }
 
