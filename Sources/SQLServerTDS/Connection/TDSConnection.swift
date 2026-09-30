@@ -113,7 +113,16 @@ public final class TDSConnection {
         }
         guard shouldClose else { return channel.closeFuture }
        
-        return self.channel.close(mode: .all)
+        return self.channel.close(mode: .all).flatMapError { error in
+            // SQL Server can close the TCP socket without TLS close_notify while
+            // responding to our explicit close. The transport is already being
+            // discarded, so this does not invalidate a completed operation.
+            if let sslError = error as? NIOSSLError,
+               case .uncleanShutdown = sslError {
+                return self.eventLoop.makeSucceededFuture(())
+            }
+            return self.eventLoop.makeFailedFuture(error)
+        }
     }
 
     /// Best-effort, promise-free close used during deinitialization to avoid
