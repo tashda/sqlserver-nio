@@ -124,7 +124,7 @@ public struct SQLServerAGDatabase: Sendable, Equatable, Identifiable {
 /// let groups = try await client.availabilityGroups.listGroups()
 /// ```
 public final class SQLServerAvailabilityGroupsClient: @unchecked Sendable {
-    private let client: SQLServerClient
+    internal let client: SQLServerClient
 
     internal init(client: SQLServerClient) {
         self.client = client
