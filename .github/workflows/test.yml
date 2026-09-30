@@ -76,6 +76,15 @@ jobs:
           TDS_VERSION: "2022-latest"
           TDS_LOAD_ADVENTUREWORKS: "1"
           TDS_AW_DATABASE: "AdventureWorks"
+          LOG_LEVEL: "debug"
+        run: swift test --filter SimpleTDSTests.testBasicConnection
+      - name: Run full tests against SQL Server 2022
+        env:
+          USE_DOCKER: "1"
+          TDS_DOCKER_PORT: "14331"
+          TDS_VERSION: "2022-latest"
+          TDS_LOAD_ADVENTUREWORKS: "1"
+          TDS_AW_DATABASE: "AdventureWorks"
         run: swift test
 
   matrix-tests:

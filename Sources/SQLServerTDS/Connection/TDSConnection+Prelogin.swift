@@ -15,6 +15,7 @@ internal final class PreloginRequest: TDSRequest {
     private let clientEncryption: TDSMessages.PreloginEncryption
     private let encryptionMode: TDSEncryptionMode
     private let fedAuthRequired: Bool
+    private var requestLogger: Logger?
 
     private var accumulatedData = ByteBuffer()
 
@@ -41,6 +42,7 @@ internal final class PreloginRequest: TDSRequest {
     }
 
     func log(to logger: Logger) {
+        requestLogger = logger
         logger.debug("Sending Prelogin message (encryption mode: \(encryptionMode)).")
     }
 
@@ -74,6 +76,7 @@ internal final class PreloginRequest: TDSRequest {
     }
 
     private func negotiateEncryption(server: TDSMessages.PreloginEncryption) throws -> TDSPacketResponse {
+        requestLogger?.debug("PRELOGIN encryption client=\(clientEncryption) server=\(server)")
         switch encryptionMode {
         case .strict:
             // TDS 8.0 established TLS before PRELOGIN. The server ignores the
