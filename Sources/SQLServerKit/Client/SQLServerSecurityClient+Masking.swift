@@ -41,7 +41,7 @@ extension SQLServerSecurityClient {
         let escapedSchema = SQLServerSQL.escapeIdentifier(schema)
         let escapedTable = SQLServerSQL.escapeIdentifier(table)
         let escapedColumn = SQLServerSQL.escapeIdentifier(column)
-        let sql = "ALTER TABLE \(escapedSchema).\(escapedTable) ALTER COLUMN \(escapedColumn) ADD MASKED WITH (FUNCTION = '\(function.sqlExpression)')"
+        let sql = "ALTER TABLE \(escapedSchema).\(escapedTable) ALTER COLUMN \(escapedColumn) ADD MASKED WITH (FUNCTION = '\(SQLServerSQL.escapeLiteral(function.sqlExpression))')"
         _ = try await exec(sql)
     }
 

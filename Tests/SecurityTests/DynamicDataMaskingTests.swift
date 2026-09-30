@@ -35,8 +35,8 @@ final class DynamicDataMaskingTests: SecurityTestBase, @unchecked Sendable {
         XCTAssertEqual(MaskFunction.defaultMask.sqlExpression, "default()")
         XCTAssertEqual(MaskFunction.email.sqlExpression, "email()")
         XCTAssertEqual(MaskFunction.random(start: 1, end: 100).sqlExpression, "random(1, 100)")
-        XCTAssertEqual(MaskFunction.partial(prefix: 2, padding: "XXX", suffix: 1).sqlExpression, "partial(2, 'XXX', 1)")
-        XCTAssertEqual(MaskFunction.datetime(part: "Y").sqlExpression, "datetime('Y')")
+        XCTAssertEqual(MaskFunction.partial(prefix: 2, padding: "XXX", suffix: 1).sqlExpression, "partial(2, \"XXX\", 1)")
+        XCTAssertEqual(MaskFunction.datetime(part: "Y").sqlExpression, "datetime(\"Y\")")
     }
 
     // MARK: - Integration Tests
@@ -51,6 +51,17 @@ final class DynamicDataMaskingTests: SecurityTestBase, @unchecked Sendable {
         XCTAssertEqual(masked.count, 1)
         XCTAssertEqual(masked.first?.column, "email")
         XCTAssertNotNil(MaskFunction.parse(masked.first?.maskingFunction ?? ""))
+    }
+
+    /// partial() used to be sent as FUNCTION = 'partial(2, 'XXX', 1)', which SQL Server rejects.
+    func testAddPartialMask() async throws {
+        let tableName = "test_mask_partial_\(Int.random(in: 1000...9999))"
+        try await createTestTable(name: tableName)
+
+        try await securityClient.addMask(schema: "dbo", table: tableName, column: "name", function: .partial(prefix: 2, padding: "XXX", suffix: 1))
+
+        let masked = try await securityClient.listMaskedColumns(schema: "dbo", table: tableName)
+        XCTAssertEqual(MaskFunction.parse(masked.first?.maskingFunction ?? ""), .partial(prefix: 2, padding: "XXX", suffix: 1))
     }
 
     func testDropMask() async throws {
