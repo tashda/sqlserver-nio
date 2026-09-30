@@ -282,7 +282,7 @@ extension SQLServerMetadataOperations {
         JOIN \(qualified(database, object: "sys.objects")) AS o WITH (NOLOCK) ON c.object_id = o.object_id
         JOIN \(qualified(database, object: "sys.schemas")) AS s WITH (NOLOCK) ON o.schema_id = s.schema_id
         JOIN \(qualified(database, object: "sys.types")) AS ut WITH (NOLOCK) ON c.user_type_id = ut.user_type_id
-        JOIN \(qualified(database, object: "sys.types")) AS st WITH (NOLOCK) ON c.system_type_id = st.system_type_id AND st.user_type_id = st.system_type_id
+        LEFT JOIN \(qualified(database, object: "sys.types")) AS st WITH (NOLOCK) ON c.system_type_id = st.system_type_id AND st.user_type_id = st.system_type_id
         """
 
         if !isView && includeDefaultMetadata {
@@ -310,7 +310,7 @@ extension SQLServerMetadataOperations {
             table_name = o.name,
             column_name = c.name,
             user_type_name = ut.name,
-            system_type_name = st.name,
+            system_type_name = COALESCE(st.name, ut.name),
             max_length = c.max_length,
             precision = c.precision,
             scale = c.scale,
@@ -408,7 +408,7 @@ extension SQLServerMetadataOperations {
             table_name = o.name,
             column_name = c.name,
             user_type_name = ut.name,
-            system_type_name = st.name,
+            system_type_name = COALESCE(st.name, ut.name),
             max_length = c.max_length,
             precision = c.precision,
             scale = c.scale,
@@ -423,7 +423,7 @@ extension SQLServerMetadataOperations {
         JOIN \(qualified(database, object: "sys.objects")) AS o WITH (NOLOCK) ON c.object_id = o.object_id
         JOIN \(qualified(database, object: "sys.schemas")) AS s WITH (NOLOCK) ON o.schema_id = s.schema_id
         JOIN \(qualified(database, object: "sys.types")) AS ut WITH (NOLOCK) ON c.user_type_id = ut.user_type_id
-        JOIN \(qualified(database, object: "sys.types")) AS st WITH (NOLOCK) ON c.system_type_id = st.system_type_id AND st.user_type_id = st.system_type_id
+        LEFT JOIN \(qualified(database, object: "sys.types")) AS st WITH (NOLOCK) ON c.system_type_id = st.system_type_id AND st.user_type_id = st.system_type_id
         LEFT JOIN \(qualified(database, object: "sys.default_constraints")) AS dc WITH (NOLOCK) ON c.default_object_id = dc.object_id AND o.type = 'U'
         \(commentJoin)
         \(whereClause);
