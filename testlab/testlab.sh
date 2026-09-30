@@ -179,10 +179,10 @@ CNF
 # SQL Server rewrites mssql.conf at startup, so it is copied into the
 # container rather than mounted read-only (a read-only mount crashes it).
 up_tls_server() {
-    local name=$1 port=$2 cert=$3 strict=$4 version=${5:-2025}
+    local name=$1 port=$2 cert=$3 strict=$4 version=${5:-2025} protocols=${6:-1.2}
     docker rm -f "$name" >/dev/null 2>&1 || true
     local conf; conf=$(mktemp)
-    printf '[network]\ntlscert = /var/opt/mssql/tls/server.pem\ntlskey = /var/opt/mssql/tls/server.key\ntlsprotocols = 1.2\nforceencryption = 1\n' > "$conf"
+    printf '[network]\ntlscert = /var/opt/mssql/tls/server.pem\ntlskey = /var/opt/mssql/tls/server.key\ntlsprotocols = %s\nforceencryption = 1\n' "$protocols" > "$conf"
     [ "$strict" = 1 ] && printf 'forcestrict = 1\n' >> "$conf"
     chmod 666 "$conf"
     # shellcheck disable=SC2046
@@ -193,6 +193,15 @@ up_tls_server() {
         "mcr.microsoft.com/mssql/server:$version-latest" >/dev/null
     docker cp "$conf" "$name:/var/opt/mssql/mssql.conf" >/dev/null
     rm -f "$conf"
+    if [ "$protocols" != "1.2" ]; then
+        # OpenSSL 3 disables TLS 1.0 and 1.1 above security level 0. SQL
+        # Server on Windows (the real legacy case) uses SChannel instead.
+        local ssl; ssl=$(mktemp)
+        docker cp "$name:/etc/ssl/openssl.cnf" "$ssl" >/dev/null
+        perl -pi -e 's/CipherString = DEFAULT:\@SECLEVEL=2/CipherString = DEFAULT:\@SECLEVEL=0\nMinProtocol = TLSv1/' "$ssl"
+        docker cp "$ssl" "$name:/etc/ssl/openssl.cnf" >/dev/null
+        rm -f "$ssl"
+    fi
     docker start "$name" >/dev/null
 }
 
@@ -220,6 +229,8 @@ export NIO_LAB_TLS_OTHER_CA=$CERT_PATH/other-ca.pem
 export NIO_LAB_TLS_PORT=14431
 export NIO_LAB_STRICT_PORT=14432
 export NIO_LAB_EXPIRED_PORT=14433
+export NIO_LAB_TLS10_PORT=14434
+export NIO_LAB_SELFSIGNED_PORT=14422
 export NIO_LAB_TLS_USERNAME=sa
 export NIO_LAB_TLS_PASSWORD='$PASSWORD'
 VARS
@@ -231,7 +242,11 @@ case "${1:-}" in
         up_tls_server nio-lab-tls 14431 valid 0
         up_tls_server nio-lab-strict 14432 valid 1
         up_tls_server nio-lab-expired 14433 expired 0
-        for n in nio-lab-tls nio-lab-strict nio-lab-expired; do wait_log "$n"; done
+        up_tls_server nio-lab-tls10 14434 valid 0 2022 1.0
+        # SQL Server's own self-signed certificate (no certificate configured).
+        up_one 2022
+        for n in nio-lab-tls nio-lab-strict nio-lab-expired nio-lab-tls10; do wait_log "$n"; done
+        wait_one 2022
         ;;
     tls-env)
         tls_env ;;

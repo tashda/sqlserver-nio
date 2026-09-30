@@ -17,6 +17,8 @@ final class LabTLSTests: XCTestCase, @unchecked Sendable {
         let tlsPort: Int
         let strictPort: Int
         let expiredPort: Int
+        let tls10Port: Int
+        let selfSignedPort: Int
         let username: String
         let password: String
     }
@@ -29,6 +31,8 @@ final class LabTLSTests: XCTestCase, @unchecked Sendable {
               let tlsPort = env("NIO_LAB_TLS_PORT").flatMap(Int.init),
               let strictPort = env("NIO_LAB_STRICT_PORT").flatMap(Int.init),
               let expiredPort = env("NIO_LAB_EXPIRED_PORT").flatMap(Int.init),
+              let tls10Port = env("NIO_LAB_TLS10_PORT").flatMap(Int.init),
+              let selfSignedPort = env("NIO_LAB_SELFSIGNED_PORT").flatMap(Int.init),
               let username = env("NIO_LAB_TLS_USERNAME"),
               let password = env("NIO_LAB_TLS_PASSWORD") else {
             if envFlagEnabled("NIO_LAB_REQUIRE") {
@@ -37,7 +41,8 @@ final class LabTLSTests: XCTestCase, @unchecked Sendable {
             throw XCTSkip("TLS lab not configured (testlab/testlab.sh tls)")
         }
         return Lab(host: host, certificateName: name, caPath: ca, otherCAPath: otherCA, tlsPort: tlsPort,
-                   strictPort: strictPort, expiredPort: expiredPort, username: username, password: password)
+                   strictPort: strictPort, expiredPort: expiredPort, tls10Port: tls10Port,
+                   selfSignedPort: selfSignedPort, username: username, password: password)
     }
 
     private func configuration(
@@ -149,5 +154,66 @@ final class LabTLSTests: XCTestCase, @unchecked Sendable {
             // Expected.
         }
         XCTAssertLessThan(ContinuousClock.now - started, .seconds(25))
+    }
+
+    // MARK: - Explaining certificate failures
+
+    private func tlsFailure(_ configuration: SQLServerConnection.Configuration) async throws -> SQLServerTLSFailure {
+        do {
+            let connection = try await SQLServerConnection.connect(configuration: configuration)
+            try? await connection.close()
+            XCTFail("Connection should fail")
+            throw SQLServerError.connectionClosed
+        } catch SQLServerError.tlsFailed(let failure) {
+            return failure
+        }
+    }
+
+    func testUntrustedIssuerIsNamed() async throws {
+        let lab = try lab()
+        let failure = try await tlsFailure(configuration(lab, port: lab.tlsPort, ca: lab.otherCAPath, mode: .mandatory, certificateName: lab.certificateName))
+        XCTAssertEqual(failure.kind, .certificateUntrusted, failure.message)
+        XCTAssertEqual(failure.certificate?.issuer, "sqlserver-nio lab CA")
+        XCTAssertTrue(failure.certificate?.names.contains(lab.certificateName) ?? false)
+        XCTAssertEqual(failure.certificate?.sha256Fingerprint.count, 32 * 3 - 1)
+    }
+
+    func testExpiredCertificateIsNamed() async throws {
+        let lab = try lab()
+        let failure = try await tlsFailure(configuration(lab, port: lab.expiredPort, ca: lab.caPath, mode: .mandatory, certificateName: lab.certificateName))
+        XCTAssertEqual(failure.kind, .certificateExpired, failure.message)
+        XCTAssertTrue(failure.message.contains("2021-01-01"), failure.message)
+    }
+
+    func testWrongHostIsNamedWithTheCertificatesNames() async throws {
+        let lab = try lab()
+        for (port, mode) in [(lab.tlsPort, SQLServerEncryptionMode.mandatory), (lab.strictPort, .strict)] {
+            let failure = try await tlsFailure(configuration(lab, port: port, ca: lab.caPath, mode: mode, certificateName: "other.nio.test"))
+            XCTAssertEqual(failure.kind, .certificateNameMismatch, "\(mode): \(failure.message)")
+            XCTAssertEqual(failure.expectedHost, "other.nio.test")
+            XCTAssertTrue(failure.certificate?.names.contains(lab.certificateName) ?? false, "\(mode)")
+        }
+    }
+
+    func testServersOwnSelfSignedCertificateIsNamed() async throws {
+        let lab = try lab()
+        var configuration = configuration(lab, port: lab.selfSignedPort, ca: lab.caPath, mode: .mandatory, certificateName: nil)
+        configuration.tlsConfiguration = SQLServerTLSConfiguration.makeClientConfiguration()
+        let failure = try await tlsFailure(configuration)
+        XCTAssertEqual(failure.kind, .certificateSelfSigned, failure.message)
+        XCTAssertEqual(failure.certificate?.isSelfSigned, true)
+    }
+
+    func testServerWithOnlyTLS10IsRefusedUnlessAllowed() async throws {
+        let lab = try lab()
+        let refused = try await tlsFailure(configuration(lab, port: lab.tls10Port, ca: lab.caPath, mode: .mandatory, certificateName: lab.certificateName))
+        XCTAssertTrue([.protocolVersionTooOld, .handshakeFailed].contains(refused.kind), refused.message)
+        XCTAssertTrue(refused.message.contains("TLS 1.2"), refused.message)
+
+        var legacy = configuration(lab, port: lab.tls10Port, ca: lab.caPath, mode: .mandatory, certificateName: lab.certificateName)
+        legacy.allowLegacyTLS = true
+        let connection = try await SQLServerConnection.connect(configuration: legacy)
+        defer { Task { try? await connection.close() } }
+        try await assertEncryptedSession(connection)
     }
 }

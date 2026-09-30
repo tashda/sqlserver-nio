@@ -37,6 +37,11 @@ public final class SQLServerConnection: @unchecked Sendable {
         /// Reported to SQL Server as APP_NAME() and program_name, which DBAs
         /// use in monitoring, auditing and Resource Governor classification.
         public var applicationName: String = "sqlserver-nio"
+        /// Accept TLS 1.0 and 1.1 for a server that offers nothing newer
+        /// (SQL Server 2008 R2 to 2014 without their TLS 1.2 update). Those
+        /// versions are deprecated and weak; leave this off unless the
+        /// server cannot be updated. Never applies to `.strict`.
+        public var allowLegacyTLS: Bool = false
 
         public init(
             hostname: String,

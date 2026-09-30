@@ -12,6 +12,8 @@ public enum TDSError: Error, LocalizedError, CustomStringConvertible, Equatable 
     case cancelled
     /// The request exceeded its deadline and was cancelled on the server.
     case requestTimeout(String)
+    /// The TLS handshake failed; `kind` says which part.
+    case tlsHandshake(TDSTLSFailureKind, String)
 
     /// See `LocalizedError`.
     public var errorDescription: String? {
@@ -36,7 +38,21 @@ public enum TDSError: Error, LocalizedError, CustomStringConvertible, Equatable 
             description = "request cancelled"
         case .requestTimeout(let message):
             description = message
+        case .tlsHandshake(_, let message):
+            description = message
         }
         return "TDS error: \(description)"
     }
+}
+
+/// Which part of a TLS handshake failed.
+public enum TDSTLSFailureKind: String, Sendable, Equatable {
+    /// The certificate chain could not be verified (untrusted issuer,
+    /// self-signed, expired or not yet valid).
+    case certificateVerification
+    /// The certificate is valid but does not name the expected host.
+    case certificateName
+    /// Client and server have no TLS version in common.
+    case protocolVersion
+    case other
 }

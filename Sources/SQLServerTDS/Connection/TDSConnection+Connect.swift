@@ -67,16 +67,66 @@ extension TDSConnection {
         guard let tlsConfiguration else {
             return eventLoop.makeFailedFuture(TDSError.protocolError("A TLS configuration is required; unencrypted login is not supported"))
         }
-        switch tlsConfiguration.minimumTLSVersion {
-        case .tlsv1, .tlsv11:
-            return eventLoop.makeFailedFuture(TDSError.sslError("TLS 1.2 or newer is required"))
-        case .tlsv12, .tlsv13:
-            break
-        }
         if case .strict = encryptionMode {
             guard tlsConfiguration.certificateVerification == .fullVerification else {
                 return eventLoop.makeFailedFuture(TDSError.protocolError("Strict encryption requires full server certificate verification"))
             }
+        }
+        return _connect(
+            to: socketAddress,
+            tlsConfiguration: tlsConfiguration,
+            serverHostname: serverHostname,
+            encryptionMode: encryptionMode,
+            connectTimeout: connectTimeout,
+            on: eventLoop,
+            logger: logger
+        )
+    }
+
+    /// Completes PRELOGIN and TLS without logging in and without verifying
+    /// the certificate, to read the certificate the server presents. Used
+    /// only to explain a verification failure; no credentials are sent.
+    public static func connectForCertificateDiagnosis(
+        to socketAddress: SocketAddress,
+        tlsConfiguration: TLSConfiguration,
+        serverHostname: String?,
+        encryptionMode: TDSEncryptionMode,
+        connectTimeout: TimeAmount,
+        on eventLoop: EventLoop,
+        logger: Logger
+    ) -> EventLoopFuture<TDSConnection> {
+        var unverified = tlsConfiguration
+        unverified.certificateVerification = .none
+        return _connect(
+            to: socketAddress,
+            tlsConfiguration: unverified,
+            serverHostname: serverHostname,
+            encryptionMode: encryptionMode,
+            connectTimeout: connectTimeout,
+            on: eventLoop,
+            logger: logger
+        )
+    }
+
+    private static func _connect(
+        to socketAddress: SocketAddress,
+        tlsConfiguration: TLSConfiguration,
+        serverHostname: String?,
+        encryptionMode: TDSEncryptionMode,
+        connectTimeout: TimeAmount,
+        on eventLoop: EventLoop,
+        logger: Logger
+    ) -> EventLoopFuture<TDSConnection> {
+        var tlsConfiguration = tlsConfiguration
+        switch tlsConfiguration.minimumTLSVersion {
+        case .tlsv1, .tlsv11:
+            // TLS 1.0 and 1.1 are accepted only when the caller lowered the
+            // minimum on purpose, and never for TDS 8.0, which requires 1.2.
+            if case .strict = encryptionMode {
+                tlsConfiguration.minimumTLSVersion = .tlsv12
+            }
+        case .tlsv12, .tlsv13:
+            break
         }
         let bootstrap = ClientBootstrap(group: eventLoop)
             .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
@@ -160,7 +210,7 @@ extension TDSConnection {
                 return strictHandshake.flatMapError { error in
                     // Closing a TLS channel whose handshake failed reports its
                     // own error; the handshake failure is the one to surface.
-                    channel.close().recover { _ in }.flatMapThrowing { throw error }
+                    channel.close().recover { _ in }.flatMapThrowing { throw translatePreloginError(error, attemptedTLS: true) }
                 }.map { connection }
             }
             return channel.eventLoop.makeSucceededFuture(connection)
@@ -252,25 +302,37 @@ private final class TDSStrictHandshakeObserver: ChannelInboundHandler, @unchecke
 /// or otherwise-untrusted server certificate surfaces to the caller as the
 /// opaque string "uncleanShutdown" — which gives the user no hint that they
 /// can enable `trustServerCertificate` to bypass verification.
+/// SQL Server closes the socket mid-handshake, without a TLS alert, when it
+/// cannot agree on a TLS version or cipher.
+private let serverClosedDuringHandshake = TDSError.tlsHandshake(.other,
+    "The server closed the connection during the TLS handshake. It most likely does not support TLS 1.2: an older SQL Server needs its TLS 1.2 update, or TLS 1.0 must be allowed for this connection.")
+
 internal func translatePreloginError(_ error: Error, attemptedTLS: Bool) -> Error {
     guard attemptedTLS else { return error }
 
     if let sslError = error as? NIOSSLError {
         switch sslError {
         case .handshakeFailed(let reason):
-            return TDSError.sslError(
-                "TLS handshake failed: \(reason). If the server uses a self-signed or internal-CA certificate, enable 'Trust Server Certificate' to connect anyway."
-            )
+            let text = String(describing: reason)
+            if text.contains("CERTIFICATE_VERIFY_FAILED") {
+                return TDSError.tlsHandshake(.certificateVerification,
+                    "The server certificate could not be verified. If the server uses a self-signed or internal-CA certificate, trust it or provide its CA certificate.")
+            }
+            if text.contains("UNSUPPORTED_PROTOCOL") || text.contains("PROTOCOL_VERSION")
+                || text.contains("WRONG_VERSION_NUMBER") || text.contains("NO_SUPPORTED_VERSIONS") {
+                return TDSError.tlsHandshake(.protocolVersion,
+                    "The server does not offer TLS 1.2 or newer. Update the server (SQL Server 2008 R2 to 2014 need their TLS 1.2 update) or allow TLS 1.0 for this connection.")
+            }
+            if text.contains("EOF during handshake") || text.contains("UNEXPECTED_EOF") {
+                return serverClosedDuringHandshake
+            }
+            return TDSError.tlsHandshake(.other, "TLS handshake failed: \(text)")
         case .uncleanShutdown:
-            // During PRELOGIN, an unclean shutdown almost always means the
-            // server (or our own SSL handler) tore down the connection because
-            // the certificate could not be verified. The peer often closes
-            // without sending close_notify, which is what produces this error.
-            return TDSError.sslError(
-                "TLS handshake aborted by peer (unclean shutdown). The server certificate is likely not trusted by the system. Enable 'Trust Server Certificate' to connect anyway."
-            )
+            // The server closed the socket mid-handshake. SQL Server does
+            // this when it cannot agree on a TLS version or cipher.
+            return serverClosedDuringHandshake
         default:
-            return TDSError.sslError("TLS error during handshake: \(sslError)")
+            return TDSError.tlsHandshake(.other, "TLS error during handshake: \(sslError)")
         }
     }
     return error

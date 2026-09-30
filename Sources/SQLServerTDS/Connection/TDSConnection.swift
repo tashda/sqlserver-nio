@@ -204,6 +204,13 @@ public final class TDSConnection {
         self.channel.triggerUserOutboundEvent(TDSUserEvent.failCurrentRequestTimeout, promise: nil)
     }
 
+    /// The certificate the server presented in the TLS handshake, if any.
+    public func peerCertificate() -> EventLoopFuture<NIOSSLCertificate?> {
+        channel.pipeline.handler(type: NIOSSLClientHandler.self)
+            .map { $0.peerCertificate }
+            .recover { _ in nil }
+    }
+
     public func tokenTraceSnapshot() -> [String] {
         return tokenRing.snapshot()
     }
