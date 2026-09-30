@@ -63,8 +63,10 @@ extension SQLServerConstraintClient {
         let columnList = columns.map { SQLServerSQL.escapeIdentifier($0) }.joined(separator: ", ")
         let referencedColumnList = referencedColumns.map { SQLServerSQL.escapeIdentifier($0) }.joined(separator: ", ")
 
+        // WITH NOCHECK belongs between the table and ADD; after the constraint it is a syntax error.
+        let skipExisting = !options.checkExisting || options.isNotTrusted
         var sql = """
-        ALTER TABLE \(fullTableName)
+        ALTER TABLE \(fullTableName)\(skipExisting ? " WITH NOCHECK" : "")
         ADD CONSTRAINT \(escapedConstraintName)
         FOREIGN KEY (\(columnList))
         REFERENCES \(fullReferencedTableName) (\(referencedColumnList))
@@ -78,11 +80,7 @@ extension SQLServerConstraintClient {
             sql += "\nON UPDATE \(options.onUpdate.rawValue)"
         }
 
-        if !options.checkExisting {
-            sql += "\nWITH NOCHECK"
-        }
-
-        if options.isNotTrusted {
+        if options.notForReplication {
             sql += "\nNOT FOR REPLICATION"
         }
 

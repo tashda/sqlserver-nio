@@ -37,15 +37,12 @@ extension SQLServerConstraintClient {
         let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
 
-        var sql = """
-        ALTER TABLE \(fullTableName)
+        // WITH NOCHECK belongs between the table and ADD; after the constraint it is a syntax error.
+        let sql = """
+        ALTER TABLE \(fullTableName)\(checkExisting ? "" : " WITH NOCHECK")
         ADD CONSTRAINT \(escapedConstraintName)
         CHECK (\(expression))
         """
-
-        if !checkExisting {
-            sql += " WITH NOCHECK"
-        }
 
         let result = try await client.execute(sql)
         return result.messages
