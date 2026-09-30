@@ -230,7 +230,7 @@ enum SQLServerBulkValueEncoder {
         guard (integer + fraction).allSatisfy(\.isASCII), (integer + fraction).allSatisfy(\.isNumber), !(integer + fraction).isEmpty else {
             throw ConversionError(reason: "is not a number")
         }
-        var all = (integer + fraction).compactMap { $0.wholeNumberValue }.map(UInt8.init)
+        var all: [UInt8] = (integer + fraction).compactMap { $0.wholeNumberValue }.map { UInt8($0) }
         // Decimal point position after applying the exponent, relative to the digit list.
         let pointIndex = integer.count + exponent
         var fractionDigits = all.count - pointIndex
