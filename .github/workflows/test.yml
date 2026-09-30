@@ -193,8 +193,9 @@ jobs:
   matrix-tests:
     name: "Step 3: Compatibility - ${{ matrix.name }}"
     needs: build
-    # Every supported container version gates merges into dev and main.
-    if: github.event_name == 'pull_request'
+    # Every supported version on GitHub's runners, for pull requests and every push to dev (the shared
+    # lab server is not used for full-suite runs).
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/dev')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:

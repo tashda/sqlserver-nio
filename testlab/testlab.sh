@@ -119,7 +119,14 @@ case "${1:-}" in
     test)
         shift; test_one "$@" ;;
     matrix)
-        # One version at a time, removed after its run: the lab server is shared.
+        # The full suite on every version is CI's job (GitHub runners). On the
+        # shared lab server it runs only when asked for explicitly.
+        if [ "$NIO_LAB_HOST" != "local" ] && [ "${NIO_LAB_ALLOW_MATRIX:-0}" != "1" ]; then
+            log "The version matrix runs in CI. To run it on the lab server anyway: NIO_LAB_ALLOW_MATRIX=1"
+            log "For a targeted check: testlab/testlab.sh up 2022 && testlab/testlab.sh test 2022 FILTER"
+            exit 2
+        fi
+        # One version at a time, removed after its run.
         shift; filter=("$@")
         failed=()
         for v in "${VERSIONS_DEFAULT[@]}"; do

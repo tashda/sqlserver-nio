@@ -33,14 +33,21 @@ Rules for lab tests:
   removes every fixture container.
 - Long-running tests carry a watchdog that aborts with the test name.
 
-## Running the version matrix
+## Running tests against the lab
+
+The full suite on SQL Server 2017, 2019, 2022 and 2025 runs in CI on every push
+to `dev` (GitHub runners), not on the shared lab server. On the lab server, run
+only what a change touches, then remove the server:
 
 ```bash
 swift build --build-tests
-testlab/testlab.sh matrix          # full suite on 2017, 2019, 2022, 2025
-testlab/testlab.sh test 2022 'ProductionHardeningTests'
+testlab/testlab.sh up 2022
+eval "$(testlab/testlab.sh env 2022)" && swift test --skip-build --filter 'ProductionHardeningTests'
 testlab/testlab.sh down
 ```
+
+`testlab/testlab.sh matrix` refuses on the lab server unless
+`NIO_LAB_ALLOW_MATRIX=1`; with `NIO_LAB_HOST=local` it runs on this machine.
 
 ## Windows VM (SQL Server 2008 R2 to 2016, NTLM)
 

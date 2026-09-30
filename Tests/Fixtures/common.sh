@@ -21,11 +21,11 @@ SQL_IMAGE_PREFIX="mcr.microsoft.com/mssql/server"
 
 log() { echo "$@" >&2; }
 
-# Memory caps (the lab server is shared with echo-server-lab, which keeps its
-# own servers inside a budget that counts ours): SQL Server gets 2 GB with
-# its buffer pool held to 1.5 GB; small helpers get less.
-SQL_MEMORY_ARGS=(--memory 2g --memory-swap 2g -e MSSQL_MEMORY_LIMIT_MB=1536)
-SMALL_MEMORY_ARGS=(--memory 512m --memory-swap 512m)
+# Memory and CPU caps (the lab server is shared with echo-server-lab, which
+# keeps its own servers inside a budget that counts ours): SQL Server gets
+# 2 GB with its buffer pool held to 1.5 GB and one CPU; small helpers less.
+SQL_MEMORY_ARGS=(--memory 2g --memory-swap 2g --cpus 1 -e MSSQL_MEMORY_LIMIT_MB=1536)
+SMALL_MEMORY_ARGS=(--memory 512m --memory-swap 512m --cpus 0.5)
 
 # Removes containers with their volumes (one call each: the lab server's
 # Docker rejects a bulk remove over the SSH context).
