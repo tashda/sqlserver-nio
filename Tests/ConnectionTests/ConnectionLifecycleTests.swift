@@ -139,21 +139,13 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
         try await adminClient.dropTable(name: tableName)
     }
 
-    func testConnectionReuse() async throws {
-        // Test that connections are properly reused from the pool
-        var connectionIds: Set<String> = []
-
-        for _ in 1...10 {
-            let connectionId = try await client.withConnection { connection in
-                let rows = try await connection.query("SELECT @@SPID as connection_id")
-                return rows.first?.column("connection_id")?.string ?? ""
-            }
-            connectionIds.insert(connectionId)
+    func testPooledSessionDoesNotLeakState() async throws {
+        try await client.withConnection { connection in
+            _ = try await connection.execute("EXEC sys.sp_set_session_context @key=N'pool_isolation', @value=N'private';")
         }
 
-        // With a small pool, we should see connection reuse (fewer unique IDs than operations)
-        XCTAssertLessThan(connectionIds.count, 10, "Should reuse connections from the pool")
-        XCTAssertGreaterThan(connectionIds.count, 0, "Should have at least one connection")
+        let rows = try await client.query("SELECT CAST(SESSION_CONTEXT(N'pool_isolation') AS nvarchar(50)) AS isolated_value;")
+        XCTAssertNil(rows.first?.column("isolated_value")?.string)
     }
 
     func testConnectionErrorHandling() async throws {

@@ -5,12 +5,12 @@ public typealias SQLServerTLSConfiguration = TLSConfiguration
 
 /// Controls how encryption is negotiated with the SQL Server.
 ///
-/// Maps to the ENCRYPT connection string option in JDBC/ODBC:
-/// - `optional`: Try encryption but fall back to unencrypted if server doesn't support it (default for on-prem)
-/// - `mandatory`: Require encryption; fail if server doesn't support it (default for Azure SQL)
-/// - `strict`: TDS 8.0 strict mode — TLS before any TDS traffic (Azure SQL recommended)
+/// Inspired by the ENCRYPT connection string option in JDBC/ODBC:
+/// - `optional`: A compatibility alias that currently requires full-session encryption.
+/// - `mandatory`: Require full-session encryption (the default).
+/// - `strict`: TDS 8.0 strict mode; TLS is established before PRELOGIN.
 public enum SQLServerEncryptionMode: String, Sendable, CaseIterable {
-    /// Encryption is optional. Client requests encryption but accepts unencrypted if server doesn't support it.
+    /// Compatibility alias for full-session encryption until login-only TLS is supported.
     case optional
     /// Encryption is mandatory. Connection fails if the server doesn't support encryption.
     case mandatory
@@ -29,13 +29,13 @@ public enum SQLServerEncryptionMode: String, Sendable, CaseIterable {
 
 extension SQLServerTLSConfiguration {
     public static var clientDefault: SQLServerTLSConfiguration {
-        .makeClientConfiguration()
+        TDSConnection.defaultTLSConfiguration()
     }
 
     /// A TLS configuration that skips server certificate validation.
     /// Equivalent to JDBC's `trustServerCertificate=true`.
     public static var trustingServerCertificate: SQLServerTLSConfiguration {
-        var config = makeClientConfiguration()
+        var config = TDSConnection.defaultTLSConfiguration()
         config.certificateVerification = .none
         return config
     }
@@ -43,8 +43,8 @@ extension SQLServerTLSConfiguration {
     /// A TLS configuration that uses a custom CA certificate for server verification.
     /// - Parameter path: Path to a PEM-encoded CA certificate file.
     public static func withCACertificate(atPath path: String) -> SQLServerTLSConfiguration {
-        var config = makeClientConfiguration()
-        config.certificateVerification = .noHostnameVerification
+        var config = TDSConnection.defaultTLSConfiguration()
+        config.certificateVerification = .fullVerification
         config.trustRoots = .file(path)
         return config
     }
@@ -76,7 +76,7 @@ extension SQLServerClient {
             port: Int = 1433,
             login: SQLServerConnection.Configuration.Login,
             tlsConfiguration: SQLServerTLSConfiguration? = .clientDefault,
-            encryptionMode: SQLServerEncryptionMode = .optional,
+            encryptionMode: SQLServerEncryptionMode = .mandatory,
             hostNameInCertificate: String? = nil,
             poolConfiguration: SQLServerConnectionPool.Configuration = .init(),
             metadataConfiguration: SQLServerMetadataOperations.Configuration = .init(),
@@ -106,7 +106,7 @@ extension SQLServerClient {
             tlsEnabled: Bool,
             trustServerCertificate: Bool = false,
             caCertificatePath: String? = nil,
-            encryptionMode: SQLServerEncryptionMode = .optional,
+            encryptionMode: SQLServerEncryptionMode = .mandatory,
             hostNameInCertificate: String? = nil,
             poolConfiguration: SQLServerConnectionPool.Configuration = .init(),
             metadataConfiguration: SQLServerMetadataOperations.Configuration = .init(),
@@ -146,7 +146,7 @@ extension SQLServerClient {
             database: String = "master",
             authentication: SQLServerAuthentication,
             tlsConfiguration: SQLServerTLSConfiguration? = .clientDefault,
-            encryptionMode: SQLServerEncryptionMode = .optional,
+            encryptionMode: SQLServerEncryptionMode = .mandatory,
             hostNameInCertificate: String? = nil,
             poolConfiguration: SQLServerConnectionPool.Configuration = .init(),
             metadataConfiguration: SQLServerMetadataOperations.Configuration = .init(),

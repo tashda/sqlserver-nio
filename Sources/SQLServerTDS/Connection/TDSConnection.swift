@@ -1,6 +1,7 @@
 import Foundation
 import NIO
 import NIOSSL
+import NIOConcurrencyHelpers
 import Logging
 
 public final class TDSConnection {
@@ -27,6 +28,7 @@ public final class TDSConnection {
     
     public var logger: Logger
 
+    private let closeLock = NIOLock()
     private var didClose: Bool
 
     public var isClosed: Bool {
@@ -70,7 +72,8 @@ public final class TDSConnection {
         let ringSize = ProcessInfo.processInfo.environment["TDS_TOKEN_RING_SIZE"].flatMap { Int($0) } ?? 128
         self.tokenRing = TDSTokenRing(capacity: ringSize)
         self.channel.closeFuture.whenComplete { [weak self] (_: Result<Void, any Error>) in
-            self?.didClose = true
+            guard let self else { return }
+            self.closeLock.withLock { self.didClose = true }
         }
     }
     
@@ -103,10 +106,12 @@ public final class TDSConnection {
     }
     
     public func close() -> EventLoopFuture<Void> {
-        guard !self.didClose else {
-            return self.eventLoop.makeSucceededFuture(())
+        let shouldClose = closeLock.withLock { () -> Bool in
+            guard !didClose else { return false }
+            didClose = true
+            return true
         }
-        self.didClose = true
+        guard shouldClose else { return channel.closeFuture }
        
         return self.channel.close(mode: .all)
     }
@@ -114,13 +119,17 @@ public final class TDSConnection {
     /// Best-effort, promise-free close used during deinitialization to avoid
     /// creating futures that might outlive the event loop during shutdown.
     public func closeSilently() {
-        guard !self.didClose else { return }
-        self.didClose = true
+        let shouldClose = closeLock.withLock { () -> Bool in
+            guard !didClose else { return false }
+            didClose = true
+            return true
+        }
+        guard shouldClose else { return }
         self.channel.close(promise: nil)
     }
 
     deinit {
-        if !self.didClose {
+        if !closeLock.withLock({ didClose }) {
             self.closeSilently()
         }
     }
@@ -141,8 +150,8 @@ public final class TDSConnection {
     /// Disables auto-read on the underlying channel so that data is only read
     /// when explicitly requested via `requestRead()`. Used for back-pressure
     /// in streaming queries.
-    public func suspendAutoRead() {
-        channel.setOption(ChannelOptions.autoRead, value: false).whenFailure { _ in }
+    public func suspendAutoRead() -> EventLoopFuture<Void> {
+        channel.setOption(ChannelOptions.autoRead, value: false)
     }
 
     /// Re-enables auto-read on the underlying channel. Should be called when

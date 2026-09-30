@@ -13,6 +13,8 @@ public enum SQLServerError: Swift.Error, CustomStringConvertible, LocalizedError
     case sqlExecutionError(message: String)
     // Specific transient error that should generally be retried: SQL Server deadlock (error 1205)
     case deadlockDetected(message: String)
+    /// The commit acknowledgement was lost; the transaction may have committed.
+    case commitOutcomeUnknown(Swift.Error)
     case invalidArgument(String)
     case databaseDoesNotExist(String)
     case notImplemented(String)
@@ -45,6 +47,8 @@ public enum SQLServerError: Swift.Error, CustomStringConvertible, LocalizedError
             return message
         case .deadlockDetected(let message):
             return "Deadlock detected: \(message)"
+        case .commitOutcomeUnknown(let error):
+            return "Commit outcome is unknown; check the database before retrying: \(error)"
         case .invalidArgument(let message):
             return message
         case .databaseDoesNotExist(let name):

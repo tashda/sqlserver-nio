@@ -31,7 +31,7 @@ extension SQLServerConnection {
         addresses: [SocketAddress],
         tlsConfiguration: TLSConfiguration?,
         serverHostname: String?,
-        encryptionMode: TDSEncryptionMode = .optional,
+        encryptionMode: TDSEncryptionMode = .mandatory,
         connectTimeout: TimeAmount,
         on eventLoop: EventLoop,
         logger: Logger

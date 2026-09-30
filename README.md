@@ -30,7 +30,7 @@ Then add the product to your target:
 .target(
     name: "MyApp",
     dependencies: [
-        .product(name: "SQLServerNIO", package: "sqlserver-nio")
+        .product(name: "SQLServerKit", package: "sqlserver-nio")
     ]
 )
 ```
@@ -40,7 +40,7 @@ Then add the product to your target:
 ### Pooled Client (Recommended)
 
 ```swift
-import SQLServerNIO
+import SQLServerKit
 
 let configuration = SQLServerClient.Configuration(
     hostname: "localhost",
@@ -812,7 +812,7 @@ Docker-backed example:
 USE_DOCKER=1 TDS_VERSION=2022-latest TDS_DOCKER_PORT=14331 TDS_LOAD_ADVENTUREWORKS=1 TDS_AW_DATABASE=AdventureWorks swift test
 ```
 
-`SQLServerNIO.xctestplan` now carries one configuration per supported SQL Server version so Xcode uses the same Docker-backed environment model as GitHub Actions.
+The Docker-backed CI matrix runs against actual SQL Server 2017, 2019, 2022, and 2025 images. A database compatibility level on a newer server does not establish support for older server binaries.
 
 ## Contributing
 

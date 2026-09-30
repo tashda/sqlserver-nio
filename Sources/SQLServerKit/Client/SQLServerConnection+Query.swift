@@ -30,9 +30,9 @@ extension SQLServerConnection {
     }
 
     internal func execute(_ sql: String, applyDefaultTimeout: Bool = true) -> EventLoopFuture<SQLServerExecutionResult> {
-        let future = executeWithRetry(operationName: "execute") {
-            self.runBatch(sql)
-        }
+        // A failed batch may already have committed on the server. Replaying it here
+        // can duplicate writes, DDL, or stored procedure side effects.
+        let future = self.runBatch(sql)
         // Apply configured default query timeout (sends ATTENTION on expiry)
         let guarded: EventLoopFuture<SQLServerExecutionResult>
         if applyDefaultTimeout, let timeout = configuration.sessionOptions.defaultQueryTimeout {
@@ -261,7 +261,11 @@ extension SQLServerConnection {
                 )))
             }
         )
-        let future = self.base.send(request, logger: self.logger)
+        // Turn off socket auto-read before the query can return rows. Demand from
+        // the async sequence drives subsequent reads through its delegate.
+        let future = self.base.suspendAutoRead().flatMap {
+            self.base.send(request, logger: self.logger)
+        }
         future.whenComplete { result in
             batcher.flush()
             delegate.markFinished()

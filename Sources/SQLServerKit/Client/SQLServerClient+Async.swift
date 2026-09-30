@@ -3,6 +3,28 @@ import NIO
 import NIOConcurrencyHelpers
 import SQLServerTDS
 
+private final class SQLServerOperationCancellation: @unchecked Sendable {
+    private let lock = NIOLock()
+    private var task: Task<Void, Never>?
+    private var cancelled = false
+
+    func install(_ task: Task<Void, Never>) {
+        let shouldCancel = lock.withLock { () -> Bool in
+            self.task = task
+            return cancelled
+        }
+        if shouldCancel { task.cancel() }
+    }
+
+    func cancel() {
+        let running = lock.withLock { () -> Task<Void, Never>? in
+            cancelled = true
+            return task
+        }
+        running?.cancel()
+    }
+}
+
 extension SQLServerClient {
     @available(macOS 12.0, *)
     public func withConnection<Result: Sendable>(
@@ -42,25 +64,33 @@ extension SQLServerClient {
         on eventLoop: EventLoop? = nil,
         _ operation: @escaping @Sendable (SQLServerConnection) async throws -> Result
     ) async throws -> Result {
+        let cancellation = SQLServerOperationCancellation()
         let future: EventLoopFuture<Result> = self.withConnection(on: eventLoop) { connection in
             let promise = connection.eventLoop.makePromise(of: Result.self)
             let completed = NIOLockedValueBox(false)
 
             let task = Task {
                 do {
+                    try Task.checkCancellation()
                     let result = try await withTaskCancellationHandler(operation: {
                         try await operation(connection)
                     }, onCancel: {
                         connection.cancelActiveRequest()
                     })
 
-                    if !completed.withLockedValue({ $0 }) {
-                        completed.withLockedValue { $0 = true }
+                    if completed.withLockedValue({ value in
+                        guard !value else { return false }
+                        value = true
+                        return true
+                    }) {
                         promise.succeed(result)
                     }
                 } catch {
-                    if !completed.withLockedValue({ $0 }) {
-                        completed.withLockedValue { $0 = true }
+                    if completed.withLockedValue({ value in
+                        guard !value else { return false }
+                        value = true
+                        return true
+                    }) {
                         let errorToFail: Error
                         if let sqlError = error as? SQLServerError,
                            case .deadlockDetected = sqlError {
@@ -72,23 +102,28 @@ extension SQLServerClient {
                     }
                 }
             }
+            cancellation.install(task)
 
             connection.underlying.closeFuture.whenComplete { _ in
-                if !completed.withLockedValue({ $0 }) {
-                    completed.withLockedValue { $0 = true }
+                if completed.withLockedValue({ value in
+                    guard !value else { return false }
+                    value = true
+                    return true
+                }) {
                     promise.fail(SQLServerError.connectionClosed)
+                    task.cancel()
                 }
-            }
-
-            promise.futureResult.whenFailure { _ in
-                task.cancel()
             }
 
             return promise.futureResult
         }
 
         do {
-            return try await future.get()
+            return try await withTaskCancellationHandler(operation: {
+                try await future.get()
+            }, onCancel: {
+                cancellation.cancel()
+            })
         } catch {
             if let channelError = error as? ChannelError,
                case .alreadyClosed = channelError {
@@ -259,25 +294,37 @@ extension SQLServerClient {
 
     @available(macOS 12.0, *)
     private func executeWithConnectionLock<T: Sendable>(_ operation: @escaping @Sendable (SQLServerConnection) async throws -> T) async throws -> T {
+        let cancellation = SQLServerOperationCancellation()
         let future: EventLoopFuture<T> = self.withConnection(on: nil) { connection in
             let promise = connection.eventLoop.makePromise(of: T.self)
             let didComplete = NIOLockedValueBox(false)
-            promise.futureResult.whenComplete { _ in
-                didComplete.withLockedValue { $0 = true }
-            }
             connection.underlying.closeFuture.whenComplete { _ in
-                if !didComplete.withLockedValue({ $0 }) {
+                if didComplete.withLockedValue({ value in
+                    guard !value else { return false }
+                    value = true
+                    return true
+                }) {
                     promise.fail(SQLServerError.connectionClosed)
+                    cancellation.cancel()
                 }
             }
-            let _ = Task {
+            let task = Task {
                 do {
+                    try Task.checkCancellation()
                     let result = try await operation(connection)
-                    if !didComplete.withLockedValue({ $0 }) {
+                    if didComplete.withLockedValue({ value in
+                        guard !value else { return false }
+                        value = true
+                        return true
+                    }) {
                         promise.succeed(result)
                     }
                 } catch {
-                    if !didComplete.withLockedValue({ $0 }) {
+                    if didComplete.withLockedValue({ value in
+                        guard !value else { return false }
+                        value = true
+                        return true
+                    }) {
                         if error.localizedDescription.contains("Already closed") {
                             promise.fail(SQLServerError.connectionClosed)
                         } else {
@@ -286,9 +333,14 @@ extension SQLServerClient {
                     }
                 }
             }
+            cancellation.install(task)
             return promise.futureResult
         }
-        return try await future.get()
+        return try await withTaskCancellationHandler(operation: {
+            try await future.get()
+        }, onCancel: {
+            cancellation.cancel()
+        })
     }
 
     @available(macOS 12.0, *)
@@ -310,7 +362,8 @@ extension SQLServerClient {
     }
 
     /// Streams query results row by row via a back-pressure-aware async sequence.
-    /// The connection is held for the duration of the stream and returned to the pool on completion.
+    /// The caller owns the returned connection and must close it after consuming
+    /// or abandoning the stream. Closing it returns the pool slot.
     @available(macOS 12.0, *)
     public func streamQuery(_ sql: String) async throws -> (connection: SQLServerConnection, stream: SQLServerStreamSequence) {
         let connection = try await self.connection()

@@ -29,7 +29,7 @@ public final class SQLServerClient: @unchecked Sendable {
     ) async throws -> SQLServerClient {
         try await connect(
             configuration: configuration,
-            numberOfThreads: System.coreCount,
+            numberOfThreads: min(System.coreCount, 4),
             logger: logger
         )
     }
@@ -74,8 +74,8 @@ public final class SQLServerClient: @unchecked Sendable {
         tlsEnabled: Bool = true,
         trustServerCertificate: Bool = false,
         caCertificatePath: String? = nil,
-        encryptionMode: SQLServerEncryptionMode = .optional,
-        numberOfThreads: Int = System.coreCount,
+        encryptionMode: SQLServerEncryptionMode = .mandatory,
+        numberOfThreads: Int = min(System.coreCount, 4),
         poolConfiguration: SQLServerConnectionPool.Configuration = .init(),
         metadataConfiguration: SQLServerMetadataOperations.Configuration = .init(),
         retryConfiguration: SQLServerRetryConfiguration = .init(),
@@ -104,7 +104,7 @@ public final class SQLServerClient: @unchecked Sendable {
 
     internal static func connect(
         configuration: Configuration,
-        eventLoopGroupProvider: EventLoopGroupProvider = .createNew(numberOfThreads: System.coreCount),
+        eventLoopGroupProvider: EventLoopGroupProvider = .createNew(numberOfThreads: min(System.coreCount, 4)),
         logger: Logger = Logger(label: "tds.sqlserver.client")
     ) -> EventLoopFuture<SQLServerClient> {
         @Sendable func scheduleRetry<T: Sendable>(
@@ -207,6 +207,7 @@ public final class SQLServerClient: @unchecked Sendable {
             ownsGroup = true
         }
 
+
         let connectionFactory: (EventLoop) -> EventLoopFuture<TDSConnection> = { eventLoop in
             establishConnection(on: eventLoop)
         }
@@ -297,17 +298,7 @@ public final class SQLServerClient: @unchecked Sendable {
 
     @available(macOS 12.0, *)
     public func connection() async throws -> SQLServerConnection {
-        let pooled = try await pool.checkout().get()
-        let connection = makeConnection(from: pooled)
-        let loop = connection.eventLoop
-
-        do {
-            try await healthProbe(connection, on: loop).get()
-            return connection
-        } catch {
-            _ = try? await connection.invalidate().get()
-            throw SQLServerError.normalize(error)
-        }
+        try await acquireHealthyConnection(on: eventLoopGroup.next()).get()
     }
 
     internal func shutdownGracefully() -> EventLoopFuture<Void> {
@@ -343,24 +334,17 @@ public final class SQLServerClient: @unchecked Sendable {
             return operation(scoped)
         }
         let loop = eventLoop ?? eventLoopGroup.next()
-        let fut = executeWithRetry(operationName: "withConnection", on: loop) {
-            self.pool.checkout(on: loop).flatMap { pooled -> EventLoopFuture<Result> in
-                let sqlConnection = self.makeConnection(from: pooled)
-                let probe = self.healthProbe(sqlConnection, on: loop).flatMapError { hpError in
-                    let normalized = SQLServerError.normalize(hpError)
-                    let retryError: SQLServerError = (hpError is SQLServerError) ? (hpError as! SQLServerError) : .connectionClosed
-                    self.logger.debug("Connection health probe failed: \(normalized); invalidating connection")
-                    return sqlConnection.invalidate().recover { _ in () }.flatMap { _ in
-                        loop.makeFailedFuture(retryError)
-                    }
-                }
+        let accepted = self.stateLock.withLock { () -> Bool in
+            guard !self._isShutdown else { return false }
+            self.inFlightOperations += 1
+            return true
+        }
+        guard accepted else { return loop.makeFailedFuture(SQLServerError.clientShutdown) }
+        let fut = self.acquireHealthyConnection(on: loop).flatMap { sqlConnection -> EventLoopFuture<Result> in
                 // Track the FULL withConnection lifecycle (including connection
                 // close/invalidate) so shutdownGracefully() cannot proceed while
                 // connections are still being returned to the pool.
-                let op: EventLoopFuture<Result> = probe.flatMap {
-                    self.stateLock.withLock { self.inFlightOperations += 1 }
-                    return operation(sqlConnection)
-                }
+                let op = operation(sqlConnection)
                 return op.flatMap { value in
                     sqlConnection.close().map { value }
                 }.flatMapError { error in
@@ -375,19 +359,19 @@ public final class SQLServerClient: @unchecked Sendable {
                             loop.makeFailedFuture(normalized)
                         }
                     }
-                }.always { _ in
-                    var toComplete: [EventLoopPromise<Void>] = []
-                    self.stateLock.withLock {
-                        self.inFlightOperations = max(0, self.inFlightOperations - 1)
-                        if self.inFlightOperations == 0 && self._isShutdown {
-                            toComplete = self.drainWaiters; self.drainWaiters.removeAll(keepingCapacity: false)
-                        }
-                    }
-                    toComplete.forEach { $0.succeed(()) }
+                }
+        }
+        return fut.always { _ in
+            var toComplete: [EventLoopPromise<Void>] = []
+            self.stateLock.withLock {
+                self.inFlightOperations = max(0, self.inFlightOperations - 1)
+                if self.inFlightOperations == 0 && self._isShutdown {
+                    toComplete = self.drainWaiters
+                    self.drainWaiters.removeAll(keepingCapacity: false)
                 }
             }
-        }
-        return fut.withTestTimeoutIfEnabled(on: loop)
+            toComplete.forEach { $0.succeed(()) }
+        }.withTestTimeoutIfEnabled(on: loop)
     }
 
     internal init(

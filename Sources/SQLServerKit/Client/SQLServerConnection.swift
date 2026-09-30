@@ -39,8 +39,8 @@ public final class SQLServerConnection: @unchecked Sendable {
             hostname: String,
             port: Int = 1433,
             login: Login,
-            tlsConfiguration: SQLServerTLSConfiguration? = .makeClientConfiguration(),
-            encryptionMode: SQLServerEncryptionMode = .optional,
+            tlsConfiguration: SQLServerTLSConfiguration? = .clientDefault,
+            encryptionMode: SQLServerEncryptionMode = .mandatory,
             hostNameInCertificate: String? = nil,
             metadataConfiguration: SQLServerMetadataOperations.Configuration = .init(),
             retryConfiguration: SQLServerRetryConfiguration = .init(),
@@ -90,7 +90,7 @@ public final class SQLServerConnection: @unchecked Sendable {
     ) async throws -> SQLServerConnection {
         try await connect(
             configuration: configuration,
-            numberOfThreads: System.coreCount,
+            numberOfThreads: 1,
             logger: logger
         )
     }
@@ -109,7 +109,7 @@ public final class SQLServerConnection: @unchecked Sendable {
 
     internal static func connect(
         configuration: Configuration,
-        eventLoopGroupProvider: SQLServerClient.EventLoopGroupProvider = .createNew(numberOfThreads: System.coreCount),
+        eventLoopGroupProvider: SQLServerClient.EventLoopGroupProvider = .createNew(numberOfThreads: 1),
         logger: Logger = Logger(label: "tds.sqlserver.connection")
     ) -> EventLoopFuture<SQLServerConnection> {
         let group: EventLoopGroup
@@ -282,33 +282,7 @@ public final class SQLServerConnection: @unchecked Sendable {
             return eventLoop.makeSucceededFuture(())
         }
         logger.debug("Connection closed")
-        if reuseOnClose {
-            // Roll back any orphaned transaction before returning to pool.
-            let guardFuture: EventLoopFuture<Void>
-            if !base.isClosed {
-                guardFuture = guardOpenTransaction()
-            } else {
-                guardFuture = eventLoop.makeSucceededFuture(())
-            }
-            return guardFuture.flatMap {
-                let defaultDatabase = self.configuration.login.database
-                let currentDatabase = self.currentDatabase
-                let releaseFuture: EventLoopFuture<Void>
-                if !self.base.isClosed,
-                   currentDatabase.caseInsensitiveCompare(defaultDatabase) != .orderedSame {
-                    releaseFuture = self.changeDatabase(defaultDatabase).flatMap {
-                        self.release(false)
-                    }.flatMapError { _ in
-                        self.release(true)
-                    }
-                } else {
-                    releaseFuture = self.release(false)
-                }
-                return releaseFuture
-            }.map { _ in self.fireAndForgetGroupShutdown() }
-        } else {
-            return release(true).map { _ in self.fireAndForgetGroupShutdown() }
-        }
+        return release(true).map { _ in self.fireAndForgetGroupShutdown() }
     }
 
     public func close() async throws {
@@ -322,28 +296,7 @@ public final class SQLServerConnection: @unchecked Sendable {
         guard shouldClose else { return }
         logger.debug("Connection closed")
 
-        if reuseOnClose {
-            // Roll back any orphaned transaction before returning to pool.
-            if !base.isClosed {
-                try? await guardOpenTransaction().get()
-            }
-            let defaultDatabase = configuration.login.database
-            let currentDatabase = self.currentDatabase
-            if !base.isClosed,
-               currentDatabase.caseInsensitiveCompare(defaultDatabase) != .orderedSame {
-                do {
-                    let switchFuture: EventLoopFuture<Void> = self.changeDatabase(defaultDatabase)
-                    try await switchFuture.get()
-                    try await release(false).get()
-                } catch {
-                    try await release(true).get()
-                }
-            } else {
-                try await release(false).get()
-            }
-        } else {
-            try await release(true).get()
-        }
+        try await release(true).get()
 
         if let group = ownsEventLoopGroup {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -360,27 +313,26 @@ public final class SQLServerConnection: @unchecked Sendable {
 
     @available(macOS 12.0, *)
     public func withTransaction<T>(body: @escaping (SQLServerConnection) async throws -> T) async throws -> T {
+        try await beginTransaction()
+        let result: T
         do {
-            try await beginTransaction()
-            let result = try await body(self)
-            try await commit()
-            return result
+            result = try await body(self)
         } catch {
             _ = try? await rollback()
             throw error
+        }
+        do {
+            try await commit()
+            return result
+        } catch {
+            // A lost COMMIT response cannot tell us whether SQL Server made the
+            // transaction durable. Replaying the body could duplicate writes.
+            throw SQLServerError.commitOutcomeUnknown(error)
         }
     }
 
     public func cancelActiveRequest() {
         base.sendAttention()
-    }
-
-    /// Rolls back any open transaction before the connection is returned to a pool.
-    /// This prevents leaked transactions from holding locks on the server.
-    /// Errors are ignored — if the connection is broken, the server will clean up
-    /// when the TCP session dies.
-    internal func guardOpenTransaction() -> EventLoopFuture<Void> {
-        base.rawSql("IF @@TRANCOUNT > 0 ROLLBACK;").map { _ in () }.recover { _ in () }
     }
 
     deinit {
@@ -392,7 +344,7 @@ public final class SQLServerConnection: @unchecked Sendable {
             return true
         }
         if shouldClose {
-            _ = release(!reuseOnClose)
+            _ = release(true)
         }
     }
 }

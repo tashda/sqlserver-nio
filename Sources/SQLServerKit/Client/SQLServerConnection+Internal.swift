@@ -9,12 +9,10 @@ extension SQLServerConnection {
         if Self.equalsIgnoreCase(current, database) {
             return eventLoop.makeSucceededFuture(())
         }
-        let fut = executeWithRetry(operationName: "changeDatabase") {
-            let sql = "USE \(SQLServerSQL.escapeIdentifier(database));"
-            return self.runBatch(sql).map { _ in
-                self.setCurrentDatabase(database)
-                self.logger.debug("Database context changed to \(database)")
-            }
+        let sql = "USE \(SQLServerSQL.escapeIdentifier(database));"
+        let fut = self.runBatch(sql).map { _ in
+            self.setCurrentDatabase(database)
+            self.logger.debug("Database context changed to \(database)")
         }
         return fut.withTestTimeoutIfEnabled(on: self.eventLoop)
     }
@@ -94,24 +92,6 @@ extension SQLServerConnection {
 
     internal func markSessionPrimed() {
         stateLock.withLock { _isSessionPrimed = true }
-    }
-
-    internal func executeWithRetry<Result: Sendable>(
-        operationName: String,
-        operation: @Sendable @escaping () -> EventLoopFuture<Result>
-    ) -> EventLoopFuture<Result> {
-        @Sendable
-        func attempt(_ currentAttempt: Int) -> EventLoopFuture<Result> {
-            return operation().flatMapError { error in
-                let normalized = SQLServerError.normalize(error)
-                if currentAttempt < self.configuration.retryConfiguration.maximumAttempts && self.configuration.retryConfiguration.shouldRetry(normalized) {
-                    self.logger.debug("Operation \(operationName) attempt \(currentAttempt) failed; retrying")
-                    return attempt(currentAttempt + 1)
-                }
-                return self.eventLoop.makeFailedFuture(normalized)
-            }
-        }
-        return attempt(1)
     }
 
     internal func invalidate() -> EventLoopFuture<Void> {

@@ -1,6 +1,9 @@
 import XCTest
 import NIOSSL
+import NIOCore
+import NIOPosix
 import SQLServerKit
+import SQLServerTDS
 
 final class TLSConfigurationTests: XCTestCase, @unchecked Sendable {
 
@@ -12,11 +15,31 @@ final class TLSConfigurationTests: XCTestCase, @unchecked Sendable {
     }
 
     func testClientDefaultHasFullVerification() {
-        // SQLServerTLSConfiguration.clientDefault wraps makeClientConfiguration(),
-        // which defaults to fullVerification. Verify via makeClientConfiguration()
-        // directly to avoid the ambiguity with NIOSSL's static let of the same name.
-        let config = TLSConfiguration.makeClientConfiguration()
+        let config = SQLServerClient.Configuration(
+            hostname: "localhost",
+            port: 1433,
+            login: .init(database: "master", authentication: .sqlPassword(username: "sa", password: "test"))
+        ).tlsConfiguration
+        XCTAssertNotNil(config)
+        XCTAssertEqual(config?.minimumTLSVersion, .tlsv12)
+        XCTAssertEqual(config?.certificateVerification, CertificateVerification.fullVerification)
+    }
+
+    func testCustomCAStillVerifiesHostname() {
+        let config: SQLServerTLSConfiguration = .withCACertificate(atPath: "/tmp/test-ca.pem")
         XCTAssertEqual(config.certificateVerification, CertificateVerification.fullVerification)
+    }
+
+    func testLowLevelVerifiedTLSRequiresHostname() async throws {
+        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        defer { group.shutdownGracefully { _ in } }
+        let address = try SocketAddress(ipAddress: "127.0.0.1", port: 1433)
+        do {
+            _ = try await TDSConnection.connect(to: address, on: group.next()).get()
+            XCTFail("Verified TLS must have a hostname")
+        } catch {
+            XCTAssertTrue(String(describing: error).contains("requires a server hostname"))
+        }
     }
 
     // MARK: - Configuration.init(tlsEnabled:trustServerCertificate:)
@@ -68,5 +91,40 @@ final class TLSConfigurationTests: XCTestCase, @unchecked Sendable {
             trustServerCertificate: true
         )
         XCTAssertNil(config.tlsConfiguration)
+    }
+
+    func testUnencryptedLoginFailsBeforeConnecting() async throws {
+        let config = SQLServerClient.Configuration(
+            hostname: "127.0.0.1",
+            database: "master",
+            authentication: .sqlPassword(username: "sa", password: "secret"),
+            tlsEnabled: false,
+            encryptionMode: .optional
+        )
+        do {
+            let client = try await SQLServerClient.connect(configuration: config, numberOfThreads: 1)
+            try await client.shutdownGracefully()
+            XCTFail("Unencrypted LOGIN7 should be refused")
+        } catch {
+            XCTAssertTrue(String(describing: error).contains("TLS configuration is required"))
+        }
+    }
+
+    func testStrictModeRequiresCertificateVerification() async throws {
+        let config = SQLServerClient.Configuration(
+            hostname: "127.0.0.1",
+            database: "master",
+            authentication: .sqlPassword(username: "sa", password: "secret"),
+            tlsEnabled: true,
+            trustServerCertificate: true,
+            encryptionMode: .strict
+        )
+        do {
+            let client = try await SQLServerClient.connect(configuration: config, numberOfThreads: 1)
+            try await client.shutdownGracefully()
+            XCTFail("Strict mode must reject disabled certificate verification")
+        } catch {
+            XCTAssertTrue(String(describing: error).contains("full server certificate verification"))
+        }
     }
 }

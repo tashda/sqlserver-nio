@@ -33,20 +33,12 @@ extension TDSConnection: TDSClient {
             resultPromise: resultPromise,
             tokenHandler: tokenHandler
         )
-        let didComplete = NIOLockedValueBox(false)
-        completionPromise.futureResult.whenComplete { _ in
-            didComplete.withLockedValue { $0 = true }
-        }
         self.logger.debug("[TDSRequest.send] creating promises on loop=\(self.channel.eventLoop) channelActive=\(self.channel.isActive)")
         let writeFuture = self.channel.writeAndFlush(context)
         self.channel.closeFuture.whenComplete { _ in
-            if !didComplete.withLockedValue({ $0 }) {
-                completionPromise.fail(TDSError.connectionClosed)
-                resultPromise.fail(TDSError.connectionClosed)
-            }
+            context.fail(TDSError.connectionClosed)
         }
-        writeFuture.cascadeFailure(to: completionPromise)
-        writeFuture.cascadeFailure(to: resultPromise)
+        writeFuture.whenFailure { context.fail($0) }
         return completionPromise.futureResult
     }
 }
@@ -90,6 +82,8 @@ final class TDSRequestContext: @unchecked Sendable {
     var lastError: Error?
     var started: Bool = false
     var rows: [TDSRow] = []
+    private let completionLock = NIOLock()
+    private var completed = false
 
     init(
         delegate: TDSRequest,
@@ -101,6 +95,26 @@ final class TDSRequestContext: @unchecked Sendable {
         self.completionPromise = completionPromise
         self.resultPromise = resultPromise
         self.tokenHandler = tokenHandler
+    }
+
+    private func claimCompletion() -> Bool {
+        completionLock.withLock {
+            guard !completed else { return false }
+            completed = true
+            return true
+        }
+    }
+
+    func succeed(_ rows: [TDSData]) {
+        guard claimCompletion() else { return }
+        completionPromise.succeed(())
+        resultPromise.succeed(rows)
+    }
+
+    func fail(_ error: Error) {
+        guard claimCompletion() else { return }
+        completionPromise.fail(error)
+        resultPromise.fail(error)
     }
 }
 
@@ -484,11 +498,9 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
         self.queue.removeFirst()
         compactStreamParserIfFullyConsumed()
         if let error = error {
-            request.completionPromise.fail(error)
-            request.resultPromise.fail(error)
+            request.fail(error)
         } else {
-            request.completionPromise.succeed(())
-            request.resultPromise.succeed(request.rows.flatMap { $0.data })
+            request.succeed(request.rows.flatMap { $0.data })
         }
     }
 
@@ -590,8 +602,7 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
             if self.state == .loggedIn {
                 // After successful login, any further LOGIN attempts are no-ops.
                 self.logger.debug("Dropping LOGIN after connection is already logged in")
-                request.completionPromise.succeed(())
-                request.resultPromise.succeed([])
+                request.succeed([])
                 promise?.succeed(())
                 return
             } else if loginAlreadyQueued || self.state == .sentLogin {
@@ -599,8 +610,7 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
                 // duplicate request before it ever enters the queue. The original LOGIN
                 // remains the head and will complete normally.
                 self.logger.debug("Dropping duplicate queued LOGIN request")
-                request.completionPromise.succeed(())
-                request.resultPromise.succeed([])
+                request.succeed([])
                 promise?.succeed(())
                 return
             }
@@ -637,8 +647,7 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
         context.close(mode: mode, promise: promise)
         
         for current in self.queue {
-            current.completionPromise.fail(TDSError.connectionClosed)
-            current.resultPromise.fail(TDSError.connectionClosed)
+            current.fail(TDSError.connectionClosed)
         }
         self.queue = []
     }
@@ -648,12 +657,10 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
         context.fireErrorCaught(error)
         if !queue.isEmpty {
             let req = queue.removeFirst()
-            req.completionPromise.fail(error)
-            req.resultPromise.fail(error)
+            req.fail(error)
             while !queue.isEmpty {
                 let nextReq = queue.removeFirst()
-                nextReq.completionPromise.fail(TDSError.connectionClosed)
-                nextReq.resultPromise.fail(TDSError.connectionClosed)
+                nextReq.fail(TDSError.connectionClosed)
             }
         }
     }
@@ -764,8 +771,7 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
                 // then send ATTENTION and wait for the server's DONE+ATTN ack before
                 // starting the next queued request.
                 if let current = self.currentRequest, context.channel.isActive {
-                    current.completionPromise.fail(TDSError.protocolError("request timeout"))
-                    current.resultPromise.fail(TDSError.protocolError("request timeout"))
+                    current.fail(TDSError.protocolError("request timeout"))
                     // Remove from queue so cleanupRequest doesn't double-fail
                     self.queue.removeFirst()
                     // Send ATTENTION to cancel the server-side operation
@@ -802,8 +808,7 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
         pipelineCoordinator?.failHandshakeIfPending()
         while !queue.isEmpty {
             let req = queue.removeFirst()
-            req.completionPromise.fail(TDSError.connectionClosed)
-            req.resultPromise.fail(TDSError.connectionClosed)
+            req.fail(TDSError.connectionClosed)
         }
         // Diagnostic: dump any unresolved promises we created on this loop
         PromiseTracker.dumpUnresolved(context: "channelInactive loop=\(context.eventLoop)")
@@ -818,8 +823,7 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
         }
         while !queue.isEmpty {
             let req = queue.removeFirst()
-            req.completionPromise.fail(TDSError.connectionClosed)
-            req.resultPromise.fail(TDSError.connectionClosed)
+            req.fail(TDSError.connectionClosed)
         }
     }
 

@@ -24,6 +24,10 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
             precondition(maximumConcurrentConnections > 0, "maximumConcurrentConnections must be positive")
             precondition(minimumIdleConnections >= 0, "minimumIdleConnections must be non-negative")
             precondition(minimumIdleConnections <= maximumConcurrentConnections, "minimumIdleConnections cannot exceed maximumConcurrentConnections")
+            precondition(checkoutTimeout.isFinite && checkoutTimeout > 0, "checkoutTimeout must be finite and positive")
+            if let connectionIdleTimeout {
+                precondition(connectionIdleTimeout.isFinite && connectionIdleTimeout > 0, "connectionIdleTimeout must be finite and positive")
+            }
             self.maximumConcurrentConnections = maximumConcurrentConnections
             self.minimumIdleConnections = minimumIdleConnections
             self.connectionIdleTimeout = connectionIdleTimeout
@@ -37,10 +41,53 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
         case shutdown
     }
 
-    private struct PoolRequest {
+    private final class PoolRequest: @unchecked Sendable {
         let promise: EventLoopPromise<TDSConnection>
         let eventLoop: EventLoop
         let id: UInt64
+        private let stateLock = NIOLock()
+        private var completed = false
+        private var attachedConnection: TDSConnection?
+
+        init(promise: EventLoopPromise<TDSConnection>, eventLoop: EventLoop, id: UInt64) {
+            self.promise = promise
+            self.eventLoop = eventLoop
+            self.id = id
+        }
+
+        var isPending: Bool { stateLock.withLock { !completed } }
+
+        func attach(_ connection: TDSConnection) -> Bool {
+            stateLock.withLock {
+                guard !completed else { return false }
+                attachedConnection = connection
+                return true
+            }
+        }
+
+        @discardableResult
+        func succeed(_ connection: TDSConnection) -> Bool {
+            let won = stateLock.withLock { () -> Bool in
+                guard !completed else { return false }
+                completed = true
+                attachedConnection = nil
+                return true
+            }
+            if won { promise.succeed(connection) }
+            return won
+        }
+
+        func fail(_ error: Swift.Error) -> (won: Bool, attached: TDSConnection?) {
+            let result = stateLock.withLock { () -> (Bool, TDSConnection?) in
+                guard !completed else { return (false, nil) }
+                completed = true
+                let connection = attachedConnection
+                attachedConnection = nil
+                return (true, connection)
+            }
+            if result.0 { promise.fail(error) }
+            return result
+        }
     }
 
     private let requestIDCounter = NIOLockedValueBox<UInt64>(0)
@@ -52,7 +99,7 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
 
     public final class PooledConnection: @unchecked Sendable {
         fileprivate let connection: TDSConnection
-        fileprivate unowned let pool: SQLServerConnectionPool
+        fileprivate let pool: SQLServerConnectionPool
         private let releaseLock = NIOLock()
         private var released = false
 
@@ -91,7 +138,7 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
             }
 
             if shouldRelease {
-                _ = release(close: connection.isClosed)
+                _ = pool.release(connection, close: true)
             }
         }
     }
@@ -112,8 +159,13 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
     private var idle: [IdleConnection] = []
     private var leased: [Swift.ObjectIdentifier: TDSConnection] = [:]
     private var waiters = CircularBuffer<PoolRequest>()
+    private var pendingRequests: [UInt64: PoolRequest] = [:]
     private var activeConnections = 0
     private var isShuttingDown = false
+    private var warmupFailures = 0
+    private var warmupRetryTask: Scheduled<Void>?
+    private var shutdownPromise: EventLoopPromise<Void>?
+    private var shutdownClosesInProgress = 0
     private let logger: Logger
 
     internal init(
@@ -138,11 +190,17 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
             return id
         }
         let request = PoolRequest(promise: promise, eventLoop: targetLoop, id: requestID)
+        lock.withLock { pendingRequests[requestID] = request }
         process(request: request)
 
         let timeout = configuration.checkoutTimeout
         let timeoutNanos = Int64(timeout * 1_000_000_000)
         let timeoutTask = targetLoop.scheduleTask(deadline: .now() + .nanoseconds(timeoutNanos)) { [weak self] in
+            let failure = request.fail(SQLServerError.timeout(
+                description: "connection pool checkout timed out after \(timeout)s (pool may be exhausted or a connection is stuck)",
+                underlying: nil
+            ))
+            guard failure.won else { return }
             // Remove the timed-out waiter from the queue
             let waiterCount: Int = self?.lock.withLock {
                 if let index = self?.waiters.firstIndex(where: { $0.id == requestID }) {
@@ -151,14 +209,14 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
                 return self?.waiters.count ?? 0
             } ?? 0
             self?.logger.warning("Connection pool checkout timed out after \(timeout)s, waiters=\(waiterCount)")
-            promise.fail(SQLServerError.timeout(
-                description: "connection pool checkout timed out after \(timeout)s (pool may be exhausted or a connection is stuck)",
-                underlying: nil
-            ))
+            if let attached = failure.attached {
+                _ = self?.release(attached, close: true)
+            }
         }
 
         return promise.futureResult.always { _ in
             timeoutTask.cancel()
+            _ = self.lock.withLock { self.pendingRequests.removeValue(forKey: requestID) }
         }.map { connection in
             PooledConnection(connection: connection, pool: self)
         }
@@ -181,49 +239,60 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
 
     internal func shutdownGracefully() -> EventLoopFuture<Void> {
         var connectionsToClose: [TDSConnection] = []
-        var waiting: [PoolRequest] = []
-        var alreadyShuttingDown = false
+        var pending: [PoolRequest] = []
+        let promise = eventLoopGroup.next().makePromise(of: Void.self)
+        var existing: EventLoopFuture<Void>?
 
         lock.withLock {
-            if isShuttingDown {
-                alreadyShuttingDown = true
+            if let shutdownPromise {
+                existing = shutdownPromise.futureResult
                 return
             }
+            shutdownPromise = promise
             isShuttingDown = true
+            warmupRetryTask?.cancel()
+            warmupRetryTask = nil
             connectionsToClose = idle.map { $0.connection }
-            connectionsToClose.append(contentsOf: leased.values)
             idle.forEach { $0.idleTask?.cancel() }
+            shutdownClosesInProgress += idle.count
+            activeConnections = max(0, activeConnections - idle.count)
             idle.removeAll(keepingCapacity: true)
-            leased.removeAll(keepingCapacity: true)
-            waiting = Array(waiters)
             waiters.removeAll(keepingCapacity: true)
+            pending = Array(pendingRequests.values)
+            pendingRequests.removeAll(keepingCapacity: true)
         }
 
-        if alreadyShuttingDown {
-            // Avoid scheduling onto a possibly closing event loop; return a pre-completed future
-            // backed by an active loop if available, otherwise use the event loop of an active
-            // connection or an EmbeddedEventLoop fallback.
-            return makeImmediateSucceededFuture(on: eventLoopGroup)
+        if let existing { return existing }
+
+        pending.forEach { request in
+            let failure = request.fail(Error.shutdown)
+            if let attached = failure.attached { _ = release(attached, close: true) }
         }
 
-        waiting.forEach { request in
-            // Complete the promise - promises can be completed from any thread
-            request.promise.fail(Error.shutdown)
+        connectionsToClose.forEach { connection in
+            _ = closeTracked(connection, alreadyCounted: true)
         }
+        finishShutdownIfDrained()
+        return promise.futureResult
+    }
 
-        if connectionsToClose.isEmpty {
-            return makeImmediateSucceededFuture(on: eventLoopGroup)
+    private func closeTracked(_ connection: TDSConnection, alreadyCounted: Bool = false) -> EventLoopFuture<Void> {
+        if !alreadyCounted { lock.withLock { shutdownClosesInProgress += 1 } }
+        return connection.close().always { _ in
+            self.lock.withLock { self.shutdownClosesInProgress -= 1 }
+            self.finishShutdownIfDrained()
         }
+    }
 
-        let futures = connectionsToClose.map { $0.close() }
-        // Avoid selecting a new loop from a group that is shutting down; chain completion
-        // onto the event loop of the first connection being closed, which is guaranteed
-        // to remain valid for the duration of the close.
-        if let first = connectionsToClose.first {
-            return EventLoopFuture.andAllSucceed(futures, on: first.eventLoop)
-        } else {
-            return makeImmediateSucceededFuture(on: eventLoopGroup)
+    private func finishShutdownIfDrained() {
+        let complete: EventLoopPromise<Void>? = lock.withLock {
+            guard isShuttingDown, activeConnections == 0,
+                  shutdownClosesInProgress == 0 else { return nil }
+            let promise = shutdownPromise
+            shutdownPromise = nil
+            return promise
         }
+        complete?.succeed(())
     }
 
     internal func statusSnapshot() -> SQLServerConnectionPoolStatus {
@@ -237,13 +306,8 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
         }
     }
 
-    private func makeImmediateSucceededFuture(on group: EventLoopGroup) -> EventLoopFuture<Void> {
-        // Always use a real event loop from the group to avoid EmbeddedEventLoop thread safety issues
-        let loop = group.next()
-        return loop.makeSucceededFuture(())
-    }
-
     private func process(request: PoolRequest) {
+        guard request.isPending else { return }
         let action: Action = lock.withLock {
             if isShuttingDown {
                 return .fail(request: request, error: Error.poolClosed)
@@ -268,46 +332,47 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
         run(action)
     }
 
-    fileprivate func release(_ connection: TDSConnection, close: Bool) -> EventLoopFuture<Void> {
+    fileprivate func release(_ connection: TDSConnection, close _: Bool) -> EventLoopFuture<Void> {
         var shouldEnsure = false
 
         let action: Action = lock.withLock {
-            leased.removeValue(forKey: Swift.ObjectIdentifier(connection))
+            guard leased.removeValue(forKey: Swift.ObjectIdentifier(connection)) != nil else {
+                return .none
+            }
             if isShuttingDown {
                 activeConnections = max(0, activeConnections - 1)
+                shutdownClosesInProgress += 1
                 return .close(connection: connection)
             }
 
-            if close || connection.isClosed {
-                activeConnections = max(0, activeConnections - 1)
-                let next = waiters.popFirst()
-                if next != nil {
-                    activeConnections += 1
-                }
-                shouldEnsure = true
-                return .closeAndMaybeCreate(connection: connection, next: next)
-            }
-
-            if let waiter = waiters.popFirst() {
-                leased[Swift.ObjectIdentifier(connection)] = connection
-                return .succeed(request: waiter, connection: connection)
-            }
-
-            // TODO: Re-enable RESETCONNECTION once session re-bootstrap is implemented
-            // after pool checkout. Without re-bootstrap, RESETCONNECTION resets the
-            // database context to master and clears SET options, breaking callers.
-            // connection.markForReset()
-            let task = scheduleIdleClose(for: connection)
-            idle.append(IdleConnection(connection: connection, idleTask: task))
+            // A returned SQL Server session can retain SET options, SESSION_CONTEXT,
+            // temp objects, security context, and transaction state. Until the
+            // RESETCONNECTION path is verified, only a fresh physical session is
+            // safe to lease to a different operation.
+            activeConnections = max(0, activeConnections - 1)
+            shutdownClosesInProgress += 1
+            let next = waiters.popFirst()
+            if next != nil { activeConnections += 1 }
             shouldEnsure = true
-            return .none
+            return .closeAndMaybeCreate(connection: connection, next: next)
         }
 
-        run(action)
-        if shouldEnsure {
-            ensureMinimumIdleConnections()
+        switch action {
+        case .closeAndMaybeCreate(let connection, let next):
+            let closed = closeTracked(connection, alreadyCounted: true)
+            let ensure = shouldEnsure
+            _ = closed.always { _ in
+                if let next { self.createConnection(for: next) }
+                if ensure { self.ensureMinimumIdleConnections() }
+            }
+            return closed
+        case .close(let connection):
+            return closeTracked(connection, alreadyCounted: true)
+        default:
+            run(action)
+            if shouldEnsure { ensureMinimumIdleConnections() }
+            return connection.eventLoop.makeSucceededFuture(())
         }
-        return connection.eventLoop.makeSucceededFuture(())
     }
 
     private func run(_ action: Action) {
@@ -317,14 +382,14 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
         case .create(let request):
             createConnection(for: request)
         case .closeAndMaybeCreate(let connection, let next):
-            _ = connection.close()
+            _ = closeTracked(connection, alreadyCounted: true)
             if let request = next {
                 createConnection(for: request)
             }
         case .close(let connection):
-            _ = connection.close()
+            _ = closeTracked(connection, alreadyCounted: true)
         case .fail(let request, let error):
-            request.promise.fail(error)
+            _ = request.fail(error)
         case .none:
             break
         }
@@ -347,11 +412,12 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
                 let entry = self.idle.remove(at: index)
                 entry.idleTask?.cancel()
                 self.activeConnections = max(0, self.activeConnections - 1)
+                self.shutdownClosesInProgress += 1
                 shouldClose = true
             }
         }
         if shouldClose {
-            _ = connection.close()
+            _ = closeTracked(connection, alreadyCounted: true)
             ensureMinimumIdleConnections()
         }
     }
@@ -391,8 +457,10 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
                 var waiter: PoolRequest?
                 var shouldClose = false
                 self.lock.withLock {
+                    self.warmupFailures = 0
                     if self.isShuttingDown {
                         self.activeConnections = max(0, self.activeConnections - 1)
+                        self.shutdownClosesInProgress += 1
                         shouldClose = true
                     } else if let request = self.waiters.popFirst() {
                         waiter = request
@@ -406,7 +474,7 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
                 if let waiter = waiter {
                     self.deliver(connection: connection, to: waiter)
                 } else if shouldClose {
-                    _ = connection.close()
+                    _ = self.closeTracked(connection, alreadyCounted: true)
                 }
 
             case .failure(let error):
@@ -414,12 +482,39 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
                 self.lock.withLock {
                     self.activeConnections = max(0, self.activeConnections - 1)
                 }
+                self.finishShutdownIfDrained()
+                self.scheduleWarmupRetry()
+            }
+        }
+    }
+
+    private func scheduleWarmupRetry() {
+        lock.withLock {
+            guard !isShuttingDown, warmupRetryTask == nil else { return }
+            warmupFailures = min(warmupFailures + 1, 6)
+            let delay = TimeAmount.milliseconds(Int64(500 * (1 << (warmupFailures - 1))))
+            warmupRetryTask = eventLoopGroup.next().scheduleTask(in: delay) { [weak self] in
+                guard let self else { return }
+                self.lock.withLock { self.warmupRetryTask = nil }
                 self.ensureMinimumIdleConnections()
             }
         }
     }
 
     private func createConnection(for request: PoolRequest) {
+        let shouldCreate = lock.withLock { () -> Bool in
+            guard !isShuttingDown, request.isPending else {
+                activeConnections = max(0, activeConnections - 1)
+                return false
+            }
+            return true
+        }
+        guard shouldCreate else {
+            _ = request.fail(Error.shutdown)
+            finishShutdownIfDrained()
+            ensureMinimumIdleConnections()
+            return
+        }
         let future = connectionFactory(request.eventLoop)
         future.whenComplete { result in
             switch result {
@@ -442,9 +537,8 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
             }
         }
 
-        request.eventLoop.execute {
-            request.promise.fail(error)
-        }
+        _ = request.fail(error)
+        finishShutdownIfDrained()
 
         if let nextRequest = next {
             createConnection(for: nextRequest)
@@ -453,8 +547,23 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
     }
 
     private func deliver(connection: TDSConnection, to request: PoolRequest) {
-        self.lock.withLock {
+        let shuttingDown = self.lock.withLock { () -> Bool in
+            if self.isShuttingDown {
+                self.activeConnections = max(0, self.activeConnections - 1)
+                self.shutdownClosesInProgress += 1
+                return true
+            }
             self.leased[Swift.ObjectIdentifier(connection)] = connection
+            return false
+        }
+        if shuttingDown {
+            _ = request.fail(Error.shutdown)
+            _ = closeTracked(connection, alreadyCounted: true)
+            return
+        }
+        guard request.attach(connection) else {
+            _ = release(connection, close: true)
+            return
         }
         let poolStats = self.lock.withLock {
             (active: self.activeConnections, idle: self.idle.count, waiters: self.waiters.count)
@@ -464,20 +573,19 @@ public final class SQLServerConnectionPool: @unchecked Sendable {
             connection.rawSql(validationQuery).whenComplete { result in
                 switch result {
                 case .success:
-                    request.promise.succeed(connection)
+                    if !request.succeed(connection) {
+                        _ = self.release(connection, close: true)
+                    }
                 case .failure(let error):
                     self.logger.warning("Validation query failed: \(error)")
-                    _ = connection.close()
-                    self.lock.withLock {
-                        self.leased.removeValue(forKey: Swift.ObjectIdentifier(connection))
-                        self.activeConnections = max(0, self.activeConnections - 1)
-                    }
+                    _ = self.release(connection, close: true)
                     self.process(request: request)
-                    self.ensureMinimumIdleConnections()
                 }
             }
         } else {
-            request.promise.succeed(connection)
+            if !request.succeed(connection) {
+                _ = release(connection, close: true)
+            }
         }
     }
 

@@ -18,67 +18,60 @@ extension TDSMessages {
         }
 
         public static func parse(from buffer: inout ByteBuffer) throws -> PreloginResponse {
-            var _buffer = buffer
-            
-            var version: String?
-            var encryption: PreloginEncryption?
-            
+            var input = buffer
+            let messageStart = input.readerIndex
+            var options: [(token: UInt8, offset: Int, length: Int)] = []
+
             while true {
-                guard let typeByte = _buffer.readByte() else {
+                guard let typeByte = input.readByte() else { throw TDSError.needMoreData }
+                if typeByte == 0xFF { break }
+                guard let offset: UInt16 = input.readInteger(endianness: .big),
+                      let length: UInt16 = input.readInteger(endianness: .big) else {
                     throw TDSError.needMoreData
                 }
-                
-                guard let token = PreloginToken(rawValue: typeByte) else {
-                    throw TDSError.protocolError("Invalid Prelogin Response: Unknown token 0x\(String(format: "%02X", typeByte))")
+                options.append((typeByte, Int(offset), Int(length)))
+            }
+
+            let optionTableEnd = input.readerIndex
+            var version: String?
+            var encryption: PreloginEncryption?
+            for option in options {
+                let dataStart = messageStart + option.offset
+                guard dataStart >= optionTableEnd else {
+                    throw TDSError.protocolError("PRELOGIN response data overlaps option table")
                 }
-                
-                if token == .terminator {
-                    break
+                guard let data = input.getSlice(at: dataStart, length: option.length) else {
+                    throw TDSError.needMoreData
                 }
-                
-                // Read PRELOGIN_OPTION
-                guard
-                    let offset: UInt16 = _buffer.readInteger(endianness: .big),
-                    let _: UInt16 = _buffer.readInteger(endianness: .big)
-                    else {
-                        throw TDSError.protocolError("Invalid Prelogin Response: Invalid *PRELOGIN_OPTION segment.")
-                }
-                
-                let savedIndex = _buffer.readerIndex
-                _buffer.moveReaderIndex(to: Int(offset))
-                
-                switch token {
-                case .version:
-                    guard
-                        let major: UInt8 = _buffer.readInteger(),
-                        let minor: UInt8 = _buffer.readInteger(),
-                        let build: UInt16 = _buffer.readInteger(endianness: .big)
-                        else {
-                            throw TDSError.protocolError("Invalid Prelogin Response: Invalid VERSION data.")
+                var value = data
+                switch option.token {
+                case 0x00:
+                    guard option.length == 6,
+                          let major: UInt8 = value.readInteger(),
+                          let minor: UInt8 = value.readInteger(),
+                          let build: UInt16 = value.readInteger(endianness: .big) else {
+                        throw TDSError.protocolError("Invalid PRELOGIN VERSION data")
                     }
                     version = "\(major).\(minor).\(build)"
-                case .encryption:
-                    guard let encryptionByte = _buffer.readByte() else {
-                        throw TDSError.protocolError("Invalid Prelogin Response: Invalid ENCRYPTION data.")
+                case 0x01:
+                    guard option.length == 1,
+                          let encryptionByte = value.readByte(),
+                          let parsed = PreloginEncryption(rawValue: encryptionByte) else {
+                        throw TDSError.protocolError("Invalid PRELOGIN ENCRYPTION data")
                     }
-                    encryption = PreloginEncryption(rawValue: encryptionByte)
+                    encryption = parsed
                 default:
                     break
                 }
-                
-                _buffer.moveReaderIndex(to: savedIndex)
             }
-            
+
             guard let version = version else {
-                throw TDSError.protocolError("Invalid Prelogin Response: Missing required VERSION data.")
+                throw TDSError.protocolError("Invalid PRELOGIN response: missing VERSION")
             }
-            
             guard let encryption = encryption else {
-                throw TDSError.protocolError("Invalid Prelogin Response: Missing required ENCRYPTION data.")
+                throw TDSError.protocolError("Invalid PRELOGIN response: missing ENCRYPTION")
             }
-            
-            let response = PreloginResponse(version: version, encryption: encryption)
-            return response
+            return PreloginResponse(version: version, encryption: encryption)
         }
     }
 }
