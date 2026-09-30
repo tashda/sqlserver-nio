@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # LabTLSTests: SQL Server with certificates from a lab CA.
-#   nio-lab-tls        :14431  valid certificate (names sql-tls.nio.test, localhost, 127.0.0.1), TLS 1.2
+#   nio-lab-tls        :14431  valid certificate (names sql-tls.nio.test, localhost, 127.0.0.1 and the lab address), TLS 1.2
 #   nio-lab-strict     :14432  the same, TDS 8.0 Strict (SQL Server 2025)
 #   nio-lab-expired    :14433  expired certificate
 #   nio-lab-tls10      :14434  TLS 1.0 only (SQL Server 2022, OpenSSL security level 0)
@@ -15,6 +15,10 @@ TLS_HOST="sql-tls.nio.test"
 
 # Lab CA plus server certificates: valid and expired. Made only when missing.
 make_certs() {
+    # Certificates name the lab address; make new ones when it changed.
+    if [ -f "$CERT_DIR/valid.pem" ] && ! openssl x509 -in "$CERT_DIR/valid.pem" -noout -text | grep -q "IP Address:$LAB_ADDRESS"; then
+        rm -f "$CERT_DIR"/valid.* "$CERT_DIR"/expired.* ; rm -rf "$CERT_DIR/ca-db"
+    fi
     mkdir -p "$CERT_DIR"
     (
         cd "$CERT_DIR"
@@ -24,7 +28,7 @@ make_certs() {
 basicConstraints=CA:FALSE
 keyUsage=digitalSignature,keyEncipherment
 extendedKeyUsage=serverAuth
-subjectAltName=DNS:$TLS_HOST,DNS:localhost,IP:127.0.0.1
+subjectAltName=DNS:$TLS_HOST,DNS:localhost,IP:127.0.0.1,IP:$LAB_ADDRESS
 EXT
         if [ ! -f valid.pem ]; then
             openssl req -newkey rsa:2048 -nodes -subj "/CN=$TLS_HOST" -keyout valid.key -out valid.csr 2>/dev/null
@@ -64,18 +68,22 @@ CNF
 # container; a read-only mount keeps it from starting.
 start_tls_server() {
     local name=$1 port=$2 cert=$3 strict=$4 version=$5 protocols=$6
-    docker rm -f "$name" >/dev/null 2>&1 || true
+    remove_containers "$name"
     local conf; conf=$(mktemp)
     printf '[network]\ntlscert = /var/opt/mssql/tls/server.pem\ntlskey = /var/opt/mssql/tls/server.key\ntlsprotocols = %s\nforceencryption = 1\n' "$protocols" > "$conf"
     [ "$strict" = 1 ] && printf 'forcestrict = 1\n' >> "$conf"
     chmod 666 "$conf"
     # shellcheck disable=SC2046
-    docker create --name "$name" --label nio-lab=1 $(platform_args) \
+    docker create --name "$name" --label nio-lab=1 $(platform_args) "${SQL_MEMORY_ARGS[@]}" \
         -e ACCEPT_EULA=Y -e "MSSQL_SA_PASSWORD=$PASSWORD" -p "$port:1433" \
-        -v "$CERT_DIR/$cert.pem:/var/opt/mssql/tls/server.pem:ro" \
-        -v "$CERT_DIR/$cert.key:/var/opt/mssql/tls/server.key:ro" \
         "$SQL_IMAGE_PREFIX:$version-latest" >/dev/null
     docker cp "$conf" "$name:/var/opt/mssql/mssql.conf" >/dev/null
+    # Copied, not mounted: the containers may run on the lab server.
+    local tls; tls=$(mktemp -d)
+    cp "$CERT_DIR/$cert.pem" "$tls/server.pem"; cp "$CERT_DIR/$cert.key" "$tls/server.key"
+    chmod 755 "$tls"; chmod 644 "$tls"/*
+    docker cp "$tls" "$name:/var/opt/mssql/tls" >/dev/null
+    rm -rf "$tls"
     rm -f "$conf"
     if [ "$protocols" != "1.2" ]; then
         # OpenSSL 3 disables TLS 1.0 and 1.1 above security level 0. SQL
@@ -90,17 +98,17 @@ start_tls_server() {
 }
 
 make_certs
-start_tls_server nio-lab-tls 14431 valid 0 2025 1.2
-start_tls_server nio-lab-strict 14432 valid 1 2025 1.2
-start_tls_server nio-lab-expired 14433 expired 0 2025 1.2
-start_tls_server nio-lab-tls10 14434 valid 0 2022 1.0
-run_sql_server nio-lab-selfsigned 14435 2022
-for name in nio-lab-tls nio-lab-strict nio-lab-expired nio-lab-tls10; do wait_log "$name"; done
-wait_sql nio-lab-selfsigned
-log "TLS fixture ready (ports 14431-14435)"
+# One at a time: SQL Server gives up at start-up (LSA load timeout) when
+# several start at once on a small host.
+start_tls_server nio-lab-tls 14431 valid 0 2025 1.2 && wait_log nio-lab-tls
+start_tls_server nio-lab-strict 14432 valid 1 2025 1.2 && wait_log nio-lab-strict
+start_tls_server nio-lab-expired 14433 expired 0 2025 1.2 && wait_log nio-lab-expired
+start_tls_server nio-lab-tls10 14434 valid 0 2022 1.0 && wait_log nio-lab-tls10
+run_sql_server nio-lab-selfsigned 14435 2022 && wait_sql nio-lab-selfsigned
+log "TLS fixture ready on $LAB_ADDRESS (ports 14431-14435)"
 
 cat <<VARS
-export NIO_LAB_TLS_HOST=127.0.0.1
+export NIO_LAB_TLS_HOST=$LAB_ADDRESS
 export NIO_LAB_TLS_CERT_NAME=$TLS_HOST
 export NIO_LAB_TLS_CA=$CERT_DIR/ca.pem
 export NIO_LAB_TLS_OTHER_CA=$CERT_DIR/other-ca.pem

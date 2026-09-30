@@ -12,8 +12,10 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  # Pushes to dev queue instead of cancelling each other, so every commit is checked.
+  # One group per pull request (a new push cancels its older run) and one per pushed commit, so
+  # every commit on dev is checked. A shared group would not do: GitHub keeps one waiting run per
+  # group and cancels the older waiting ones whatever cancel-in-progress says.
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -115,6 +117,8 @@ jobs:
       - name: Build tests
         run: swift build --build-tests
       - name: Start fixture
+        env:
+          NIO_LAB_HOST: local
         run: |
           export DOCKER_CONFIG="$RUNNER_TEMP/docker-config"
           mkdir -p "$DOCKER_CONFIG"
@@ -142,6 +146,8 @@ jobs:
       - name: Build tests
         run: swift build --build-tests
       - name: Start fixture
+        env:
+          NIO_LAB_HOST: local
         run: |
           export DOCKER_CONFIG="$RUNNER_TEMP/docker-config"
           mkdir -p "$DOCKER_CONFIG"
@@ -169,6 +175,8 @@ jobs:
       - name: Build tests
         run: swift build --build-tests
       - name: Start fixture
+        env:
+          NIO_LAB_HOST: local
         run: |
           export DOCKER_CONFIG="$RUNNER_TEMP/docker-config"
           mkdir -p "$DOCKER_CONFIG"

@@ -4,8 +4,8 @@
 #
 # Domain LAB.TEST (NetBIOS LAB). Accounts: nio-sql (SQL Server's service
 # account, holds the SPNs) and nio-user (the test login, LAB\nio-user).
-# The test process reaches the KDC on 127.0.0.1:1088 and SQL Server on
-# localhost:14450; the SPN is MSSQLSvc/localhost:14450. Its krb5.conf and
+# The test process reaches the KDC on <lab address>:1088 and SQL Server on
+# <lab address>:14450; the SPN is MSSQLSvc/<lab address>:14450. Its krb5.conf and
 # ticket cache live under .build/testlab/kerberos, never in the user's own
 # Kerberos setup.
 #
@@ -24,7 +24,7 @@ KDC_PORT=1088
 SQL_PORT=14450
 DC=nio-lab-dc
 SQL=nio-lab-kerberos
-SPN="MSSQLSvc/localhost:${SQL_PORT}"
+SPN="MSSQLSvc/${LAB_ADDRESS}:${SQL_PORT}"
 STATE_DIR="$STATE_ROOT/kerberos"
 
 dc() { docker exec "$DC" "$@"; }
@@ -50,8 +50,8 @@ up_dc() {
     docker network inspect "$NET" >/dev/null 2>&1 || docker network create --subnet "$SUBNET" "$NET" >/dev/null
     docker build -q -t nio-lab-samba-dc "$HERE" >/dev/null
     if [ "$(docker inspect -f '{{.State.Running}}' "$DC" 2>/dev/null)" != "true" ]; then
-        docker rm -f "$DC" >/dev/null 2>&1 || true
-        docker run -d --name "$DC" --label nio-lab=1 --privileged \
+        remove_containers "$DC"
+        docker run -d --name "$DC" --label nio-lab=1 --privileged "${SMALL_MEMORY_ARGS[@]}" \
             --network "$NET" --ip "$DC_IP" --hostname dc1 --domainname lab.test \
             -e REALM="$REALM" -e DOMAIN="$DOMAIN" -e ADMIN_PASSWORD="$PASSWORD" -e HOST_IP="$DC_IP" \
             -p "$KDC_PORT:88/tcp" -p "$KDC_PORT:88/udp" \
@@ -91,9 +91,9 @@ up_dc() {
 
 up_sql() {
     if [ "$(docker inspect -f '{{.State.Running}}' "$SQL" 2>/dev/null)" != "true" ]; then
-        docker rm -f "$SQL" >/dev/null 2>&1 || true
+        remove_containers "$SQL"
         # shellcheck disable=SC2046
-        docker run -d --name "$SQL" --label nio-lab=1 $(platform_args) \
+        docker run -d --name "$SQL" --label nio-lab=1 $(platform_args) "${SQL_MEMORY_ARGS[@]}" \
             --network "$NET" --ip "$SQL_IP" --hostname sql --domainname lab.test \
             --dns "$DC_IP" --dns-search lab.test \
             -e ACCEPT_EULA=Y -e "MSSQL_SA_PASSWORD=$PASSWORD" \
@@ -117,18 +117,20 @@ up_sql() {
     # Docker rewrites the file on every restart, so this comes after it.
     docker exec -u 0 "$SQL" /bin/bash -c "printf 'nameserver $DC_IP\nsearch lab.test\n' > /etc/resolv.conf"
     sqlcmd_sa "IF SUSER_ID(N'LAB\\nio-user') IS NULL CREATE LOGIN [LAB\\nio-user] FROM WINDOWS;"
+    # The tests read auth_scheme from sys.dm_exec_connections.
+    sqlcmd_sa "GRANT VIEW SERVER STATE TO [LAB\\nio-user];"
 }
 
 up_dc >&2
 up_sql >&2
 mkdir -p "$STATE_DIR"
-cp "$HERE/krb5-client.conf" "$STATE_DIR/krb5.conf"
-log "Kerberos fixture ready: SQL Server on localhost:$SQL_PORT, KDC on 127.0.0.1:$KDC_PORT"
+sed "s/@LAB_ADDRESS@/$LAB_ADDRESS/g" "$HERE/krb5-client.conf" > "$STATE_DIR/krb5.conf"
+log "Kerberos fixture ready: SQL Server on $LAB_ADDRESS:$SQL_PORT, KDC on $LAB_ADDRESS:$KDC_PORT"
 
 cat <<VARS
 export KRB5_CONFIG=$STATE_DIR/krb5.conf
 export KRB5CCNAME=FILE:$STATE_DIR/ccache
-export NIO_LAB_KRB_HOST=localhost
+export NIO_LAB_KRB_HOST=$LAB_ADDRESS
 export NIO_LAB_KRB_PORT=$SQL_PORT
 export NIO_LAB_KRB_USERNAME=nio-user
 export NIO_LAB_KRB_PASSWORD=$PASSWORD

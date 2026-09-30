@@ -3,6 +3,12 @@
 # so `eval "$(Tests/Fixtures/<scenario>/start-server.sh)"` works, and CI can
 # append them to $GITHUB_ENV with `sed 's/^export //'`.
 #
+# Where the containers run (the same choice as echo-server-lab):
+#   NIO_LAB_HOST=testlab  (default) the lab server, 192.168.1.153, through the
+#                         Docker context `testlab` (ssh testlab)
+#   NIO_LAB_HOST=local    Docker on this machine (CI)
+# SERVERLAB_HOST is honoured when NIO_LAB_HOST is not set.
+#
 # Containers are named nio-lab-* and labelled nio-lab=1
 # (`Tests/Fixtures/stop-all.sh` removes them). Generated files live under
 # .build/testlab, never in the user's home or system configuration.
@@ -15,9 +21,31 @@ SQL_IMAGE_PREFIX="mcr.microsoft.com/mssql/server"
 
 log() { echo "$@" >&2; }
 
+# Memory caps (the lab server is shared with echo-server-lab, which keeps its
+# own servers inside a budget that counts ours): SQL Server gets 2 GB with
+# its buffer pool held to 1.5 GB; small helpers get less.
+SQL_MEMORY_ARGS=(--memory 2g --memory-swap 2g -e MSSQL_MEMORY_LIMIT_MB=1536)
+SMALL_MEMORY_ARGS=(--memory 512m --memory-swap 512m)
+
+# Removes containers with their volumes (one call each: the lab server's
+# Docker rejects a bulk remove over the SSH context).
+remove_containers() {
+    local id
+    for id in "$@"; do docker rm -f --volumes "$id" >/dev/null 2>&1 || true; done
+}
+
+NIO_LAB_HOST="${NIO_LAB_HOST:-${SERVERLAB_HOST:-testlab}}"
+case "$NIO_LAB_HOST" in
+    local) LAB_ADDRESS=127.0.0.1 ;;
+    testlab) export DOCKER_CONTEXT=testlab; LAB_ADDRESS=192.168.1.153 ;;
+    *) export DOCKER_CONTEXT="$NIO_LAB_HOST"
+       LAB_ADDRESS="${NIO_LAB_ADDRESS:?set NIO_LAB_ADDRESS to the address of $NIO_LAB_HOST}" ;;
+esac
+
+# SQL Server images are amd64 only: emulate on an arm64 Docker host.
 platform_args() {
-    case "$(uname -m)" in
-        arm64|aarch64) echo "--platform linux/amd64" ;;
+    case "$(docker info --format '{{.Architecture}}' 2>/dev/null)" in
+        aarch64|arm64) echo "--platform linux/amd64" ;;
         *) echo "" ;;
     esac
 }
@@ -73,9 +101,9 @@ wait_log() {
 # run_sql_server <container> <host port> [version] [extra docker run arguments…]
 run_sql_server() {
     local container=$1 port=$2 version=${3:-2022}; shift 3 || shift $#
-    docker rm -f "$container" >/dev/null 2>&1 || true
+    remove_containers "$container"
     # shellcheck disable=SC2046
-    docker run -d --name "$container" --label nio-lab=1 $(platform_args) \
+    docker run -d --name "$container" --label nio-lab=1 $(platform_args) "${SQL_MEMORY_ARGS[@]}" \
         -e ACCEPT_EULA=Y -e "MSSQL_SA_PASSWORD=$PASSWORD" -p "$port:1433" "$@" \
         "$SQL_IMAGE_PREFIX:$version-latest" >/dev/null
 }

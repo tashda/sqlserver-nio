@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Test lab for sqlserver-nio: starts SQL Server containers and runs the test
-# suite against them. Containers are named nio-lab-* and labelled nio-lab=1.
+# Test lab for sqlserver-nio: starts SQL Server containers (on the lab server
+# unless NIO_LAB_HOST=local) and runs the test suite against them. Containers
+# are named nio-lab-* and labelled nio-lab=1.
 #
 #   testlab/testlab.sh up 2017 2019 2022 2025   start and wait until ready
 #   testlab/testlab.sh test 2022 [filter]         run swift test against one
@@ -11,23 +12,13 @@
 # TLS, fault, availability-group and Kerberos servers: Tests/Fixtures/.
 set -euo pipefail
 
-PASSWORD="${NIO_LAB_PASSWORD:-NioLab#Pass123}"
+# Runs on the lab server unless NIO_LAB_HOST=local (see Tests/Fixtures/common.sh).
+source "$(cd "$(dirname "$0")" && pwd)/../Tests/Fixtures/common.sh"
 VERSIONS_DEFAULT=(2017 2019 2022 2025)
 LOG_DIR="${NIO_LAB_LOG_DIR:-.build/testlab}"
 
-ensure_network() {
-    docker network inspect nio-lab >/dev/null 2>&1 || docker network create nio-lab >/dev/null
-}
-
 port_for() { echo "144${1: -2}"; }
 name_for() { echo "nio-lab-$1"; }
-
-platform_args() {
-    case "$(uname -m)" in
-        arm64|aarch64) echo "--platform linux/amd64" ;;
-        *) echo "" ;;
-    esac
-}
 
 up_one() {
     local version=$1 name port
@@ -35,10 +26,10 @@ up_one() {
     if [ "$(docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null)" = "true" ]; then
         echo "$name already running on port $port"; return 0
     fi
-    docker rm -f "$name" >/dev/null 2>&1 || true
+    remove_containers "$name"
     ensure_network
     # shellcheck disable=SC2046
-    docker run -d --name "$name" --label nio-lab=1 --network nio-lab $(platform_args) \
+    docker run -d --name "$name" --label nio-lab=1 --network nio-lab $(platform_args) "${SQL_MEMORY_ARGS[@]}" \
         -e ACCEPT_EULA=Y -e "MSSQL_SA_PASSWORD=$PASSWORD" -e MSSQL_AGENT_ENABLED=true \
         -p "$port:1433" "mcr.microsoft.com/mssql/server:$version-latest" >/dev/null
 }
@@ -91,7 +82,7 @@ wait_one() {
 env_for() {
     local version=$1
     cat <<VARS
-export TDS_HOSTNAME=127.0.0.1
+export TDS_HOSTNAME=$LAB_ADDRESS
 export TDS_PORT=$(port_for "$version")
 export TDS_USERNAME=sa
 export TDS_PASSWORD='$PASSWORD'
@@ -128,20 +119,27 @@ case "${1:-}" in
     test)
         shift; test_one "$@" ;;
     matrix)
+        # One version at a time, removed after its run: the lab server is shared.
         shift; filter=("$@")
-        for v in "${VERSIONS_DEFAULT[@]}"; do up_one "$v"; done
-        for v in "${VERSIONS_DEFAULT[@]}"; do wait_one "$v"; done
         failed=()
-        for v in "${VERSIONS_DEFAULT[@]}"; do test_one "$v" "${filter[@]}" || failed+=("$v"); done
+        for v in "${VERSIONS_DEFAULT[@]}"; do
+            up_one "$v"
+            if wait_one "$v"; then
+                test_one "$v" ${filter[@]+"${filter[@]}"} || failed+=("$v")
+            else
+                failed+=("$v")
+            fi
+            remove_containers "$(name_for "$v")"
+        done
         if [ ${#failed[@]} -gt 0 ]; then echo "FAILED on: ${failed[*]}"; exit 1; fi
         echo "All versions passed."
         ;;
     env)
         shift; env_for "$1" ;;
     down)
-        ids=$(docker ps -aq --filter label=nio-lab=1)
-        [ -n "$ids" ] && docker rm -f $ids >/dev/null
-        echo "lab containers removed" ;;
+        # shellcheck disable=SC2046
+        remove_containers $(docker ps -aq --filter label=nio-lab=1)
+        log "lab containers removed ($NIO_LAB_HOST)" ;;
     *)
         sed -n '2,9p' "$0"; exit 2 ;;
 esac

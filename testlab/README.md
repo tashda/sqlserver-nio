@@ -1,8 +1,10 @@
 # sqlserver-nio test lab
 
 Everything the driver claims must be verified against a real server. The lab
-brings those servers up on demand, locally (Docker Desktop on Apple silicon
-runs the amd64 SQL Server images under Rosetta) and in GitHub CI.
+brings those servers up on demand on the lab server (`testlab`, 192.168.1.153,
+Docker context `testlab`), the same host echo-server-lab uses. Set
+`NIO_LAB_HOST=local` for Docker on this machine (CI does); Apple silicon runs
+the amd64 SQL Server images under Rosetta.
 
 ## Scenarios
 
@@ -13,7 +15,7 @@ runs the amd64 SQL Server images under Rosetta) and in GitHub CI.
 | TDS 8.0 Strict (`network.forcestrict`) | `Tests/Fixtures/tls/start-server.sh` (SQL Server 2025) | Verified, runs in CI |
 | Network faults: latency, throttling, resets, silence | `Tests/Fixtures/faults/start-server.sh` (Toxiproxy) | Verified, runs in CI |
 | Availability group read-only routing | `Tests/Fixtures/availability-group/start-servers.sh` (3 containers, `CLUSTER_TYPE = NONE`) | Verified, runs in CI |
-| Kerberos | `Tests/Fixtures/kerberos/start-server.sh` (Samba AD + SQL Server with a keytab) | Fixture works; driver sign-in not yet (see `docs/HARDENING.md`) |
+| Kerberos | `Tests/Fixtures/kerberos/start-server.sh` (Samba AD + SQL Server with a keytab) | Verified from macOS; CI once the driver's Kerberos runs on Linux |
 | SQL Server 2008 R2, 2012, 2014, 2016; NTLM | Windows Server VM on Proxmox (below) | Needs the VM |
 | Azure SQL Database: gateway redirect, Entra ID tokens | Azure free tier (below) | Needs an Azure account |
 | Soak: hours of mixed load under faults | Local or a lab host | Planned |

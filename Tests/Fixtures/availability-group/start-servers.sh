@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # LabAvailabilityGroupTests: a read-scale availability group (CLUSTER_TYPE =
 # NONE) on three SQL Server 2022 containers with read-only routing to the
-# secondaries. Replicas are published on 127.0.0.1:14451-14453 and route to
-# those host addresses, so a client on the host can follow the routing token.
+# secondaries. Replicas are published on the lab address, ports 14451-14453,
+# and route to those addresses, so a client on the host can follow the routing token.
 #
 #   eval "$(Tests/Fixtures/availability-group/start-servers.sh)"
 set -euo pipefail
@@ -24,9 +24,9 @@ up() {
     ensure_network nio-lab
     for i in 0 1 2; do
         local name=${REPLICAS[$i]}
-        docker rm -f "nio-lab-$name" >/dev/null 2>&1 || true
+        remove_containers "nio-lab-$name"
         # shellcheck disable=SC2046
-        docker run -d --name "nio-lab-$name" --hostname "$name" --label nio-lab=1 --network nio-lab $(platform_args) \
+        docker run -d --name "nio-lab-$name" --hostname "$name" --label nio-lab=1 --network nio-lab $(platform_args) "${SQL_MEMORY_ARGS[@]}" \
             -e ACCEPT_EULA=Y -e "MSSQL_SA_PASSWORD=$PASSWORD" -e MSSQL_ENABLE_HADR=1 -e MSSQL_AGENT_ENABLED=true \
             -p "${PORTS[$i]}:1433" "$IMAGE" >/dev/null
     done
@@ -65,7 +65,7 @@ up() {
         [ -n "$replicas" ] && replicas+=","
         replicas+="N'$name' WITH (ENDPOINT_URL = N'tcp://$name:5022', AVAILABILITY_MODE = SYNCHRONOUS_COMMIT,
             FAILOVER_MODE = MANUAL, SEEDING_MODE = AUTOMATIC,
-            SECONDARY_ROLE (ALLOW_CONNECTIONS = ALL, READ_ONLY_ROUTING_URL = N'tcp://127.0.0.1:${PORTS[$i]}'),
+            SECONDARY_ROLE (ALLOW_CONNECTIONS = ALL, READ_ONLY_ROUTING_URL = N'tcp://$LAB_ADDRESS:${PORTS[$i]}'),
             PRIMARY_ROLE (ALLOW_CONNECTIONS = READ_WRITE, READ_ONLY_ROUTING_LIST = (${ROUTES[$i]})))"
     done
     sql ag1 "CREATE AVAILABILITY GROUP nioag WITH (CLUSTER_TYPE = NONE) FOR REPLICA ON $replicas;
@@ -86,17 +86,17 @@ up() {
     done
     # SQL Server routes read-intent logins only when they arrive through a
     # listener. Without a cluster manager the listener uses the primary's
-    # own address, so logins published on 127.0.0.1:14451 qualify.
+    # own address, so logins published on port 14451 qualify.
     local ip; ip=$(docker inspect -f '{{(index .NetworkSettings.Networks "nio-lab").IPAddress}}' nio-lab-ag1)
     sql ag1 "ALTER AVAILABILITY GROUP nioag ADD LISTENER N'niolsnr' (WITH IP ((N'$ip', N'255.255.0.0')), PORT = 1433);" >/dev/null
-    log "availability group nioag ready: primary 127.0.0.1:14451, secondaries 14452 and 14453"
+    log "availability group nioag ready: primary $LAB_ADDRESS:14451, secondaries 14452 and 14453"
 }
 
 up
 
 cat <<VARS
-export NIO_LAB_AG_PRIMARY=127.0.0.1:14451
-export NIO_LAB_AG_SECONDARIES=127.0.0.1:14452,127.0.0.1:14453
+export NIO_LAB_AG_PRIMARY=$LAB_ADDRESS:14451
+export NIO_LAB_AG_SECONDARIES=$LAB_ADDRESS:14452,$LAB_ADDRESS:14453
 export NIO_LAB_AG_DATABASE=nioagdb
 export NIO_LAB_AG_USERNAME=sa
 export NIO_LAB_AG_PASSWORD=$PASSWORD
