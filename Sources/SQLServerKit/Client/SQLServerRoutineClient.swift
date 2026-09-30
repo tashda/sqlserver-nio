@@ -67,7 +67,7 @@ public struct RoutineOptions: Sendable {
 // MARK: - SQLServerRoutineClient
 
 public final class SQLServerRoutineClient: @unchecked Sendable {
-    private let client: SQLServerClient
+    internal let client: SQLServerClient
 
     public init(client: SQLServerClient) {
         self.client = client
@@ -524,7 +524,7 @@ public final class SQLServerRoutineClient: @unchecked Sendable {
         let result = try await client.queryScalar(sql, as: Int.self)
         return (result ?? 0) > 0
     }
-    private static func buildOptionClause(from options: RoutineOptions, allowRecompile: Bool) -> String? {
+    internal static func buildOptionClause(from options: RoutineOptions, allowRecompile: Bool) -> String? {
         var parts: [String] = []
         if options.withEncryption {
             parts.append("ENCRYPTION")

@@ -49,7 +49,7 @@ public struct UserDefinedTableTypeDefinition: Sendable {
 // MARK: - SQLServerTypeClient
 
 public final class SQLServerTypeClient: @unchecked Sendable {
-    private let client: SQLServerClient
+    internal let client: SQLServerClient
 
     public init(client: SQLServerClient) {
         self.client = client
