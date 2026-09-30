@@ -1,9 +1,7 @@
 import XCTest
 import NIOSSL
-import NIOCore
-import NIOPosix
 import SQLServerKit
-import SQLServerTDS
+@testable import SQLServerTDS
 
 final class TLSConfigurationTests: XCTestCase, @unchecked Sendable {
 
@@ -30,16 +28,10 @@ final class TLSConfigurationTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(config.certificateVerification, CertificateVerification.fullVerification)
     }
 
-    func testLowLevelVerifiedTLSRequiresHostname() async throws {
-        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        defer { group.shutdownGracefully { _ in } }
-        let address = try SocketAddress(ipAddress: "127.0.0.1", port: 1433)
-        do {
-            _ = try await TDSConnection.connect(to: address, on: group.next()).get()
-            XCTFail("Verified TLS must have a hostname")
-        } catch {
-            XCTAssertTrue(String(describing: error).contains("requires a server hostname"))
-        }
+    func testIPAddressIsOmittedFromTLSClientSNI() {
+        XCTAssertNil(tdsTLSHostnameForSNI("127.0.0.1"))
+        XCTAssertNil(tdsTLSHostnameForSNI("::1"))
+        XCTAssertEqual(tdsTLSHostnameForSNI("db.example.com"), "db.example.com")
     }
 
     // MARK: - Configuration.init(tlsEnabled:trustServerCertificate:)

@@ -474,7 +474,7 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
         let sslHandler: NIOSSLClientHandler
         do {
             sslContext = try NIOSSLContext(configuration: tlsConfig)
-            sslHandler = try NIOSSLClientHandler(context: sslContext, serverHostname: serverHostname)
+            sslHandler = try NIOSSLClientHandler(context: sslContext, serverHostname: tdsTLSHostnameForSNI(serverHostname))
         } catch {
             self.errorCaught(context: context, error: TDSError.sslError("Failed to initialize TLS: \(error)"))
             return

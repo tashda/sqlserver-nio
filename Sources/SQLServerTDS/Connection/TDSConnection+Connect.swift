@@ -73,14 +73,9 @@ extension TDSConnection {
         case .tlsv12, .tlsv13:
             break
         }
-        if tlsConfiguration.certificateVerification == .fullVerification,
-           (serverHostname == nil || serverHostname?.isEmpty == true) {
-            return eventLoop.makeFailedFuture(TDSError.sslError("Certificate verification requires a server hostname"))
-        }
         if case .strict = encryptionMode {
-            guard tlsConfiguration.certificateVerification == .fullVerification,
-                  let serverHostname, !serverHostname.isEmpty else {
-                return eventLoop.makeFailedFuture(TDSError.protocolError("Strict encryption requires a hostname and full server certificate verification"))
+            guard tlsConfiguration.certificateVerification == .fullVerification else {
+                return eventLoop.makeFailedFuture(TDSError.protocolError("Strict encryption requires full server certificate verification"))
             }
         }
         let bootstrap = ClientBootstrap(group: eventLoop)
@@ -115,7 +110,7 @@ extension TDSConnection {
                     var strictConfiguration = tlsConfiguration
                     strictConfiguration.applicationProtocols = ["tds/8.0"]
                     let context = try NIOSSLContext(configuration: strictConfiguration)
-                    let tlsHandler = try NIOSSLClientHandler(context: context, serverHostname: serverHostname)
+                    let tlsHandler = try NIOSSLClientHandler(context: context, serverHostname: tdsTLSHostnameForSNI(serverHostname))
                     let observer = TDSStrictHandshakeObserver(on: channel.eventLoop)
                     try ops.addHandler(tlsHandler, name: "tds.strictTLS")
                     try ops.addHandler(observer, name: "tds.strictHandshake")
@@ -168,6 +163,13 @@ extension TDSConnection {
                 }.map { conn }
         }
     }
+}
+
+/// TLS SNI permits DNS names only. For an IP address, NIOSSL validates the
+/// certificate's IP subject alternative name against the connected socket.
+internal func tdsTLSHostnameForSNI(_ hostname: String?) -> String? {
+    guard let hostname else { return nil }
+    return (try? SocketAddress(ipAddress: hostname, port: 0)) == nil ? hostname : nil
 }
 
 /// Observes the outer TLS handshake used by TDS 8.0. TDS packet handlers are
