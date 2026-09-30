@@ -416,7 +416,8 @@ extension SQLServerMetadataOperations {
             ON p.object_id = t.object_id AND p.index_id IN (0, 1) AND p.partition_number = 1
         JOIN \(qualified(database, object: "sys.indexes")) i
             ON i.object_id = t.object_id AND i.index_id IN (0, 1)
-        JOIN \(qualified(database, object: "sys.filegroups")) fg
+        -- A partitioned table's index lives on a partition scheme, not a filegroup.
+        LEFT JOIN \(qualified(database, object: "sys.filegroups")) fg
             ON fg.data_space_id = i.data_space_id
         \(temporalPropsJoins)
         LEFT JOIN \(qualified(database, object: "sys.filegroups")) fg_lob
