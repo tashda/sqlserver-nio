@@ -100,6 +100,15 @@ public enum SQLDataType: Sendable {
     case uniqueidentifier
     case sql_variant
     case xml
+    /// An automatically generated, unique binary number per row (`ROWVERSION`). Inserts must leave it out.
+    case rowversion
+    case hierarchyid
+    case geometry
+    case geography
+    /// Native JSON (SQL Server 2025, Azure SQL).
+    case json
+    /// A vector of 32-bit floats (SQL Server 2025, Azure SQL).
+    case vector(dimensions: UInt16)
     case userDefined(name: String, schema: String?)
     case userDefinedTable(name: String, schema: String?)
 
@@ -167,6 +176,12 @@ public enum SQLDataType: Sendable {
         case .uniqueidentifier: return "UNIQUEIDENTIFIER"
         case .sql_variant: return "SQL_VARIANT"
         case .xml: return "XML"
+        case .rowversion: return "ROWVERSION"
+        case .hierarchyid: return "HIERARCHYID"
+        case .geometry: return "GEOMETRY"
+        case .geography: return "GEOGRAPHY"
+        case .json: return "JSON"
+        case .vector(let dimensions): return "VECTOR(\(dimensions))"
         case .userDefined(let name, let schema):
             if let schema, !schema.isEmpty { return "[\(schema)].[\(name)]" }
             return "[\(name)]"

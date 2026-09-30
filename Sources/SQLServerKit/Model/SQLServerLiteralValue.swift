@@ -14,6 +14,15 @@ public enum SQLServerLiteralValue: Sendable {
     case uuid(UUID)
     case bytes([UInt8])
     case raw(String)
+    /// A value stored in a `sql_variant` column with its own base type. Rows of one multi-row
+    /// insert may then hold different base types in the same column.
+    indirect case variant(SQLServerLiteralValue)
+    /// A `geometry` value from well-known text, e.g. `POINT (1 2)`.
+    case geometry(wellKnownText: String, srid: Int)
+    /// A `geography` value from well-known text, e.g. `POINT (12.57 55.68)` with SRID 4326.
+    case geography(wellKnownText: String, srid: Int)
+    /// A `hierarchyid` from its string form, e.g. `/1/3/`.
+    case hierarchyID(String)
 }
 
 extension SQLServerLiteralValue {
@@ -44,6 +53,14 @@ extension SQLServerLiteralValue {
             return "0x" + bytes.map { String(format: "%02X", $0) }.joined()
         case .raw(let fragment):
             return fragment
+        case .variant(let value):
+            return "CAST(\(value.sqlLiteral()) AS SQL_VARIANT)"
+        case .geometry(let wellKnownText, let srid):
+            return "geometry::STGeomFromText(N'\(Self.escape(wellKnownText))', \(srid))"
+        case .geography(let wellKnownText, let srid):
+            return "geography::STGeomFromText(N'\(Self.escape(wellKnownText))', \(srid))"
+        case .hierarchyID(let path):
+            return "hierarchyid::Parse(N'\(Self.escape(path))')"
         }
     }
     
