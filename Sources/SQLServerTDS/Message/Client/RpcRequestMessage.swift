@@ -201,58 +201,44 @@ extension TDSMessages {
 
             case .varchar, .char:
                 let valueBytes = data.value.flatMap { $0.getBytes(at: $0.readerIndex, length: $0.readableBytes) }
-                let looksLikeUTF16 = (valueBytes?.count ?? 0).isMultiple(of: 2)
-                if looksLikeUTF16 {
-                    buffer.writeInteger(TDSDataType.nvarchar.rawValue)
-                    buffer.writeInteger(UInt16(8000), endianness: .little)
-                    buffer.writeBytes(collationBytes(from: data.metadata.collation))
-                    if parameter.direction != .in {
-                        buffer.writeInteger(UInt16(0xFFFF), endianness: .little)
-                    } else if let bytes = valueBytes {
-                        buffer.writeInteger(UInt16(bytes.count), endianness: .little)
-                        buffer.writeBytes(bytes)
-                    } else {
-                        buffer.writeInteger(UInt16(0xFFFF), endianness: .little)
+                if data.metadata.collation.isEmpty {
+                    // A Swift string (TDSData(string:) holds UTF-8 and has no collation): send it as
+                    // nvarchar in UTF-16LE, as Microsoft's drivers do by default. Guessing from the
+                    // byte count sent every even-length string as garbage.
+                    let utf16 = valueBytes.map { bytes -> [UInt8] in
+                        String(decoding: bytes, as: UTF8.self).utf16.flatMap { [UInt8($0 & 0xFF), UInt8($0 >> 8)] }
                     }
+                    Self.writeVariableLength(
+                        type: TDSDataType.nvarchar.rawValue,
+                        collation: collationBytes(from: data.metadata.collation),
+                        value: parameter.direction != .in ? nil : utf16,
+                        into: &buffer
+                    )
                 } else {
-                    buffer.writeInteger(data.metadata.dataType.rawValue)
-                    buffer.writeInteger(UInt16(8000), endianness: .little)
-                    buffer.writeBytes(collationBytes(from: data.metadata.collation))
-                    if parameter.direction != .in {
-                        buffer.writeInteger(UInt16(0xFFFF), endianness: .little)
-                    } else if let bytes = valueBytes {
-                        buffer.writeInteger(UInt16(bytes.count), endianness: .little)
-                        buffer.writeBytes(bytes)
-                    } else {
-                        buffer.writeInteger(UInt16(0xFFFF), endianness: .little)
-                    }
+                    // Bytes from a server column, in its collation's code page.
+                    Self.writeVariableLength(
+                        type: data.metadata.dataType.rawValue,
+                        collation: collationBytes(from: data.metadata.collation),
+                        value: parameter.direction != .in ? nil : valueBytes,
+                        into: &buffer
+                    )
                 }
 
             case .nvarchar, .nchar:
-                buffer.writeInteger(data.metadata.dataType.rawValue)
-                buffer.writeInteger(UInt16(8000), endianness: .little)
-                buffer.writeBytes(collationBytes(from: data.metadata.collation))
-                if parameter.direction != .in {
-                    buffer.writeInteger(UInt16(0xFFFF), endianness: .little)
-                } else if let value = data.value, let bytes = value.getBytes(at: value.readerIndex, length: value.readableBytes) {
-                    buffer.writeInteger(UInt16(bytes.count), endianness: .little)
-                    buffer.writeBytes(bytes)
-                } else {
-                    buffer.writeInteger(UInt16(0xFFFF), endianness: .little)
-                }
+                Self.writeVariableLength(
+                    type: data.metadata.dataType.rawValue,
+                    collation: collationBytes(from: data.metadata.collation),
+                    value: parameter.direction != .in ? nil : data.value.flatMap { $0.getBytes(at: $0.readerIndex, length: $0.readableBytes) },
+                    into: &buffer
+                )
 
             case .varbinary, .binary:
-                buffer.writeInteger(data.metadata.dataType.rawValue)
-                let payloadLength = UInt16(min(data.value?.readableBytes ?? 0, 8000))
-                buffer.writeInteger(payloadLength, endianness: .little)
-                if parameter.direction != .in {
-                    buffer.writeInteger(UInt16(0xFFFF), endianness: .little)
-                } else if let value = data.value, let bytes = value.getBytes(at: value.readerIndex, length: value.readableBytes) {
-                    buffer.writeInteger(UInt16(bytes.count), endianness: .little)
-                    buffer.writeBytes(bytes)
-                } else {
-                    buffer.writeInteger(UInt16(0xFFFF), endianness: .little)
-                }
+                Self.writeVariableLength(
+                    type: data.metadata.dataType.rawValue,
+                    collation: nil,
+                    value: parameter.direction != .in ? nil : data.value.flatMap { $0.getBytes(at: $0.readerIndex, length: $0.readableBytes) },
+                    into: &buffer
+                )
 
             case .guid:
                 buffer.writeInteger(TDSDataType.guid.rawValue)
@@ -273,5 +259,44 @@ extension TDSMessages {
         private func collationBytes(from source: [UInt8]) -> [UInt8] {
             source.count == 5 ? source : [0, 0, 0, 0, 0]
         }
+    }
+}
+
+extension TDSMessages.RpcRequestMessage {
+    /// A string or binary parameter: USHORTLEN_TYPE up to 8000 bytes (`nvarchar(4000)`,
+    /// `varchar(8000)`, `varbinary(8000)`), and the MAX type with PLP chunks above that, as
+    /// Microsoft's drivers send it. `nil` sends NULL (output parameters are sent as NULL).
+    static func writeVariableLength(type: UInt8, collation: [UInt8]?, value: [UInt8]?, into buffer: inout ByteBuffer) {
+        let isMax = (value?.count ?? 0) > 8000
+        // Fixed-length types have no MAX form: a longer value goes as the varying type.
+        let maxType: [UInt8: UInt8] = [
+            TDSDataType.char.rawValue: TDSDataType.varchar.rawValue,
+            TDSDataType.nchar.rawValue: TDSDataType.nvarchar.rawValue,
+            TDSDataType.binary.rawValue: TDSDataType.varbinary.rawValue,
+        ]
+        buffer.writeInteger(isMax ? (maxType[type] ?? type) : type)
+        // TYPE_INFO: maximum length (0xFFFF means MAX), then the collation for character types.
+        buffer.writeInteger(isMax ? UInt16(0xFFFF) : UInt16(8000), endianness: .little)
+        if let collation { buffer.writeBytes(collation) }
+        guard let value else {
+            buffer.writeInteger(UInt16(0xFFFF), endianness: .little) // CHARBIN_NULL
+            return
+        }
+        guard isMax else {
+            buffer.writeInteger(UInt16(value.count), endianness: .little)
+            buffer.writeBytes(value)
+            return
+        }
+        // PLP: total length, then chunks (ULONG length + data), then a zero-length terminator.
+        buffer.writeInteger(UInt64(value.count), endianness: .little)
+        var offset = 0
+        let chunk = 0x7FFF_FFFF
+        while offset < value.count {
+            let length = min(chunk, value.count - offset)
+            buffer.writeInteger(UInt32(length), endianness: .little)
+            buffer.writeBytes(value[offset..<(offset + length)])
+            offset += length
+        }
+        buffer.writeInteger(UInt32(0), endianness: .little)
     }
 }
