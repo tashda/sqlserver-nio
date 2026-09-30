@@ -116,7 +116,12 @@ extension TDSConnection {
                     strictConfiguration.applicationProtocols = ["tds/8.0"]
                     let context = try NIOSSLContext(configuration: strictConfiguration)
                     let tlsHandler = try NIOSSLClientHandler(context: context, serverHostname: tdsTLSHostnameForSNI(serverHostname))
-                    let observer = TDSStrictHandshakeObserver(on: channel.eventLoop)
+                    let observer = TDSStrictHandshakeObserver(
+                        on: channel.eventLoop,
+                        tlsHandler: tlsHandler,
+                        configuration: strictConfiguration,
+                        expectedHost: serverHostname
+                    )
                     try ops.addHandler(tlsHandler, name: "tds.strictTLS")
                     try ops.addHandler(observer, name: "tds.strictHandshake")
                     let timeout = channel.eventLoop.scheduleTask(in: connectTimeout) {
@@ -153,7 +158,9 @@ extension TDSConnection {
             logger.info("TDS channel created to \(socketAddress)")
             if let strictHandshake {
                 return strictHandshake.flatMapError { error in
-                    channel.close().flatMapThrowing { throw error }
+                    // Closing a TLS channel whose handshake failed reports its
+                    // own error; the handshake failure is the one to surface.
+                    channel.close().recover { _ in }.flatMapThrowing { throw error }
                 }.map { connection }
             }
             return channel.eventLoop.makeSucceededFuture(connection)
@@ -162,7 +169,7 @@ extension TDSConnection {
             return conn.prelogin(encryptionMode: encryptionMode, hasTLSConfiguration: attemptedTLS)
                 .flatMapError { error in
                     let translated = translatePreloginError(error, attemptedTLS: attemptedTLS)
-                    return conn.close().flatMap {
+                    return conn.close().recover { _ in }.flatMap {
                         conn.channel.eventLoop.makeFailedFuture(translated)
                     }
                 }.map { conn }
@@ -191,10 +198,16 @@ private final class TDSStrictHandshakeObserver: ChannelInboundHandler, @unchecke
 
     private let promise: EventLoopPromise<Void>
     private var completed = false
+    private weak var tlsHandler: NIOSSLClientHandler?
+    private let configuration: TLSConfiguration
+    private let expectedHost: String?
     var future: EventLoopFuture<Void> { promise.futureResult }
 
-    init(on eventLoop: EventLoop) {
+    init(on eventLoop: EventLoop, tlsHandler: NIOSSLClientHandler, configuration: TLSConfiguration, expectedHost: String?) {
         promise = eventLoop.makePromise(of: Void.self)
+        self.tlsHandler = tlsHandler
+        self.configuration = configuration
+        self.expectedHost = expectedHost
     }
 
     func fail(_ error: Error) {
@@ -207,6 +220,9 @@ private final class TDSStrictHandshakeObserver: ChannelInboundHandler, @unchecke
         if case .some(.handshakeCompleted(let negotiatedProtocol)) = event as? TLSUserEvent {
             if let negotiatedProtocol, negotiatedProtocol != "tds/8.0" {
                 fail(TDSError.sslError("Server negotiated unexpected TLS application protocol \(negotiatedProtocol)"))
+                context.close(promise: nil)
+            } else if let error = TDSCertificateIdentity.verify(handler: tlsHandler, configuration: configuration, expectedHost: expectedHost) {
+                fail(error)
                 context.close(promise: nil)
             } else if !completed {
                 completed = true

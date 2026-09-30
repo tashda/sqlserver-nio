@@ -1,6 +1,7 @@
 import NIO
 import NIOPosix
 import SQLServerTDS
+import NIOSSL
 
 extension SQLServerError {
     static func normalize(_ error: Swift.Error) -> SQLServerError {
@@ -24,6 +25,14 @@ extension SQLServerError {
             default:
                 return .protocolError(tds)
             }
+        }
+        if let sslError = error as? NIOSSLError {
+            // After the handshake, a TLS failure means the transport broke
+            // (for example a TCP reset surfacing as an unclean shutdown).
+            if case .uncleanShutdown = sslError {
+                return .connectionClosed
+            }
+            return .protocolError(.sslError(String(describing: sslError)))
         }
         if let channelError = error as? ChannelError {
             switch channelError {

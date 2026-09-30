@@ -66,14 +66,30 @@ Test server: SQL Server 2025 (17.0.4015.4) on Linux, 192.168.1.152:1435, TLS wit
 - Full live suite, run twice: 740 XCTest tests with 0 failures (18 skipped), 4 TDS-layer tests and 68 swift-testing tests, in about 6.5 minutes. Before this pass the same suite hung indefinitely in `QueryTests.testRowDataPreservesNullColumns`.
 - Remaining skips are environmental (no HADR, CDC, AdventureWorks, or on-change policies on the test server). Five other skips hid broken driver SQL (Resource Governor and Policy-Based Management queried columns that do not exist); those queries are fixed and the tests now run.
 
+## Test lab verification (testlab/)
+
+Run locally on Apple silicon (Docker Desktop, SQL Server amd64 images under Rosetta) with `testlab/testlab.sh` and `testlab/ag.sh`:
+
+| Scenario | Result |
+|---|---|
+| Full suite on SQL Server 2017, 2019, 2022, 2025 containers | 741 tests each. 2019 and 2025 clean. 2017: two SQL Server Agent tests failed because Agent had not started in the container (lab now restarts it; the tests then pass). 2022: one timing race in `testSerializableRangeLockBlocksInsert`, fixed in the test. |
+| TLS with a lab CA (`LabTLSTests`) | Valid certificate, wrong host name, untrusted CA and expired certificate behave correctly in Mandatory and Strict. |
+| TDS 8.0 Strict on SQL Server 2025 (`network.forcestrict`) | TLS-first with ALPN `tds/8.0`, queries and cancellation inside the outer TLS, clear failure for a TDS 7.x client. |
+| Availability group read-only routing (`LabAvailabilityGroupTests`) | A read-intent login to the primary follows the routing token to a secondary, directly and through the pool. |
+| Network faults via Toxiproxy (`LabFaultTests`) | Latency, a throttled link while cancelling a large result, a TCP reset mid-result, a silent network during cancellation and during login, and every connection dropped at once. |
+
+Defects the lab found and fixed:
+- A certificate that did not name the configured host was accepted when it listed the IP address the socket connected to (NIOSSL's identity check falls back to the socket address). The driver now checks the name itself (RFC 6125) after both TLS handshakes.
+- A TCP reset during a TLS session was reported as an unknown error instead of a lost connection.
+- After giving up on a connection (unacknowledged cancellation, protocol failure) `isClosed` stayed false until the TLS close finished, which takes seconds on a dead network.
+- `TCP_NODELAY` was set at the socket level, which is `SO_DEBUG` on Linux and failed every connection there.
+- The cancellation acknowledgement deadline measured total time, so draining a large cancelled result on a slow link closed a healthy connection. It now measures silence.
+
 ## Remaining gaps
 
-These are not verified and should be before calling the driver enterprise-ready:
-
-1. **Other server versions.** Only SQL Server 2025 was available. CI runs 2017/2019/2022/2025 containers; that matrix must pass.
-2. **TDS 8.0 Strict end to end** needs a certificate whose name matches the host. The code path is unchanged from the previous pass and untested live.
-3. **Routing** (Azure SQL redirect, availability-group read-only routing) is implemented per MS-TDS and SqlClient behaviour but untested: no Azure SQL or AG listener was available.
-4. **Windows authentication** (Kerberos/NTLM) and **Entra ID access tokens** were not re-tested live; the login state machine they rely on changed (login now completes at the final DONE).
-5. **Not implemented:** MARS, Always Encrypted column encryption, TDS bulk load (bulk copy uses batched `INSERT`), data classification (the LOGIN7 feature is never requested, so `decodeLastSensitivityClassification()` is always nil, and the DATACLASSIFICATION token framing in the parser does not match MS-TDS), transparent reconnect of idle sessions (SqlClient `ConnectRetryCount`), negotiated packet sizes other than 4096.
-6. **Echo integration** — see `ECHO_INTEGRATION_NOTES.md`. Echo will not compile against this branch until it handles `commitOutcomeUnknown`.
-7. **Load and soak testing**: hours-long runs with network faults (packet loss, server restart, failover) under Echo's real workload.
+1. **SQL Server 2008 R2, 2012, 2014 and 2016, and NTLM**: need the Windows Server VM described in `testlab/README.md`. SQL Server 2008 R2 speaks TDS 7.3 and needs its TLS 1.2 update; the driver requires TLS 1.2.
+2. **Azure SQL Database** (gateway redirect and Entra ID tokens): needs the Azure account described in `testlab/README.md`.
+3. **Kerberos**: Samba AD lab not built yet; the driver's Kerberos uses GSS.framework, so these tests run from macOS.
+4. **Not implemented:** MARS, Always Encrypted column encryption, TDS bulk load, data classification (never requested at login), transparent reconnect of broken idle sessions (SqlClient `ConnectRetryCount`), packet sizes other than 4096.
+5. **Echo integration**: see `ECHO_INTEGRATION_NOTES.md`.
+6. **Soak testing**: hours of mixed load under faults.

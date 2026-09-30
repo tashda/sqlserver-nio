@@ -830,6 +830,9 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
         guard !isFailed else { return }
         logger.error("TDS connection failed: \(error)")
         isFailed = true
+        // Report the connection as closed before callers see the failure;
+        // closing a TLS channel on a dead network can take seconds.
+        connection?.markUnusable()
         failAll(error)
         context.close(promise: nil)
     }
@@ -859,6 +862,7 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
             logger.error("TDS pipeline error: \(error)")
         }
         isFailed = true
+        connection?.markUnusable()
         failAll(error)
         context.fireErrorCaught(error)
     }
@@ -910,6 +914,11 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
               let tlsEvent = event as? TLSUserEvent,
               case .handshakeCompleted = tlsEvent else {
             context.fireUserInboundEventTriggered(event)
+            return
+        }
+
+        if let error = TDSCertificateIdentity.verify(handler: sslClientHandler, configuration: tlsConfiguration, expectedHost: serverHostname) {
+            fatal(error, context: context)
             return
         }
 

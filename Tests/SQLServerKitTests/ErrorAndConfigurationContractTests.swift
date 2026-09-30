@@ -71,4 +71,18 @@ final class ErrorAndConfigurationContractTests: XCTestCase {
         XCTAssertEqual(target, TDSRoutingTarget(server: "db2", port: 1434))
         XCTAssertNil(TDSRequestHandler.parseRouting([0, 0, 0x01, 0x9A, 0x05, 0, 0]), "Only TCP routing is valid")
     }
+
+    func testCertificateNameMatchingFollowsRFC6125() {
+        XCTAssertTrue(TDSCertificateIdentity.matchesDNS(pattern: "db.example.com", host: "db.example.com"))
+        XCTAssertTrue(TDSCertificateIdentity.matchesDNS(pattern: "DB.Example.com.", host: "db.example.com"))
+        XCTAssertTrue(TDSCertificateIdentity.matchesDNS(pattern: "*.example.com", host: "db.example.com"))
+        XCTAssertFalse(TDSCertificateIdentity.matchesDNS(pattern: "*.example.com", host: "a.db.example.com"), "wildcard covers one label")
+        XCTAssertFalse(TDSCertificateIdentity.matchesDNS(pattern: "*.example.com", host: "example.com"))
+        XCTAssertFalse(TDSCertificateIdentity.matchesDNS(pattern: "*.com", host: "example.com"), "no wildcard directly under a TLD")
+        XCTAssertFalse(TDSCertificateIdentity.matchesDNS(pattern: "d*.example.com", host: "db.example.com"), "partial wildcards are not accepted")
+        XCTAssertFalse(TDSCertificateIdentity.matchesDNS(pattern: "other.example.com", host: "db.example.com"))
+        XCTAssertEqual(TDSCertificateIdentity.ipBytes("127.0.0.1"), [127, 0, 0, 1])
+        XCTAssertEqual(TDSCertificateIdentity.ipBytes("::1")?.count, 16)
+        XCTAssertNil(TDSCertificateIdentity.ipBytes("db.example.com"))
+    }
 }

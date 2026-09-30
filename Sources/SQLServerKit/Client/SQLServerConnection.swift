@@ -83,6 +83,11 @@ public final class SQLServerConnection: @unchecked Sendable {
     internal var eventLoop: EventLoop { base.eventLoop }
     public var logger: Logger { base.logger }
     public var currentDatabase: String { stateLock.withLock { _currentDatabase } }
+    /// True once the physical connection is closed, whether by `close()`, the
+    /// server, the network or a protocol failure. A closed connection cannot
+    /// be used again; open a new one. Its session state (temporary tables,
+    /// SET options, open transaction) is gone.
+    public var isClosed: Bool { base.isClosed }
 
     public var lastSessionStatePayload: [UInt8] { base.snapshotSessionStatePayload() }
     public var lastDataClassificationPayload: [UInt8] { base.snapshotDataClassificationPayload() }

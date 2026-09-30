@@ -31,8 +31,17 @@ public final class TDSConnection {
     private let closeLock = NIOLock()
     private var didClose: Bool
 
+    /// True once the connection cannot be used: the channel is closed, or
+    /// the driver has given up on it (protocol failure, unacknowledged
+    /// cancellation) and is closing it.
     public var isClosed: Bool {
-        return !self.channel.isActive
+        return !self.channel.isActive || closeLock.withLock { unusable }
+    }
+
+    private var unusable = false
+
+    internal func markUnusable() {
+        closeLock.withLock { unusable = true }
     }
     
     // Transaction state management
