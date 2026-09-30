@@ -13,7 +13,8 @@ on:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # Pushes to dev queue instead of cancelling each other, so every commit is checked.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -99,6 +100,87 @@ jobs:
           TDS_LOAD_ADVENTUREWORKS: "1"
           TDS_AW_DATABASE: "AdventureWorks"
         run: swift test
+
+  tls-tests:
+    name: "Fixture: TLS, Strict and certificate checks"
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: swift-actions/setup-swift@v3
+        with:
+          swift-version: "6.2.4"
+          skip-verify-signature: true
+      - name: Build tests
+        run: swift build --build-tests
+      - name: Start fixture
+        run: |
+          export DOCKER_CONFIG="$RUNNER_TEMP/docker-config"
+          mkdir -p "$DOCKER_CONFIG"
+          printf '{}\n' > "$DOCKER_CONFIG/config.json"
+          Tests/Fixtures/tls/start-server.sh | sed -e 's/^export //' -e "s/='\(.*\)'$/=\1/" >> "$GITHUB_ENV"
+      - name: Run LabTLSTests
+        env:
+          NIO_LAB_REQUIRE: "1"
+        run: swift test --skip-build --filter LabTLSTests
+      - name: Fixture logs on failure
+        if: failure()
+        run: for c in $(docker ps -aq --filter label=nio-lab=1); do docker logs --tail 50 "$c"; done
+
+  fault-tests:
+    name: "Fixture: network faults (Toxiproxy)"
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: swift-actions/setup-swift@v3
+        with:
+          swift-version: "6.2.4"
+          skip-verify-signature: true
+      - name: Build tests
+        run: swift build --build-tests
+      - name: Start fixture
+        run: |
+          export DOCKER_CONFIG="$RUNNER_TEMP/docker-config"
+          mkdir -p "$DOCKER_CONFIG"
+          printf '{}\n' > "$DOCKER_CONFIG/config.json"
+          Tests/Fixtures/faults/start-server.sh | sed -e 's/^export //' -e "s/='\(.*\)'$/=\1/" >> "$GITHUB_ENV"
+      - name: Run LabFaultTests
+        env:
+          NIO_LAB_REQUIRE: "1"
+        run: swift test --skip-build --filter LabFaultTests
+      - name: Fixture logs on failure
+        if: failure()
+        run: for c in $(docker ps -aq --filter label=nio-lab=1); do docker logs --tail 50 "$c"; done
+
+  availability-group-tests:
+    name: "Fixture: availability group routing"
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: swift-actions/setup-swift@v3
+        with:
+          swift-version: "6.2.4"
+          skip-verify-signature: true
+      - name: Build tests
+        run: swift build --build-tests
+      - name: Start fixture
+        run: |
+          export DOCKER_CONFIG="$RUNNER_TEMP/docker-config"
+          mkdir -p "$DOCKER_CONFIG"
+          printf '{}\n' > "$DOCKER_CONFIG/config.json"
+          Tests/Fixtures/availability-group/start-servers.sh | sed -e 's/^export //' -e "s/='\(.*\)'$/=\1/" >> "$GITHUB_ENV"
+      - name: Run LabAvailabilityGroupTests
+        env:
+          NIO_LAB_REQUIRE: "1"
+        run: swift test --skip-build --filter LabAvailabilityGroupTests
+      - name: Fixture logs on failure
+        if: failure()
+        run: for c in $(docker ps -aq --filter label=nio-lab=1); do docker logs --tail 50 "$c"; done
 
   matrix-tests:
     name: "Step 3: Compatibility - ${{ matrix.name }}"

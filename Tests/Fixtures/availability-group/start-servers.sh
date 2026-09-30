@@ -1,33 +1,27 @@
 #!/usr/bin/env bash
-# Read-scale availability group (CLUSTER_TYPE = NONE) on three SQL Server
-# 2022 containers, with read-only routing to the secondaries. Replicas are
-# published on 127.0.0.1:14451-14453 and route to those host addresses, so
-# a client on the host can follow the routing token.
+# LabAvailabilityGroupTests: a read-scale availability group (CLUSTER_TYPE =
+# NONE) on three SQL Server 2022 containers with read-only routing to the
+# secondaries. Replicas are published on 127.0.0.1:14451-14453 and route to
+# those host addresses, so a client on the host can follow the routing token.
+#
+#   eval "$(Tests/Fixtures/availability-group/start-servers.sh)"
 set -euo pipefail
+source "$(dirname "$0")/../common.sh"
 
-PASSWORD="${NIO_LAB_PASSWORD:-NioLab#Pass123}"
-IMAGE="mcr.microsoft.com/mssql/server:2022-latest"
+IMAGE="$SQL_IMAGE_PREFIX:2022-latest"
 REPLICAS=(ag1 ag2 ag3)
 PORTS=(14451 14452 14453)
-
-platform_args() { case "$(uname -m)" in arm64|aarch64) echo "--platform linux/amd64" ;; esac; }
+# Read-only routing lists per replica when it is primary.
+ROUTES=("N'ag2', N'ag3'" "N'ag1', N'ag3'" "N'ag1', N'ag2'")
 
 sql() {
     local name=$1 query=$2
-    docker exec "nio-lab-$name" /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$PASSWORD" -C -b -h -1 -W -Q "SET NOCOUNT ON; $query"
+    sql_in "nio-lab-$name" "$query"
 }
 
-wait_ready() {
-    local name=$1
-    for _ in $(seq 1 120); do
-        sql "$name" "SELECT 1" >/dev/null 2>&1 && return 0
-        sleep 2
-    done
-    echo "error: nio-lab-$name did not become ready" >&2; return 1
-}
 
 up() {
-    docker network inspect nio-lab >/dev/null 2>&1 || docker network create nio-lab >/dev/null
+    ensure_network nio-lab
     for i in 0 1 2; do
         local name=${REPLICAS[$i]}
         docker rm -f "nio-lab-$name" >/dev/null 2>&1 || true
@@ -36,7 +30,7 @@ up() {
             -e ACCEPT_EULA=Y -e "MSSQL_SA_PASSWORD=$PASSWORD" -e MSSQL_ENABLE_HADR=1 -e MSSQL_AGENT_ENABLED=true \
             -p "${PORTS[$i]}:1433" "$IMAGE" >/dev/null
     done
-    for name in "${REPLICAS[@]}"; do wait_ready "$name"; done
+    for name in "${REPLICAS[@]}"; do wait_sql "nio-lab-$name"; done
 
     # Certificate-authenticated mirroring endpoints: each replica trusts the
     # others' endpoint certificates.
@@ -95,24 +89,15 @@ up() {
     # own address, so logins published on 127.0.0.1:14451 qualify.
     local ip; ip=$(docker inspect -f '{{(index .NetworkSettings.Networks "nio-lab").IPAddress}}' nio-lab-ag1)
     sql ag1 "ALTER AVAILABILITY GROUP nioag ADD LISTENER N'niolsnr' (WITH IP ((N'$ip', N'255.255.0.0')), PORT = 1433);" >/dev/null
-    echo "availability group nioag ready: primary 127.0.0.1:14451, secondaries 14452 and 14453"
+    log "availability group nioag ready: primary 127.0.0.1:14451, secondaries 14452 and 14453"
 }
 
-# Read-only routing lists per replica when it is primary.
-ROUTES=("N'ag2', N'ag3'" "N'ag1', N'ag3'" "N'ag1', N'ag2'")
+up
 
-case "${1:-}" in
-    up) up ;;
-    env)
-        cat <<VARS
+cat <<VARS
 export NIO_LAB_AG_PRIMARY=127.0.0.1:14451
 export NIO_LAB_AG_SECONDARIES=127.0.0.1:14452,127.0.0.1:14453
 export NIO_LAB_AG_DATABASE=nioagdb
 export NIO_LAB_AG_USERNAME=sa
-export NIO_LAB_AG_PASSWORD='$PASSWORD'
+export NIO_LAB_AG_PASSWORD=$PASSWORD
 VARS
-        ;;
-    down)
-        for name in "${REPLICAS[@]}"; do docker rm -f "nio-lab-$name" >/dev/null 2>&1 || true; done ;;
-    *) echo "usage: $0 up|env|down"; exit 2 ;;
-esac

@@ -3,7 +3,7 @@ import SQLServerKit
 import SQLServerKitTesting
 
 /// Read-only routing against a three-replica availability group
-/// (`testlab/ag.sh up`). A read-intent login to the primary receives an
+/// (`Tests/Fixtures/availability-group/start-servers.sh`). A read-intent login to the primary receives an
 /// ENVCHANGE routing token and must continue on the secondary it names.
 final class LabAvailabilityGroupTests: XCTestCase, @unchecked Sendable {
     private struct Lab {
@@ -20,9 +20,9 @@ final class LabAvailabilityGroupTests: XCTestCase, @unchecked Sendable {
               let username = env("NIO_LAB_AG_USERNAME"),
               let password = env("NIO_LAB_AG_PASSWORD") else {
             if envFlagEnabled("NIO_LAB_REQUIRE") {
-                XCTFail("Availability group lab is required but NIO_LAB_AG_* is not set; run testlab/ag.sh up")
+                XCTFail("Availability group lab is required but NIO_LAB_AG_* is not set; run Tests/Fixtures/availability-group/start-servers.sh")
             }
-            throw XCTSkip("Availability group lab not configured (testlab/ag.sh up)")
+            throw XCTSkip("Availability group lab not configured (Tests/Fixtures/availability-group/start-servers.sh)")
         }
         let parts = primary.split(separator: ":")
         return Lab(primaryHost: String(parts[0]), primaryPort: Int(parts[1]) ?? 1433, database: database,

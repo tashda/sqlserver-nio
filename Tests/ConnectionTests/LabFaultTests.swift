@@ -7,7 +7,7 @@ import SQLServerKit
 import SQLServerKitTesting
 
 /// Network faults injected with Toxiproxy between the driver and SQL Server
-/// (`testlab/testlab.sh faults`). Each test states the failure it injects and
+/// (`Tests/Fixtures/faults/start-server.sh`). Each test states the failure it injects and
 /// what the driver must do: keep working, fail with a lost-connection error,
 /// or recover on the next operation. None may hang.
 final class LabFaultTests: XCTestCase, @unchecked Sendable {
@@ -32,9 +32,9 @@ final class LabFaultTests: XCTestCase, @unchecked Sendable {
               let username = env("NIO_LAB_FAULT_USERNAME"),
               let password = env("NIO_LAB_FAULT_PASSWORD") else {
             if envFlagEnabled("NIO_LAB_REQUIRE") {
-                XCTFail("Fault lab is required but NIO_LAB_FAULT_* is not set; run testlab/testlab.sh faults")
+                XCTFail("Fault lab is required but NIO_LAB_FAULT_* is not set; run Tests/Fixtures/faults/start-server.sh")
             }
-            throw XCTSkip("Fault lab not configured (testlab/testlab.sh faults)")
+            throw XCTSkip("Fault lab not configured (Tests/Fixtures/faults/start-server.sh)")
         }
         lab = Lab(host: host, port: port, api: api, proxy: proxy, username: username, password: password)
         let name = self.name

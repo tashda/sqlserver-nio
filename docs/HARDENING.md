@@ -1,6 +1,6 @@
-# SQL Server driver hardening status
+# SQL Server driver hardening (2026-09-30)
 
-Branch `codex/enterprise-hardening`. Driver only; Echo is untouched (see `ECHO_INTEGRATION_NOTES.md`). No users yet, so no migration.
+What the enterprise hardening pass changed, how it was verified and what is still open. Merged into `dev` through PRs #11–#14. Echo follow-ups: `docs/ECHO_TASKS.md`. No users yet, so no migration.
 
 The behavioural reference is Microsoft's own drivers (ODBC 18, JDBC, Microsoft.Data.SqlClient) and MS-TDS. The implementation is SwiftNIO-native.
 
@@ -66,9 +66,9 @@ Test server: SQL Server 2025 (17.0.4015.4) on Linux, 192.168.1.152:1435, TLS wit
 - Full live suite, run twice: 740 XCTest tests with 0 failures (18 skipped), 4 TDS-layer tests and 68 swift-testing tests, in about 6.5 minutes. Before this pass the same suite hung indefinitely in `QueryTests.testRowDataPreservesNullColumns`.
 - Remaining skips are environmental (no HADR, CDC, AdventureWorks, or on-change policies on the test server). Five other skips hid broken driver SQL (Resource Governor and Policy-Based Management queried columns that do not exist); those queries are fixed and the tests now run.
 
-## Test lab verification (testlab/)
+## Test lab verification
 
-Run locally on Apple silicon (Docker Desktop, SQL Server amd64 images under Rosetta) with `testlab/testlab.sh` and `testlab/ag.sh`:
+Run locally on Apple silicon (Docker Desktop, SQL Server amd64 images under Rosetta) with `testlab/testlab.sh matrix` and the scripts in `Tests/Fixtures/` (CI runs each fixture in its own job):
 
 | Scenario | Result |
 |---|---|
@@ -89,7 +89,7 @@ Defects the lab found and fixed:
 
 1. **SQL Server 2008 R2, 2012, 2014 and 2016, and NTLM**: need the Windows Server VM described in `testlab/README.md`. SQL Server 2008 R2 speaks TDS 7.3 and needs its TLS 1.2 update; the driver requires TLS 1.2.
 2. **Azure SQL Database** (gateway redirect and Entra ID tokens): needs the Azure account described in `testlab/README.md`.
-3. **Kerberos**: Samba AD lab not built yet; the driver's Kerberos uses GSS.framework, so these tests run from macOS.
+3. **Kerberos**: the Samba AD fixture works (`Tests/Fixtures/kerberos`: SQL Server resolves `LAB\nio-user` and creates the Windows login), but the driver's sign-in is still rejected (18452, untrusted domain); the service principal name is imported as a GSS host-based service name. Kerberos is macOS-only (GSS.framework); Linux support (MIT Kerberos) is planned so CI can run it.
 4. **Not implemented:** MARS, Always Encrypted column encryption, TDS bulk load, data classification (never requested at login), transparent reconnect of broken idle sessions (SqlClient `ConnectRetryCount`), packet sizes other than 4096.
-5. **Echo integration**: see `ECHO_INTEGRATION_NOTES.md`.
+5. **Echo integration**: see `docs/ECHO_TASKS.md`.
 6. **Soak testing**: hours of mixed load under faults.

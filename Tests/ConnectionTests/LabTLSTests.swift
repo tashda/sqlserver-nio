@@ -4,7 +4,7 @@ import SQLServerKit
 import SQLServerKitTesting
 
 /// Certificate validation and TDS 8.0 Strict against lab servers that use a
-/// certificate from the lab CA (`testlab/testlab.sh tls`).
+/// certificate from the lab CA (`Tests/Fixtures/tls/start-server.sh`).
 ///
 /// Without the `NIO_LAB_TLS_*` variables these tests skip, unless
 /// `NIO_LAB_REQUIRE=1`, in which case a missing lab is a failure.
@@ -36,9 +36,9 @@ final class LabTLSTests: XCTestCase, @unchecked Sendable {
               let username = env("NIO_LAB_TLS_USERNAME"),
               let password = env("NIO_LAB_TLS_PASSWORD") else {
             if envFlagEnabled("NIO_LAB_REQUIRE") {
-                XCTFail("TLS lab is required but NIO_LAB_TLS_* is not set; run testlab/testlab.sh tls")
+                XCTFail("TLS lab is required but NIO_LAB_TLS_* is not set; run Tests/Fixtures/tls/start-server.sh")
             }
-            throw XCTSkip("TLS lab not configured (testlab/testlab.sh tls)")
+            throw XCTSkip("TLS lab not configured (Tests/Fixtures/tls/start-server.sh)")
         }
         return Lab(host: host, certificateName: name, caPath: ca, otherCAPath: otherCA, tlsPort: tlsPort,
                    strictPort: strictPort, expiredPort: expiredPort, tls10Port: tls10Port,
