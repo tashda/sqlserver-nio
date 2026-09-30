@@ -715,7 +715,7 @@ return ServerLoginEditorData(
     private func runOnConnectionWithDatabase<T: Sendable>(
         _ conn: SQLServerConnection,
         database: String,
-        _ body: @escaping (SQLServerConnection) -> EventLoopFuture<T>
+        _ body: @escaping @Sendable (SQLServerConnection) -> EventLoopFuture<T>
     ) -> EventLoopFuture<T> {
         let originalDatabase = conn.currentDatabase
         let needsReset = originalDatabase.caseInsensitiveCompare(database) != .orderedSame

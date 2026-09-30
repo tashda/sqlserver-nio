@@ -1,21 +1,27 @@
 import Logging
 import NIO
 import NIOSSL
+import NIOTLS
 import Foundation
 
 extension TDSConnection {
+    public static func defaultTLSConfiguration() -> TLSConfiguration {
+        var configuration = TLSConfiguration.makeClientConfiguration()
+        configuration.minimumTLSVersion = .tlsv12
+        return configuration
+    }
+
     /// Note about TLS Support:
     ///
     /// If a `TLSConfiguration` is provided, it will be used to negotiate encryption, signaling to the server that encryption is enabled (ENCRYPT_ON).
-    /// If no `TLSConfiguration` is provided, it is assumed that a standard configuration will work and signals to the server that encryption is enabled (ENCRYPT_ON).
-    /// If the user explicitly passes a nil `TLSconfiguration`, it will signal to the server that encryption is not supported (ENCRYPT_NOT_SUP).
-    ///
-    /// Supporting the case for only encrypting login packets provides little benefit and makes it impossible to provide a default (valid) TLSConfiguration.
+    /// A TLS configuration is required. The driver refuses an unencrypted login
+    /// because LOGIN7 password obfuscation does not protect credentials.
+    /// Strict/TDS 8.0 establishes TLS before sending PRELOGIN.
     public static func connect(
         to socketAddress: SocketAddress,
-        tlsConfiguration: TLSConfiguration? = .makeClientConfiguration(),
+        tlsConfiguration: TLSConfiguration? = TDSConnection.defaultTLSConfiguration(),
         serverHostname: String? = nil,
-        encryptionMode: TDSEncryptionMode = .optional,
+        encryptionMode: TDSEncryptionMode = .mandatory,
         connectTimeout: TimeAmount = .seconds(10),
         on eventLoop: EventLoop
     ) -> EventLoopFuture<TDSConnection> {
@@ -32,9 +38,9 @@ extension TDSConnection {
 
     public static func connect(
         to socketAddress: SocketAddress,
-        tlsConfiguration: TLSConfiguration? = .makeClientConfiguration(),
+        tlsConfiguration: TLSConfiguration? = TDSConnection.defaultTLSConfiguration(),
         serverHostname: String? = nil,
-        encryptionMode: TDSEncryptionMode = .optional,
+        encryptionMode: TDSEncryptionMode = .mandatory,
         on eventLoop: EventLoop,
         logger: Logger
     ) -> EventLoopFuture<TDSConnection> {
@@ -51,15 +57,34 @@ extension TDSConnection {
 
     public static func connect(
         to socketAddress: SocketAddress,
-        tlsConfiguration: TLSConfiguration? = .makeClientConfiguration(),
+        tlsConfiguration: TLSConfiguration? = TDSConnection.defaultTLSConfiguration(),
         serverHostname: String? = nil,
-        encryptionMode: TDSEncryptionMode = .optional,
+        encryptionMode: TDSEncryptionMode = .mandatory,
         connectTimeout: TimeAmount = .seconds(10),
         on eventLoop: EventLoop,
         logger: Logger
     ) -> EventLoopFuture<TDSConnection> {
+        guard let tlsConfiguration else {
+            return eventLoop.makeFailedFuture(TDSError.protocolError("A TLS configuration is required; unencrypted login is not supported"))
+        }
+        switch tlsConfiguration.minimumTLSVersion {
+        case .tlsv1, .tlsv11:
+            return eventLoop.makeFailedFuture(TDSError.sslError("TLS 1.2 or newer is required"))
+        case .tlsv12, .tlsv13:
+            break
+        }
+        if case .strict = encryptionMode {
+            guard tlsConfiguration.certificateVerification == .fullVerification else {
+                return eventLoop.makeFailedFuture(TDSError.protocolError("Strict encryption requires full server certificate verification"))
+            }
+        }
         let bootstrap = ClientBootstrap(group: eventLoop)
             .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
+            .channelOption(ChannelOptions.tcpOption(.tcp_nodelay), value: 1)
+            // Detect a peer or network path that disappears while a
+            // connection is idle, as the Microsoft drivers do (30s KeepAlive).
+            .channelOption(ChannelOptions.socketOption(.so_keepalive), value: 1)
+            .channelOption(ChannelOptions.socket(SocketOptionLevel(IPPROTO_TCP), tdsKeepAliveIdleOption), value: 30)
             .connectTimeout(connectTimeout)
 
         let firstDecoderName = "tds.firstDecoder"
@@ -83,8 +108,28 @@ extension TDSConnection {
                 pipelineCoordinatorName: pipelineCoordinatorName
             )
             let errorHandler = TDSErrorHandler(logger: logger)
+            var strictHandshake: EventLoopFuture<Void>?
             do {
                 let ops = channel.pipeline.syncOperations
+                if case .strict = encryptionMode {
+                    var strictConfiguration = tlsConfiguration
+                    strictConfiguration.applicationProtocols = ["tds/8.0"]
+                    let context = try NIOSSLContext(configuration: strictConfiguration)
+                    let tlsHandler = try NIOSSLClientHandler(context: context, serverHostname: tdsTLSHostnameForSNI(serverHostname))
+                    let observer = TDSStrictHandshakeObserver(
+                        on: channel.eventLoop,
+                        tlsHandler: tlsHandler,
+                        configuration: strictConfiguration,
+                        expectedHost: serverHostname
+                    )
+                    try ops.addHandler(tlsHandler, name: "tds.strictTLS")
+                    try ops.addHandler(observer, name: "tds.strictHandshake")
+                    let timeout = channel.eventLoop.scheduleTask(in: connectTimeout) {
+                        observer.fail(TDSError.sslError("TDS 8.0 TLS handshake timed out"))
+                        channel.close(promise: nil)
+                    }
+                    strictHandshake = observer.future.always { _ in timeout.cancel() }
+                }
                 try ops.addHandler(firstDecoder, name: firstDecoderName)
                 try ops.addHandler(firstEncoder, name: firstEncoderName)
                 try ops.addHandler(requestHandler, name: requestHandlerName)
@@ -111,17 +156,94 @@ extension TDSConnection {
             // Start reading immediately to handle multi-packet responses
             channel.read()
             logger.info("TDS channel created to \(socketAddress)")
+            if let strictHandshake {
+                return strictHandshake.flatMapError { error in
+                    // Closing a TLS channel whose handshake failed reports its
+                    // own error; the handshake failure is the one to surface.
+                    channel.close().recover { _ in }.flatMapThrowing { throw error }
+                }.map { connection }
+            }
             return channel.eventLoop.makeSucceededFuture(connection)
         }.flatMap { (conn: TDSConnection) -> EventLoopFuture<TDSConnection> in
-            let attemptedTLS = tlsConfiguration != nil
+            let attemptedTLS = true
             return conn.prelogin(encryptionMode: encryptionMode, hasTLSConfiguration: attemptedTLS)
                 .flatMapError { error in
                     let translated = translatePreloginError(error, attemptedTLS: attemptedTLS)
-                    return conn.close().flatMap {
+                    return conn.close().recover { _ in }.flatMap {
                         conn.channel.eventLoop.makeFailedFuture(translated)
                     }
                 }.map { conn }
         }
+    }
+}
+
+#if canImport(Darwin)
+private let tdsKeepAliveIdleOption = TCP_KEEPALIVE
+#else
+private let tdsKeepAliveIdleOption = TCP_KEEPIDLE
+#endif
+
+/// TLS SNI permits DNS names only. For an IP address, NIOSSL validates the
+/// certificate's IP subject alternative name against the connected socket.
+internal func tdsTLSHostnameForSNI(_ hostname: String?) -> String? {
+    guard let hostname else { return nil }
+    return (try? SocketAddress(ipAddress: hostname, port: 0)) == nil ? hostname : nil
+}
+
+/// Observes the outer TLS handshake used by TDS 8.0. TDS packet handlers are
+/// installed after this handler and only see authenticated plaintext.
+private final class TDSStrictHandshakeObserver: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = ByteBuffer
+    typealias InboundOut = ByteBuffer
+
+    private let promise: EventLoopPromise<Void>
+    private var completed = false
+    private weak var tlsHandler: NIOSSLClientHandler?
+    private let configuration: TLSConfiguration
+    private let expectedHost: String?
+    var future: EventLoopFuture<Void> { promise.futureResult }
+
+    init(on eventLoop: EventLoop, tlsHandler: NIOSSLClientHandler, configuration: TLSConfiguration, expectedHost: String?) {
+        promise = eventLoop.makePromise(of: Void.self)
+        self.tlsHandler = tlsHandler
+        self.configuration = configuration
+        self.expectedHost = expectedHost
+    }
+
+    func fail(_ error: Error) {
+        guard !completed else { return }
+        completed = true
+        promise.fail(error)
+    }
+
+    func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+        if case .some(.handshakeCompleted(let negotiatedProtocol)) = event as? TLSUserEvent {
+            if let negotiatedProtocol, negotiatedProtocol != "tds/8.0" {
+                fail(TDSError.sslError("Server negotiated unexpected TLS application protocol \(negotiatedProtocol)"))
+                context.close(promise: nil)
+            } else if let error = TDSCertificateIdentity.verify(handler: tlsHandler, configuration: configuration, expectedHost: expectedHost) {
+                fail(error)
+                context.close(promise: nil)
+            } else if !completed {
+                completed = true
+                promise.succeed(())
+            }
+        }
+        context.fireUserInboundEventTriggered(event)
+    }
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        context.fireChannelRead(data)
+    }
+
+    func errorCaught(context: ChannelHandlerContext, error: Error) {
+        fail(error)
+        context.fireErrorCaught(error)
+    }
+
+    func channelInactive(context: ChannelHandlerContext) {
+        fail(TDSError.connectionClosed)
+        context.fireChannelInactive()
     }
 }
 
@@ -163,17 +285,14 @@ private final class TDSErrorHandler: ChannelInboundHandler {
     }
     
     func errorCaught(context: ChannelHandlerContext, error: Error) {
-        switch error {
-        case NIOSSLError.uncleanShutdown:
-            // SQL Server with "optional" encryption uses TLS only during login,
-            // then drops to raw TDS without sending a TLS close_notify. The NIO
-            // SSL handler interprets subsequent unencrypted data as an unclean
-            // shutdown. This is expected and should not close the connection.
-            logger.debug("SSL unclean shutdown (expected with SQL Server optional encryption)")
-        default:
+        if let sslError = error as? NIOSSLError,
+           case .uncleanShutdown = sslError,
+           !context.channel.isActive {
+            self.logger.debug("TLS peer closed without close_notify after the TDS channel became inactive")
+        } else {
             self.logger.error("Uncaught error: \(error)")
-            context.close(promise: nil)
-            context.fireErrorCaught(error)
         }
+        context.close(promise: nil)
+        context.fireErrorCaught(error)
     }
 }

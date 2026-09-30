@@ -48,7 +48,7 @@ public struct SQLServerValue: Sendable, CustomStringConvertible {
 
     public init(uuid: UUID) {
         var buffer = ByteBufferAllocator().buffer(capacity: 16)
-        _ = withUnsafeBytes(of: uuid.uuid) { raw in
+        withUnsafeBytes(of: uuid.uuid) { raw in
             guard raw.count == 16 else { return }
             let b = raw.bindMemory(to: UInt8.self)
             // SQL Server stores uniqueidentifier in mixed-endian format:

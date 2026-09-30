@@ -9,12 +9,10 @@ extension SQLServerConnection {
         if Self.equalsIgnoreCase(current, database) {
             return eventLoop.makeSucceededFuture(())
         }
-        let fut = executeWithRetry(operationName: "changeDatabase") {
-            let sql = "USE \(SQLServerSQL.escapeIdentifier(database));"
-            return self.runBatch(sql).map { _ in
-                self.setCurrentDatabase(database)
-                self.logger.debug("Database context changed to \(database)")
-            }
+        let sql = "USE \(SQLServerSQL.escapeIdentifier(database));"
+        let fut = self.runBatch(sql).map { _ in
+            self.setCurrentDatabase(database)
+            self.logger.debug("Database context changed to \(database)")
         }
         return fut.withTestTimeoutIfEnabled(on: self.eventLoop)
     }
@@ -39,6 +37,19 @@ extension SQLServerConnection {
     }
 
     internal func runBatch(_ sql: String) -> EventLoopFuture<SQLServerExecutionResult> {
+        startBatch(sql, timeout: nil).result
+    }
+
+    /// Sends a SQL batch and returns its cancellation handle and result.
+    ///
+    /// The result fails with the server's error when any statement raised
+    /// one. Rows and messages produced before the error are available through
+    /// `SQLServerError.serverDetails`.
+    internal func startBatch(
+        _ sql: String,
+        timeout: TimeInterval?,
+        resetConnection: Bool = false
+    ) -> (handle: TDSRequestHandle, result: EventLoopFuture<SQLServerExecutionResult>) {
         struct Accumulator: Sendable {
             var rows: [TDSRow] = []
             var dones: [SQLServerStreamDone] = []
@@ -64,54 +75,43 @@ extension SQLServerConnection {
             },
             onMessage: { token, isError in
                 accumulator.withLockedValue {
-                    $0.messages.append(SQLServerStreamMessage(
-                        kind: isError ? .error : .info,
-                        number: Int32(token.number),
-                        message: token.messageText,
-                        state: token.state,
-                        severity: token.classValue,
-                        serverName: token.serverName,
-                        procedureName: token.procName,
-                        lineNumber: token.lineNumber
-                    ))
+                    $0.messages.append(SQLServerStreamMessage(token: token, isError: isError))
                 }
             }
         )
+        request.resetConnection = resetConnection
 
-        return self.base.send(request, logger: self.logger).flatMapThrowing { _ in
+        let handle = base.start(request, timeout: timeout.flatMap(Self.timeAmount))
+        let result = handle.future.flatMapThrowing { _ in
             let snapshot = accumulator.withLockedValue { $0 }
-            let result = SQLServerExecutionResult(rows: snapshot.rows, done: snapshot.dones, messages: snapshot.messages)
-            if let err = snapshot.messages.first(where: { $0.kind == .error }) {
-                if err.number == 1205 {
-                    throw SQLServerError.deadlockDetected(message: err.message)
-                } else {
-                    throw SQLServerError.sqlExecutionError(message: err.message)
-                }
+            if let error = SQLServerError.fromServerMessages(snapshot.messages) {
+                throw error
             }
-            return result
+            return SQLServerExecutionResult(rows: snapshot.rows, done: snapshot.dones, messages: snapshot.messages)
+        }.always { _ in
+            self.syncCurrentDatabaseFromServer()
         }
+        return (handle, result)
+    }
+
+    internal static func timeAmount(_ seconds: TimeInterval) -> TimeAmount? {
+        guard seconds.isFinite, seconds > 0 else { return nil }
+        return .nanoseconds(Int64(seconds * 1_000_000_000))
+    }
+
+    /// Adopts the database the server reports as current. A batch can switch
+    /// databases with USE, directly or inside a procedure.
+    internal func syncCurrentDatabaseFromServer() {
+        guard let serverDatabase = base.currentDatabase else { return }
+        let changed = stateLock.withLock { () -> Bool in
+            guard _currentDatabase != serverDatabase else { return false }
+            return true
+        }
+        if changed { setCurrentDatabase(serverDatabase) }
     }
 
     internal func markSessionPrimed() {
         stateLock.withLock { _isSessionPrimed = true }
-    }
-
-    internal func executeWithRetry<Result: Sendable>(
-        operationName: String,
-        operation: @Sendable @escaping () -> EventLoopFuture<Result>
-    ) -> EventLoopFuture<Result> {
-        @Sendable
-        func attempt(_ currentAttempt: Int) -> EventLoopFuture<Result> {
-            return operation().flatMapError { error in
-                let normalized = SQLServerError.normalize(error)
-                if currentAttempt < self.configuration.retryConfiguration.maximumAttempts && self.configuration.retryConfiguration.shouldRetry(normalized) {
-                    self.logger.debug("Operation \(operationName) attempt \(currentAttempt) failed; retrying")
-                    return attempt(currentAttempt + 1)
-                }
-                return self.eventLoop.makeFailedFuture(normalized)
-            }
-        }
-        return attempt(1)
     }
 
     internal func invalidate() -> EventLoopFuture<Void> {

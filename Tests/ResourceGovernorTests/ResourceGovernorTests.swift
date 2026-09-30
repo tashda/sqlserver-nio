@@ -109,9 +109,9 @@ final class ResourceGovernorTests: XCTestCase, @unchecked Sendable {
         }
 
         do {
-            // Disable Resource Governor
+            // Disable Resource Governor. RECONFIGURE would enable it again,
+            // so it is only issued when re-enabling.
             try await client.resourceGovernor.disable()
-            try await client.resourceGovernor.reconfigure()
 
             let disabledConfig = try await client.resourceGovernor.fetchConfiguration()
             XCTAssertFalse(disabledConfig.isEnabled, "Resource Governor should be disabled")

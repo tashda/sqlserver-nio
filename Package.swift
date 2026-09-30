@@ -30,6 +30,7 @@ let package = Package(
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
                 .product(name: "NIOSSL", package: "swift-nio-ssl"),
+                .product(name: "NIOTLS", package: "swift-nio"),
                 .product(name: "Logging", package: "swift-log"),
                 .product(name: "Atomics", package: "swift-atomics"),
                 .product(name: "Collections", package: "swift-collections"),
@@ -82,7 +83,6 @@ let package = Package(
             exclude: [
                 "EnvironmentConfig.swift.template",
                 "README.md",
-                "SETUP.md",
                 "Support",
                 "TestTemplate.swift",
                 "CoreTests/QueryTests.swift.disabled",

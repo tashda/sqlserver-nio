@@ -164,17 +164,19 @@ extension TDSTokenOperations {
             return finish(try readPLPPayload())
 
         case .clrUdt:
-            let savedIndex = buffer.readerIndex
-            do {
-                return finish(try readPLPPayload())
-            } catch TDSError.needMoreData {
-                buffer.moveReaderIndex(to: savedIndex)
+            // UDTTYPE is a PARTLENTYPE: TDS 7.2+ servers always send PLP values,
+            // whatever MaxByteSize the metadata declares. Falling back to a
+            // USHORT length when the PLP value has not fully arrived would
+            // misread a value split across packets. A zero MaxByteSize only
+            // occurs in hand-built metadata, which keeps the USHORT encoding.
+            if column.length == 0 {
                 if let payload = try readUShortLengthPayload() {
                     return finish(payload)
                 } else {
                     return finish(nil)
                 }
             }
+            return finish(try readPLPPayload())
 
         case .json:
             if column.length >= 0xFFFF {

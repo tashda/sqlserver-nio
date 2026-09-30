@@ -76,33 +76,48 @@ jobs:
           TDS_VERSION: "2022-latest"
           TDS_LOAD_ADVENTUREWORKS: "1"
           TDS_AW_DATABASE: "AdventureWorks"
+          LOG_LEVEL: "debug"
+        run: swift test --filter SimpleTDSTests.testBasicConnection
+      - name: Reliability contract (cancellation, deadlines, back-pressure, pool reset)
+        env:
+          USE_DOCKER: "1"
+          TDS_DOCKER_PORT: "14331"
+          TDS_VERSION: "2022-latest"
+        run: swift test --filter 'ProductionHardeningTests|TDSRequestPipelineTests'
+      - name: Incremental parser stress (every packet split into 7-byte fragments)
+        env:
+          USE_DOCKER: "1"
+          TDS_DOCKER_PORT: "14331"
+          TDS_VERSION: "2022-latest"
+          TDS_DEBUG_FRAGMENT_SIZE: "7"
+        run: swift test --filter 'QueryTests|MultiResultSetTests|LargeResultSetTests|OutputParameterTests|SQLServerDataTypeRoundTripTests|SQLServerLegacyLobRoundTripTests|SQLServerSpatialTests|SQLServerClrUdtDisplayTests|ExecutionPlanTests|ProductionHardeningTests'
+      - name: Run full tests against SQL Server 2022
+        env:
+          USE_DOCKER: "1"
+          TDS_DOCKER_PORT: "14331"
+          TDS_VERSION: "2022-latest"
+          TDS_LOAD_ADVENTUREWORKS: "1"
+          TDS_AW_DATABASE: "AdventureWorks"
         run: swift test
 
   matrix-tests:
     name: "Step 3: Compatibility - ${{ matrix.name }}"
     needs: build
-    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    # Every supported container version gates merges into dev and main.
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: "Legacy Support (SQL 2008 R2)"
-            version: "2008R2"
-          - name: "Legacy Support (SQL 2012)"
-            version: "2012"
-          - name: "Legacy Support (SQL 2014)"
-            version: "2014"
-          - name: "Standard Enterprise (SQL 2016)"
-            version: "2016"
-          - name: "Standard Enterprise (SQL 2017)"
+          - name: "SQL Server 2017"
             version: "2017-latest"
-          - name: "Modern Features (SQL 2019)"
+          - name: "SQL Server 2019"
             version: "2019-latest"
-          - name: "Modern Features (SQL 2022)"
+          - name: "SQL Server 2022"
             version: "2022-latest"
-          - name: "Edge / Next-Gen (SQL 2025)"
+          - name: "SQL Server 2025"
             version: "2025-latest"
     steps:
       - uses: actions/checkout@v5
@@ -118,15 +133,7 @@ jobs:
           mkdir -p "$DOCKER_CONFIG"
           printf '{}\n' > "$DOCKER_CONFIG/config.json"
           docker info
-          case "$TDS_VERSION" in
-            2008*|2012*|2014*|2016*)
-              IMAGE="mcr.microsoft.com/mssql/server:2017-latest"
-              ;;
-            *)
-              IMAGE="mcr.microsoft.com/mssql/server:${TDS_VERSION}"
-              ;;
-          esac
-          docker pull "$IMAGE"
+          docker pull "mcr.microsoft.com/mssql/server:${TDS_VERSION}"
       - name: Bootstrap validated SQL Server fixture
         env:
           USE_DOCKER: "1"

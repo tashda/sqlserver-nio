@@ -14,7 +14,12 @@ public final class SQLServerResourceGovernorClient: @unchecked Sendable {
     /// Returns the current global configuration of the Resource Governor.
     @available(macOS 12.0, *)
     public func fetchConfiguration() async throws -> SQLServerResourceGovernorConfiguration {
-        let sql = "SELECT classifier_function_id, is_enabled, is_reconfiguration_pending FROM sys.resource_governor_configuration"
+        // is_reconfiguration_pending lives in the DMV, not the catalog view.
+        let sql = """
+        SELECT c.classifier_function_id, c.is_enabled, d.is_reconfiguration_pending
+        FROM sys.resource_governor_configuration AS c
+        CROSS JOIN sys.dm_resource_governor_configuration AS d
+        """
         let rows = try await client.query(sql)
         guard let row = rows.first else {
             throw SQLServerError.sqlExecutionError(message: "Resource Governor configuration not found.")
@@ -80,8 +85,15 @@ public final class SQLServerResourceGovernorClient: @unchecked Sendable {
         var statsMap: [Int32: SQLServerResourcePool.Stats] = [:]
         if includeStats {
             let statsSql = """
-            SELECT pool_id, active_session_count, used_memory_kb, target_memory_kb, cpu_usage_total
-            FROM sys.dm_resource_governor_resource_pools
+            SELECT p.pool_id,
+                   (SELECT COUNT(*)
+                    FROM sys.dm_exec_sessions AS s
+                    JOIN sys.dm_resource_governor_workload_groups AS g ON g.group_id = s.group_id
+                    WHERE g.pool_id = p.pool_id) AS active_session_count,
+                   p.used_memory_kb, p.target_memory_kb,
+                   -- Share of CPU time consumed by this pool since statistics were reset.
+                   CAST(100.0 * p.total_cpu_usage_ms / NULLIF(SUM(p.total_cpu_usage_ms) OVER (), 0) AS FLOAT) AS cpu_usage_total
+            FROM sys.dm_resource_governor_resource_pools AS p
             """
             let statsRows = try await client.query(statsSql)
             for row in statsRows {
@@ -90,7 +102,7 @@ public final class SQLServerResourceGovernorClient: @unchecked Sendable {
                         activeSessionCount: row.column("active_session_count")?.int32 ?? 0,
                         usedMemoryKB: row.column("used_memory_kb")?.int64 ?? 0,
                         targetMemoryKB: row.column("target_memory_kb")?.int64 ?? 0,
-                        cpuUsagePercent: row.column("cpu_usage_total")?.double ?? 0 // Note: This is an approximation
+                        cpuUsagePercent: row.column("cpu_usage_total")?.double ?? 0
                     )
                 }
             }

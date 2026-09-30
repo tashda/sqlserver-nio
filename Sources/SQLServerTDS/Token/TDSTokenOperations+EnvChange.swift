@@ -5,6 +5,11 @@ extension TDSTokenOperations {
         guard let length: UInt16 = buffer.readInteger(endianness: .little) else {
             throw TDSError.needMoreData
         }
+        // Require the whole token before decoding fields. Moving the reader
+        // index past the writer index below would otherwise trap.
+        guard buffer.readableBytes >= Int(length) else {
+            throw TDSError.needMoreData
+        }
         let payloadEnd = buffer.readerIndex + Int(length)
 
         guard let type: UInt8 = buffer.readInteger() else {
@@ -46,6 +51,9 @@ extension TDSTokenOperations {
             token = TDSTokens.EnvchangeToken<[UInt8]>(envType: type, newValue: payload, oldValue: [])
         }
 
+        guard buffer.readerIndex <= payloadEnd else {
+            throw TDSError.protocolError("ENVCHANGE value exceeds its declared length")
+        }
         buffer.moveReaderIndex(to: payloadEnd)
 
         return token

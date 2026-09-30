@@ -15,7 +15,7 @@ public final class TransactionManagerRequest: TDSRequest, @unchecked Sendable {
     public let onRow: (@Sendable (TDSRow) -> Void)? = nil
     public let onMetadata: (@Sendable ([TDSColumnMetadata]) -> Void)? = nil
     public let onDone: (@Sendable (TDSTokens.DoneToken) -> Void)? = nil
-    public let onMessage: (@Sendable (TDSTokens.ErrorInfoToken, Bool) -> Void)? = nil
+    public let onMessage: (@Sendable (TDSTokens.ErrorInfoToken, Bool) -> Void)?
     public let onReturnValue: (@Sendable (TDSTokens.ReturnValueToken) -> Void)? = nil
 
     public var packetType: TDSPacket.HeaderType { .transactionManagerRequest }
@@ -23,9 +23,11 @@ public final class TransactionManagerRequest: TDSRequest, @unchecked Sendable {
     public init(
         command: Command,
         transactionDescriptor: [UInt8],
-        outstandingRequestCount: UInt32 = 1
+        outstandingRequestCount: UInt32 = 1,
+        onMessage: (@Sendable (TDSTokens.ErrorInfoToken, Bool) -> Void)? = nil
     ) {
         self.command = command
+        self.onMessage = onMessage
 
         switch command {
         case .begin(let isolationLevel):

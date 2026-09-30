@@ -42,17 +42,21 @@ final class SQLServerTransactionIsolationMatrixTests: XCTestCase, @unchecked Sen
                 async let w2 = dbClient.withConnection { conn in try await conn.query("SELECT 1") }
                 _ = try await (w1, w2)
 
+                // The holder signals once its SERIALIZABLE range lock exists;
+                // a fixed sleep raced with a slow server.
+                let (locked, lockedContinuation) = AsyncStream<Void>.makeStream()
                 let holder = Task {
                     try await dbClient.withConnection { conn in
                         try await conn.setIsolationLevel(.serializable)
                         try await conn.beginTransaction()
                         _ = try await conn.query("SELECT COUNT(*) FROM [dbo].[\(tableName)] WHERE category = N'A'")
+                        lockedContinuation.yield()
                         try await Task.sleep(nanoseconds: 600_000_000)
                         try await conn.commit()
                     }
                 }
 
-                try await Task.sleep(nanoseconds: 150_000_000)
+                for await _ in locked { break }
                 let elapsed = try await dbClient.withConnection { conn in
                     let start = DispatchTime.now()
                     try await conn.insertRow(into: tableName, values: ["id": .int(3), "category": .nString("A")])

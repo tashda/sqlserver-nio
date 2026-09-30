@@ -45,7 +45,7 @@ public final class SQLServerPolicyClient: @unchecked Sendable {
     @available(macOS 12.0, *)
     public func listConditions() async throws -> [SQLServerPolicyCondition] {
         let sql = """
-        SELECT condition_id, name, facet_name, expression
+        SELECT condition_id, name, facet AS facet_name, expression
         FROM msdb.dbo.syspolicy_conditions
         """
         let rows = try await client.query(sql)
@@ -68,7 +68,7 @@ public final class SQLServerPolicyClient: @unchecked Sendable {
     /// Lists all available management facets.
     @available(macOS 12.0, *)
     public func listFacets() async throws -> [SQLServerPolicyFacet] {
-        let sql = "SELECT name, description FROM msdb.dbo.syspolicy_management_facets"
+        let sql = "SELECT name, CAST(NULL AS NVARCHAR(MAX)) AS description FROM msdb.dbo.syspolicy_management_facets"
         let rows = try await client.query(sql)
         return rows.compactMap { row in
             guard let name = row.column("name")?.string else { return nil }

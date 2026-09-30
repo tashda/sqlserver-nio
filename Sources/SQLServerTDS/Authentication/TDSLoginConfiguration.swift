@@ -14,12 +14,22 @@ public struct TDSLoginConfiguration: Sendable {
     public var authentication: TDSAuthentication
     /// When true, signals read-only application intent for AG secondary routing.
     public var readOnlyIntent: Bool
+    /// Reported to the server as APP_NAME().
+    public var applicationName: String
 
-    public init(serverName: String, port: Int, database: String, authentication: TDSAuthentication, readOnlyIntent: Bool = false) {
+    public init(
+        serverName: String,
+        port: Int,
+        database: String,
+        authentication: TDSAuthentication,
+        readOnlyIntent: Bool = false,
+        applicationName: String = TDSMessages.Login7Message.defaultApplicationName
+    ) {
         self.serverName = serverName
         self.port = port
         self.database = database
         self.authentication = authentication
         self.readOnlyIntent = readOnlyIntent
+        self.applicationName = applicationName
     }
 }

@@ -10,9 +10,15 @@ public enum SQLServerError: Swift.Error, CustomStringConvertible, LocalizedError
     case authenticationFailed(message: String? = nil)
     case protocolError(TDSError)
     case unsupportedPlatform
-    case sqlExecutionError(message: String)
-    // Specific transient error that should generally be retried: SQL Server deadlock (error 1205)
-    case deadlockDetected(message: String)
+    /// SQL Server returned an error. `details` carries the error number,
+    /// severity, state, line and procedure, plus every message of the batch.
+    case sqlExecutionError(message: String, details: SQLServerErrorDetails? = nil)
+    /// The session was chosen as a deadlock victim (error 1205). SQL Server
+    /// rolled back the whole transaction, so only a retry of the entire
+    /// transaction from its start is safe.
+    case deadlockDetected(message: String, details: SQLServerErrorDetails? = nil)
+    /// The commit acknowledgement was lost; the transaction may have committed.
+    case commitOutcomeUnknown(Swift.Error)
     case invalidArgument(String)
     case databaseDoesNotExist(String)
     case notImplemented(String)
@@ -41,10 +47,12 @@ public enum SQLServerError: Swift.Error, CustomStringConvertible, LocalizedError
             return "TDS error: \(error)"
         case .unsupportedPlatform:
             return "This platform is not supported."
-        case .sqlExecutionError(let message):
+        case .sqlExecutionError(let message, _):
             return message
-        case .deadlockDetected(let message):
+        case .deadlockDetected(let message, _):
             return "Deadlock detected: \(message)"
+        case .commitOutcomeUnknown(let error):
+            return "Commit outcome is unknown; check the database before retrying: \(error)"
         case .invalidArgument(let message):
             return message
         case .databaseDoesNotExist(let name):
@@ -120,4 +128,97 @@ public enum SQLServerError: Swift.Error, CustomStringConvertible, LocalizedError
             return "Connection failed: \(String(describing: error))"
         }
     }
+}
+
+/// The server-reported fields of a SQL Server error (MS-TDS ERROR token).
+public struct SQLServerErrorDetails: Sendable {
+    /// The first error the server reported for the request.
+    public let primary: SQLServerStreamMessage
+    /// Every error and informational message the request produced, in order.
+    public let messages: [SQLServerStreamMessage]
+
+    public init(primary: SQLServerStreamMessage, messages: [SQLServerStreamMessage]) {
+        self.primary = primary
+        self.messages = messages
+    }
+
+    public var number: Int32 { primary.number }
+    public var severity: UInt8 { primary.severity }
+    public var state: UInt8 { primary.state }
+    public var lineNumber: Int32 { primary.lineNumber }
+    public var procedureName: String { primary.procedureName }
+    public var serverName: String { primary.serverName }
+
+    /// All error messages, excluding informational ones.
+    public var errors: [SQLServerStreamMessage] { messages.filter { $0.kind == .error } }
+}
+
+extension SQLServerError {
+    /// Builds the error for a request whose messages include at least one
+    /// error. Returns nil when there is none.
+    public static func fromServerMessages(_ messages: [SQLServerStreamMessage]) -> SQLServerError? {
+        guard let first = messages.first(where: { $0.kind == .error }) else { return nil }
+        let details = SQLServerErrorDetails(primary: first, messages: messages)
+        if messages.contains(where: { $0.kind == .error && $0.number == 1205 }) {
+            let deadlock = messages.first(where: { $0.kind == .error && $0.number == 1205 })!
+            return .deadlockDetected(message: deadlock.message, details: details)
+        }
+        return .sqlExecutionError(message: first.message, details: details)
+    }
+
+    /// Server error details when this error came from SQL Server.
+    public var serverDetails: SQLServerErrorDetails? {
+        switch self {
+        case .sqlExecutionError(_, let details), .deadlockDetected(_, let details):
+            return details
+        default:
+            return nil
+        }
+    }
+
+    /// The SQL Server error number, when this error came from SQL Server.
+    public var serverErrorNumber: Int32? { serverDetails?.number }
+
+    /// True when the physical connection is gone or unusable and must not be
+    /// used again. The outcome of a request that was executing is unknown.
+    public var isConnectionLost: Bool {
+        switch self {
+        case .connectionClosed, .transient:
+            return true
+        case .protocolError(let tds):
+            return tds != .cancelled
+        case .sqlExecutionError(_, let details):
+            // Severity 20 and above terminates the session (fatal errors).
+            return (details?.severity ?? 0) >= 20
+        default:
+            return false
+        }
+    }
+
+    /// True for failures that SQL Server documents as transient: deadlock
+    /// victims, lock or resource timeouts, Azure SQL throttling and failover
+    /// errors. Retrying is only safe when the whole unit of work is repeated
+    /// and is known to be idempotent or was rolled back.
+    public var isTransient: Bool {
+        switch self {
+        case .deadlockDetected, .transient:
+            return true
+        case .sqlExecutionError(_, let details):
+            guard let number = details?.number else { return false }
+            return Self.transientErrorNumbers.contains(number)
+        default:
+            return false
+        }
+    }
+
+    /// Error numbers the Microsoft drivers treat as transient (see
+    /// Microsoft.Data.SqlClient SqlConfigurableRetryFactory defaults and
+    /// Azure SQL transient fault guidance).
+    public static let transientErrorNumbers: Set<Int32> = [
+        1205,   // deadlock victim
+        1222,   // lock request timeout
+        233, 64, 10053, 10054, 10060, 10928, 10929,
+        40143, 40197, 40501, 40540, 40613, 42108, 42109,
+        49918, 49919, 49920, 4060, 4221, 615, 926,
+    ]
 }

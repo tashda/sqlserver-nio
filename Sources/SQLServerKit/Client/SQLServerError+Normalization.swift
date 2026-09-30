@@ -1,6 +1,7 @@
 import NIO
 import NIOPosix
 import SQLServerTDS
+import NIOSSL
 
 extension SQLServerError {
     static func normalize(_ error: Swift.Error) -> SQLServerError {
@@ -13,6 +14,8 @@ extension SQLServerError {
                 return .connectionClosed
             case .invalidCredentials(let message):
                 return .authenticationFailed(message: message)
+            case .requestTimeout(let message):
+                return .timeout(description: message, underlying: tds)
             case .protocolError(let message):
                 // Map protocol errors that explicitly signal a timeout to SQLServerError.timeout
                 if message.localizedCaseInsensitiveContains("timeout") {
@@ -23,10 +26,20 @@ extension SQLServerError {
                 return .protocolError(tds)
             }
         }
+        if let sslError = error as? NIOSSLError {
+            // After the handshake, a TLS failure means the transport broke
+            // (for example a TCP reset surfacing as an unclean shutdown).
+            if case .uncleanShutdown = sslError {
+                return .connectionClosed
+            }
+            return .protocolError(.sslError(String(describing: sslError)))
+        }
         if let channelError = error as? ChannelError {
             switch channelError {
             case .ioOnClosedChannel, .outputClosed, .eof, .alreadyClosed:
                 return .connectionClosed
+            case .connectTimeout:
+                return .transient(channelError)
             default:
                 return .unknown(channelError)
             }

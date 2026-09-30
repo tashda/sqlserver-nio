@@ -75,3 +75,7 @@ Tests/Debug/
 # One-off debug/test scripts
 debug_*.swift
 test_*.swift
+
+# Test lab secrets and logs
+testlab/*.env
+testlab/certs/

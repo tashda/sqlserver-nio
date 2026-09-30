@@ -32,7 +32,10 @@ public func makeSQLServerConnectionConfiguration() -> SQLServerConnection.Config
             database: database,
             authentication: .sqlPassword(username: username, password: password)
         ),
-        tlsConfiguration: nil,
+        // Docker's test certificate is self-signed; keep encryption enabled
+        // while explicitly trusting this isolated fixture.
+        tlsConfiguration: .trustingServerCertificate,
+        encryptionMode: .mandatory,
         metadataConfiguration: SQLServerMetadataOperations.Configuration(
             includeSystemSchemas: false,
             enableColumnCache: true,

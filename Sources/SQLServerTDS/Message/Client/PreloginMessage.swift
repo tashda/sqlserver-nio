@@ -130,7 +130,7 @@ extension TDSMessages {
 /// High-level encryption mode for TDS connections.
 /// Maps to the ENCRYPT connection string option.
 public enum TDSEncryptionMode: Sendable {
-    /// Encryption is optional. Use TLS if available, fall back to unencrypted.
+    /// Compatibility alias that currently requires full-session encryption.
     case optional
     /// Encryption is mandatory. Fail if server doesn't support TLS.
     case mandatory
