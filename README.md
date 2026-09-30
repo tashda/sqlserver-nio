@@ -581,10 +581,12 @@ try await indexClient.rebuildIndex(name: "IX_Users_Email", table: "Users")
 
 ## Bulk Copy
 
-Rows are sent with the TDS bulk load (as `bcp` and SqlBulkCopy send them). Values are converted
-on the client to each column's type, so text from a CSV file works (`yyyy-MM-dd HH:mm:ss` dates,
-`.` decimals, `0x…` binary). Every value is checked before anything is written; one that does not
-convert throws `SQLServerBulkCopyError.invalidValue` naming the row and column.
+Rows are sent with the TDS bulk load (as `bcp` and SqlBulkCopy send them). A column whose values
+all convert on the client (numbers, ISO dates such as `yyyy-MM-dd HH:mm:ss`, `.` decimals, `0x…`
+binary) is sent in its own type. A column with other text (`12/31/2023`, `Dec 31 2023`) is sent as
+`nvarchar` and SQL Server converts it exactly as an INSERT would. A value that is not text and does
+not convert throws `SQLServerBulkCopyError.invalidValue`, naming the row and column, before anything
+is written.
 
 ```swift
 let bulk = SQLServerBulkClient(client: client)

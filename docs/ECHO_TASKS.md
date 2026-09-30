@@ -17,7 +17,7 @@ Echo branch unless noted. Add new rows at the bottom when a driver change needs 
 | 10 | Prefer `client.withStreamQuery(sql) { … }` over `client.streamQuery(sql)` for pooled streams. | Open |
 | 11 | Spool every row as wire bytes and format with `SQLServerCellFormatter` (values after row 200). | Done (`ce98d8e4`) |
 | 12 | "Transaction rolled back" after a cancel inside a transaction (`isInTransaction`, driver #14). | Done (`c051c455`) |
-| 13 | Imports use the TDS bulk load (`client.bulk.copy`, unchanged call). New options to offer in the import sheet: `tableLock`, `checkConstraints`, `fireTriggers`, `keepNulls` (and `identityInsert`); show `summary.method`; show `SQLServerBulkCopyError.invalidValue` (row, column, value) before anything is written. Lab round first. | Open |
+| 13 | Imports use the TDS bulk load (`client.bulk.copy`, unchanged call). New options to offer in the import sheet: `tableLock`, `checkConstraints`, `fireTriggers`, `keepNulls` (and `identityInsert`); show `summary.method`. Text converts as before (SQL Server converts what the client cannot read), so today's files import unchanged. Lab round first. | Open |
 
 Checks to run in the app (owner): run, cancel mid-result, run again (temp tables survive); a cancel
 inside `BEGIN TRAN` says Transaction rolled back; several million rows keep memory flat; `KILL` the

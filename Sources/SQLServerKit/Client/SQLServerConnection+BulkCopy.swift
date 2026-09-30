@@ -7,11 +7,13 @@ extension SQLServerConnection {
     /// Copies rows into a table in batches of `options.batchSize`.
     ///
     /// With `.bulkLoad` (the default) each batch is one TDS bulk load, as `bcp` and SqlBulkCopy send
-    /// it: values are converted on the client to each destination column's type, so text from a
-    /// CSV file is read the way SQL Server would convert it (`yyyy-MM-dd HH:mm:ss` dates, `.`
-    /// decimals). Every value is checked before the first batch is sent; a value that does not
-    /// convert throws ``SQLServerBulkCopyError/invalidValue(row:column:value:reason:)`` and nothing
-    /// is written. Batches are committed one by one unless the connection is in a transaction.
+    /// it. A column whose values all convert on the client (numbers, ISO dates such as
+    /// `yyyy-MM-dd HH:mm:ss`, `.` decimals, `0x…` binary) is sent in its own type. A column with text
+    /// the client does not read (`12/31/2023`, `Dec 31 2023`) is sent as `nvarchar` and SQL Server
+    /// converts it, exactly as an INSERT would (so DATEFORMAT and language apply, and its errors are
+    /// the server's). A value that is not text and does not convert throws
+    /// ``SQLServerBulkCopyError/invalidValue(row:column:value:reason:)`` before anything is written.
+    /// Batches are committed one by one unless the connection is in a transaction.
     @available(macOS 12.0, *)
     public func bulkCopy(
         rows: [SQLServerBulkCopyRow],
@@ -35,14 +37,15 @@ extension SQLServerConnection {
         }
 
         if options.method == .bulkLoad, let destination = try await bulkLoadDestination(options, rows: rows) {
-            try Self.validateBulkLoadValues(rows.map { SQLServerBulkCopyRow(values: destination.values(of: $0)) }, columns: destination.columns)
-            let statement = Self.insertBulkStatement(options, declarations: destination.declarations)
+            let wire = try Self.wireColumns(for: rows.map(destination.values(of:)), columns: destination.columns)
+            let declarations = wire.map { destination.declaration(for: $0) }
+            let statement = Self.insertBulkStatement(options, declarations: declarations)
             var copied = 0
             var batches = 0
             for chunk in rows.chunked(into: options.batchSize) {
-                var writer = TDSBulkLoadWriter(columns: destination.columns)
+                var writer = TDSBulkLoadWriter(columns: wire.map(\.column))
                 for row in chunk {
-                    try writer.appendRow(zip(destination.values(of: row), destination.columns).map { try SQLServerBulkValueEncoder.encode($0, for: $1) })
+                    try writer.appendRow(zip(destination.values(of: row), wire).map { try $1.encode($0) })
                 }
                 _ = try await execute(statement)
                 copied += try await sendBulkLoad(writer.finished(), rowCount: chunk.count)
@@ -93,13 +96,68 @@ extension SQLServerConnection {
 
     struct BulkLoadDestination {
         var columns: [TDSColumnMetadata]
-        /// `[name] type [COLLATE name]` for each column, for INSERT BULK.
-        var declarations: [String]
+        /// Collation names by lower-cased column name.
+        var collations: [String: String]
         /// The positions in each row of the values sent, one per column.
         var valueIndexes: [Int]
 
         func values(of row: SQLServerBulkCopyRow) -> [SQLServerLiteralValue] {
             valueIndexes.map { row.values[$0] }
+        }
+
+        /// `[name] type [COLLATE name]`, for INSERT BULK.
+        func declaration(for wire: WireColumn) -> String {
+            let name = SQLServerSQL.escapeIdentifier(wire.column.colName)
+            if wire.sentAsText {
+                return "\(name) \(SQLServerConnection.bulkTypeName(wire.column)!) COLLATE \(WireColumn.textCollationName)"
+            }
+            var declaration = "\(name) \(SQLServerConnection.bulkTypeName(wire.column)!)"
+            if let collation = collations[wire.column.colName.lowercased()], collation.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) {
+                declaration += " COLLATE \(collation)"
+            }
+            return declaration
+        }
+    }
+
+    /// A column as the bulk load sends it: in the destination's type, or as nvarchar text that the
+    /// server converts.
+    struct WireColumn {
+        static let textCollationName = "Latin1_General_CI_AS"
+        static let textCollation: [UInt8] = [0x09, 0x04, 0xD0, 0x00, 0x34]
+
+        var column: TDSColumnMetadata
+        var sentAsText: Bool
+
+        func encode(_ value: SQLServerLiteralValue) throws -> [UInt8]? {
+            guard sentAsText else { return try SQLServerBulkValueEncoder.encode(value, for: column) }
+            return try Self.serverText(value).map { Array($0.utf16.flatMap { [UInt8($0 & 0xFF), UInt8($0 >> 8)] }) }
+        }
+
+        /// The value as the text an INSERT would have given the server; nil for NULL.
+        static func serverText(_ value: SQLServerLiteralValue) throws -> String? {
+            switch value {
+            case .null: return nil
+            case .string(let s), .nString(let s), .decimal(let s): return s
+            case .int(let n): return String(n)
+            case .int64(let n): return String(n)
+            case .double(let d): return String(d)
+            case .bool(let b): return b ? "1" : "0"
+            case .uuid(let u): return u.uuidString
+            case .date(let d):
+                let formatter = ISO8601DateFormatter()
+                formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                return formatter.string(from: d)
+            case .variant(let inner): return try serverText(inner)
+            default: throw SQLServerBulkValueEncoder.ConversionError(reason: "cannot be sent as text")
+            }
+        }
+
+        static func isText(_ value: SQLServerLiteralValue) -> Bool {
+            switch value {
+            case .string, .nString, .decimal: return true
+            case .variant(let inner): return isText(inner)
+            default: return false
+            }
         }
     }
 
@@ -132,14 +190,7 @@ extension SQLServerConnection {
             }
         }
 
-        let declarations = columns.map { column -> String in
-            var declaration = "\(SQLServerSQL.escapeIdentifier(column.colName)) \(Self.bulkTypeName(column)!)"
-            if let collation = collations[column.colName.lowercased()], collation.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) {
-                declaration += " COLLATE \(collation)"
-            }
-            return declaration
-        }
-        return BulkLoadDestination(columns: columns, declarations: declarations, valueIndexes: valueIndexes)
+        return BulkLoadDestination(columns: columns, collations: collations, valueIndexes: valueIndexes)
     }
 
     static func canBulkLoad(_ value: SQLServerLiteralValue) -> Bool {
@@ -150,15 +201,40 @@ extension SQLServerConnection {
         }
     }
 
-    static func validateBulkLoadValues(_ rows: [SQLServerBulkCopyRow], columns: [TDSColumnMetadata]) throws {
-        for (index, row) in rows.enumerated() {
-            for (value, column) in zip(row.values, columns) {
+    /// Decides how each column travels. A column goes as text when one of its text values does not
+    /// convert on the client; a value that is not text and does not convert throws.
+    static func wireColumns(for rows: [[SQLServerLiteralValue]], columns: [TDSColumnMetadata]) throws -> [WireColumn] {
+        try columns.enumerated().map { index, column in
+            var sentAsText = false
+            for (rowIndex, row) in rows.enumerated() {
+                let value = row[index]
                 do {
                     _ = try SQLServerBulkValueEncoder.encode(value, for: column)
                 } catch let error as SQLServerBulkValueEncoder.ConversionError {
-                    throw SQLServerBulkCopyError.invalidValue(row: index + 1, column: column.colName, value: value.displayText, reason: error.reason)
+                    guard WireColumn.isText(value) else {
+                        throw SQLServerBulkCopyError.invalidValue(row: rowIndex + 1, column: column.colName, value: value.displayText, reason: error.reason)
+                    }
+                    sentAsText = true
+                    break
                 }
             }
+            guard sentAsText else { return WireColumn(column: column, sentAsText: false) }
+            var longest = 0
+            for (rowIndex, row) in rows.enumerated() {
+                do {
+                    longest = max(longest, try WireColumn.serverText(row[index])?.utf16.count ?? 0)
+                } catch let error as SQLServerBulkValueEncoder.ConversionError {
+                    throw SQLServerBulkCopyError.invalidValue(row: rowIndex + 1, column: column.colName, value: row[index].displayText, reason: error.reason)
+                }
+            }
+            var text = column
+            text.dataType = .nvarchar
+            text.length = longest <= 4000 ? 8000 : 0xFFFF
+            text.precision = 0
+            text.scale = 0
+            text.collation = WireColumn.textCollation
+            text.udtInfo = nil
+            return WireColumn(column: text, sentAsText: true)
         }
     }
 

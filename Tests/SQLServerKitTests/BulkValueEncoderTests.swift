@@ -147,15 +147,30 @@ import Testing
             == "INSERT BULK [dbo].[t] ([a] int) WITH (TABLOCK)")
     }
 
-    @Test func conversionErrorsNameTheRowAndColumn() {
-        let rows = [SQLServerBulkCopyRow(values: [.string("1")]), SQLServerBulkCopyRow(values: [.string("x")])]
+    @Test func textTheClientCannotReadGoesToTheServerAsText() throws {
+        var date = column(.date)
+        date.colName = "booked"
+        var id = column(.intn, length: 4)
+        id.colName = "id"
+        let rows: [[SQLServerLiteralValue]] = [[.string("2024-02-29"), .int(1)], [.string("12/31/2023"), .int(2)]]
+        let wire = try SQLServerConnection.wireColumns(for: rows, columns: [date, id])
+        #expect(wire.map(\.sentAsText) == [true, false])
+        #expect(wire[0].column.dataType == .nvarchar)
+        #expect(wire[0].column.length == 8000)
+        #expect(SQLServerConnection.bulkTypeName(wire[0].column) == "nvarchar(4000)")
+        #expect(try wire[0].encode(.string("12/31/2023")) == Array("12/31/2023".utf16.flatMap { [UInt8($0 & 0xFF), UInt8($0 >> 8)] }))
+        #expect(try wire[0].encode(.null) == nil)
+        #expect(try wire[1].encode(.int(2)) == [2, 0, 0, 0])
+    }
+
+    @Test func aValueThatIsNotTextAndDoesNotConvertNamesTheRowAndColumn() {
         var price = column(.intn, length: 4)
         price.colName = "price"
         do {
-            try SQLServerConnection.validateBulkLoadValues(rows, columns: [price])
+            _ = try SQLServerConnection.wireColumns(for: [[.int(1)], [.bytes([1, 2])]], columns: [price])
             Issue.record("expected a conversion error")
         } catch {
-            #expect((error as? LocalizedError)?.errorDescription == "Row 2, column price: 'x' is not a whole number.")
+            #expect((error as? LocalizedError)?.errorDescription == "Row 2, column price: '0x0102' is not a whole number.")
         }
     }
 }

@@ -115,14 +115,35 @@ final class BulkLoadLiveTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(defaulted.first?.column("note")?.string, "dflt")
     }
 
-    func testAValueThatDoesNotConvertWritesNothing() async throws {
-        _ = try await connection.execute("CREATE TABLE dbo.[\(table)] (id int NOT NULL, price decimal(10, 2) NOT NULL)")
-        let rows: [[SQLServerLiteralValue]] = [[.string("1"), .string("1.50")], [.string("2"), .string("1,50")]]
+    func testTextTheClientCannotReadIsConvertedByTheServer() async throws {
+        _ = try await connection.execute("CREATE TABLE dbo.[\(table)] (id int NOT NULL, booked date, price decimal(10, 2))")
+        // us_english reads 12/31/2023 as month/day/year, as an INSERT would.
+        let summary = try await copy(
+            [[.string("1"), .string("12/31/2023"), .string("1.50")], [.string("2"), .string("20240229"), .string("2")]],
+            columns: ["id", "booked", "price"]
+        )
+        XCTAssertEqual(summary.method, .bulkLoad)
+        let rows = try await connection.query("SELECT CONVERT(varchar(10), booked, 23) AS booked, price FROM dbo.[\(table)] ORDER BY id")
+        XCTAssertEqual(rows.map { $0.column("booked")?.string }, ["2023-12-31", "2024-02-29"])
+
+        // Text neither side reads fails with the server's error, as an INSERT did.
         do {
-            _ = try await copy(rows, columns: ["id", "price"]) { $0.batchSize = 1 }
+            _ = try await copy([[.string("3"), .string("2024-01-01"), .string("1,50")]], columns: ["id", "booked", "price"])
+            XCTFail("expected a conversion error")
+        } catch let error as SQLServerError {
+            XCTAssertTrue("\(error)".contains("converting"), "\(error)")
+        }
+        let count = try await connection.queryScalar("SELECT COUNT(*) FROM dbo.[\(table)]", as: Int.self)
+        XCTAssertEqual(count, 2)
+    }
+
+    func testAValueThatIsNotTextAndDoesNotConvertWritesNothing() async throws {
+        _ = try await connection.execute("CREATE TABLE dbo.[\(table)] (id int NOT NULL)")
+        do {
+            _ = try await copy([[.int(1)], [.bytes([1, 2])]], columns: ["id"]) { $0.batchSize = 1 }
             XCTFail("expected a conversion error")
         } catch let error as SQLServerBulkCopyError {
-            XCTAssertEqual(error.localizedDescription, "Row 2, column price: '1,50' is not a number.")
+            XCTAssertEqual(error.localizedDescription, "Row 2, column id: '0x0102' is not a whole number.")
         }
         let count = try await connection.queryScalar("SELECT COUNT(*) FROM dbo.[\(table)]", as: Int.self)
         XCTAssertEqual(count, 0)
