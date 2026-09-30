@@ -1,4 +1,5 @@
 import XCTest
+import Foundation
 import Logging
 import NIOConcurrencyHelpers
 import SQLServerKit
@@ -11,8 +12,17 @@ import SQLServerKitTesting
 /// out of step silently returns one query's results to another.
 final class ProductionHardeningTests: XCTestCase, @unchecked Sendable {
     private var client: SQLServerClient!
+    private var watchdog: DispatchWorkItem?
 
     override func setUp() async throws {
+        // A hang in these tests is itself a defect. Abort with the test's name
+        // instead of letting the run stall until the CI job times out.
+        let name = self.name
+        let watchdog = DispatchWorkItem {
+            fatalError("\(name) did not finish within 300 seconds")
+        }
+        self.watchdog = watchdog
+        DispatchQueue.global().asyncAfter(deadline: .now() + 300, execute: watchdog)
         _ = isLoggingConfigured
         TestEnvironmentManager.loadEnvironmentVariables()
         var config = makeSQLServerClientConfiguration()
@@ -24,6 +34,7 @@ final class ProductionHardeningTests: XCTestCase, @unchecked Sendable {
     override func tearDown() async throws {
         try await client?.shutdownGracefully()
         client = nil
+        watchdog?.cancel()
     }
 
     private func dedicatedConnection() async throws -> SQLServerConnection {
