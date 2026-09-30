@@ -2,8 +2,20 @@ import Foundation
 import Logging
 import NIOConcurrencyHelpers
 
-public enum SQLServerBulkCopyError: Error {
+public enum SQLServerBulkCopyError: Error, LocalizedError {
     case columnCountMismatch(expected: Int, actual: Int)
+    /// A value that cannot be converted to its destination column. `row` counts from 1.
+    case invalidValue(row: Int, column: String, value: String, reason: String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .columnCountMismatch(let expected, let actual):
+            return "A row has \(actual) values for \(expected) columns."
+        case .invalidValue(let row, let column, let value, let reason):
+            let shown = value.count > 60 ? String(value.prefix(60)) + "…" : value
+            return "Row \(row), column \(column): '\(shown)' \(reason)."
+        }
+    }
 }
 
 public struct SQLServerBulkCopyRow: Sendable {
@@ -14,25 +26,58 @@ public struct SQLServerBulkCopyRow: Sendable {
     }
 }
 
+/// How rows reach the server.
+public enum SQLServerBulkCopyMethod: String, Sendable {
+    /// The TDS bulk load (what `bcp` and SqlBulkCopy use): rows are streamed in the columns' own
+    /// format, without SQL statements.
+    case bulkLoad
+    /// Multi-row `INSERT … VALUES` statements.
+    case insertStatements
+}
+
 public struct SQLServerBulkCopyOptions: Sendable {
     public var schema: String
     public var table: String
     public var columns: [String]
     public var batchSize: Int
+    /// Keep the identity values from the source. When false, a bulk load leaves identity columns
+    /// out and the server assigns the values; INSERT statements fail on them.
     public var identityInsert: Bool
-    
+    /// `.bulkLoad` (the default) falls back to INSERT statements when a column or value cannot be
+    /// bulk loaded: `text`, `ntext`, `image`, `sql_variant`, CLR types (`geometry`, `geography`,
+    /// `hierarchyid`), `json`, `vector`, or `.raw` SQL values.
+    public var method: SQLServerBulkCopyMethod
+    /// Check CHECK and FOREIGN KEY constraints. Bulk load only; INSERT statements always check them.
+    public var checkConstraints: Bool
+    /// Fire the table's INSERT triggers. Bulk load only; INSERT statements always fire them.
+    public var fireTriggers: Bool
+    /// Store NULL as NULL; when false, columns with a default get the default instead.
+    public var keepNulls: Bool
+    /// Take a table lock for the duration of each batch (faster, blocks other writers).
+    public var tableLock: Bool
+
     public init(
         table: String,
         schema: String = "dbo",
         columns: [String],
         batchSize: Int = 1_000,
-        identityInsert: Bool = false
+        identityInsert: Bool = false,
+        method: SQLServerBulkCopyMethod = .bulkLoad,
+        checkConstraints: Bool = true,
+        fireTriggers: Bool = true,
+        keepNulls: Bool = true,
+        tableLock: Bool = false
     ) {
         self.schema = schema
         self.table = table
         self.columns = columns
         self.batchSize = max(1, batchSize)
         self.identityInsert = identityInsert
+        self.method = method
+        self.checkConstraints = checkConstraints
+        self.fireTriggers = fireTriggers
+        self.keepNulls = keepNulls
+        self.tableLock = tableLock
     }
     
     internal var qualifiedTableName: String {
@@ -52,6 +97,8 @@ public struct SQLServerBulkCopySummary: Sendable {
     public let batchSize: Int
     public let identityInsert: Bool
     public let duration: TimeInterval
+    /// The method used; `.insertStatements` when a bulk load was asked for but not possible.
+    public let method: SQLServerBulkCopyMethod
 }
 
 public final class SQLServerBulkClient {
@@ -63,108 +110,21 @@ public final class SQLServerBulkClient {
         self.logger = logger ?? client.logger
     }
     
+    /// Copies rows into a table on a pooled connection. See ``SQLServerConnection/bulkCopy(rows:options:afterBatch:)``.
     @available(macOS 12.0, *)
     public func copy(
         rows: [SQLServerBulkCopyRow],
         options: SQLServerBulkCopyOptions,
         afterBatch: (@Sendable (SQLServerConnection, Int) async throws -> Void)? = nil
     ) async throws -> SQLServerBulkCopySummary {
-        guard !rows.isEmpty else {
-            logger.debug("SQLServerBulkClient skipping copy because no rows were provided.")
-            return SQLServerBulkCopySummary(
-                schema: options.schema,
-                table: options.table,
-                totalRows: 0,
-                batchesExecuted: 0,
-                batchSize: options.batchSize,
-                identityInsert: options.identityInsert,
-                duration: 0
-            )
-        }
-        
-        let expectedColumnCount = options.columns.count
-        guard expectedColumnCount > 0 else {
-            logger.warning("SQLServerBulkClient copy invoked without columns; nothing to do.")
-            return SQLServerBulkCopySummary(
-                schema: options.schema,
-                table: options.table,
-                totalRows: 0,
-                batchesExecuted: 0,
-                batchSize: options.batchSize,
-                identityInsert: options.identityInsert,
-                duration: 0
-            )
-        }
-        
-        for row in rows where row.values.count != expectedColumnCount {
-            throw SQLServerBulkCopyError.columnCountMismatch(expected: expectedColumnCount, actual: row.values.count)
-        }
-        
-        let start = Date()
-        struct CopyState: Sendable {
-            var batchesExecuted = 0
-            var insertedRows = 0
-        }
-
-        let state = NIOLockedValueBox(CopyState())
-        
         try await client.withConnection { connection in
-            for chunk in rows.chunked(into: options.batchSize) {
-                let batchNumber = state.withLockedValue { current -> Int in
-                    current.batchesExecuted += 1
-                    return current.batchesExecuted
-                }
-                let valuesClause = chunk.map { row in
-                    let literals = row.values.map { $0.sqlLiteral() }.joined(separator: ", ")
-                    return "(\(literals))"
-                }.joined(separator: ",\n")
-                
-                var statement = """
-                INSERT INTO \(options.qualifiedTableName) (\(options.columnList))
-                VALUES
-                \(valuesClause);
-                """
-                
-                if options.identityInsert {
-                    statement = """
-                    SET IDENTITY_INSERT \(options.qualifiedTableName) ON;
-                    \(statement)
-                    SET IDENTITY_INSERT \(options.qualifiedTableName) OFF;
-                    """
-                }
-                
-                let result = try await connection.execute(statement)
-                if let rowCount = result.rowCount, rowCount > 0 {
-                    state.withLockedValue { $0.insertedRows += Int(rowCount) }
-                } else if result.totalRowCount > 0 {
-                    state.withLockedValue { $0.insertedRows += Int(result.totalRowCount) }
-                } else {
-                    state.withLockedValue { $0.insertedRows += chunk.count }
-                }
-                
-                if let afterBatch {
-                    try await afterBatch(connection, batchNumber)
-                }
-            }
+            try await connection.bulkCopy(rows: rows, options: options, afterBatch: afterBatch)
         }
-        
-        let duration = Date().timeIntervalSince(start)
-        let summaryState = state.withLockedValue { $0 }
-        return SQLServerBulkCopySummary(
-            schema: options.schema,
-            table: options.table,
-            totalRows: summaryState.insertedRows,
-            batchesExecuted: summaryState.batchesExecuted,
-            batchSize: options.batchSize,
-            identityInsert: options.identityInsert,
-            duration: duration
-        )
     }
-    
 }
 
-private extension Array {
-    func chunked(into size: Int) -> [[Element]] {
+extension Array {
+    internal func chunked(into size: Int) -> [[Element]] {
         guard size > 0 else { return [self] }
         var start = 0
         var result: [[Element]] = []

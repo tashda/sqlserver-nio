@@ -581,20 +581,32 @@ try await indexClient.rebuildIndex(name: "IX_Users_Email", table: "Users")
 
 ## Bulk Copy
 
+Rows are sent with the TDS bulk load (as `bcp` and SqlBulkCopy send them). Values are converted
+on the client to each column's type, so text from a CSV file works (`yyyy-MM-dd HH:mm:ss` dates,
+`.` decimals, `0x…` binary). Every value is checked before anything is written; one that does not
+convert throws `SQLServerBulkCopyError.invalidValue` naming the row and column.
+
 ```swift
-let bulkCopy = SQLServerBulkCopyClient(client: client)
-let options = SQLServerBulkCopyOptions(
+let bulk = SQLServerBulkClient(client: client)
+var options = SQLServerBulkCopyOptions(
     table: "Costs",
-    columns: ["category", "amount"],
-    batchSize: 500
+    columns: ["category", "amount", "booked_at"],
+    batchSize: 5_000
 )
+options.tableLock = true          // faster, blocks other writers during each batch
+options.fireTriggers = false      // defaults: constraints checked, triggers fired, NULLs kept
 let rows = [
-    SQLServerBulkCopyRow(values: [.nString("Hardware"), .decimal("123.45")]),
-    SQLServerBulkCopyRow(values: [.nString("Software"), .decimal("300.00")])
+    SQLServerBulkCopyRow(values: [.nString("Hardware"), .string("123.45"), .string("2024-02-29 13:14:15")]),
+    SQLServerBulkCopyRow(values: [.nString("Software"), .decimal("300.00"), .null])
 ]
-let summary = try await bulkCopy.copy(rows: rows, options: options)
-print("Inserted \\(summary.totalRows) rows across \\(summary.batchesExecuted) batches in \\(summary.duration)s")
+let summary = try await bulk.copy(rows: rows, options: options)
+print("Copied \(summary.totalRows) rows in \(summary.batchesExecuted) batches (\(summary.method))")
 ```
+
+`connection.bulkCopy(rows:options:)` does the same on one connection, for example inside a
+transaction. Tables with `text`, `ntext`, `image`, `sql_variant`, CLR (`geometry`, `geography`,
+`hierarchyid`), `json` or `vector` columns, and rows with `.raw` SQL values, are copied with
+multi-row INSERT statements instead (`summary.method == .insertStatements`).
 
 ## Table-Valued Parameters
 

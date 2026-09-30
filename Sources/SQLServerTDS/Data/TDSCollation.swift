@@ -25,6 +25,11 @@ public enum TDSCollation {
 
         let sortId = collation[4]
 
+        // fUTF8 (bit 26: byte 3, 0x04), set by the _UTF8 collations of SQL Server 2019 and later.
+        if collation[3] & 0x04 != 0 {
+            return 65001
+        }
+
         // SQL collations: SortId > 0 maps directly to a code page
         if sortId > 0 {
             return codePageForSortId(sortId)
