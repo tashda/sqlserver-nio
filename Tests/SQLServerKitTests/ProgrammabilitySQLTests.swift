@@ -40,3 +40,11 @@ import Testing
         #expect(SQLServerObjectName(server: "Remote", database: "Sales", schema: "s", object: "T").sql == "[Remote].[Sales].[s].[T]")
     }
 }
+
+@Suite struct CertificateSQLTests {
+    @Test func masterKeyAndCertificate() {
+        #expect(SQLServerSecurityClient.masterKeySQL(password: "p'w") == "CREATE MASTER KEY ENCRYPTION BY PASSWORD = N'p''w'")
+        #expect(SQLServerSecurityClient.certificateSQL(name: "LabCert", subject: "Lab", expiryDate: Date(timeIntervalSince1970: 1_893_456_000))
+            == "CREATE CERTIFICATE [LabCert] WITH SUBJECT = N'Lab', EXPIRY_DATE = '20300101'")
+    }
+}
