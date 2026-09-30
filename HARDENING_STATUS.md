@@ -51,6 +51,11 @@ Also: `currentDatabase` follows ENVCHANGE (so a `USE` inside a user batch is ref
 - The per-operation close-future callback in the async `withConnection` bridge (a leak now that sessions live long) is gone; the bridge is a plain `async` function.
 - `withStreamQuery(_:_:)` scopes a pooled stream lease.
 
+### Feature SQL
+
+- Resource Governor: `is_reconfiguration_pending` read from the DMV, pool session counts and CPU share computed from existing columns.
+- Policy-Based Management: condition facets and facet listing use the real `msdb` columns.
+
 ## Verification
 
 Test server: SQL Server 2025 (17.0.4015.4) on Linux, 192.168.1.152:1435, TLS with a self-signed certificate (trusted explicitly).
@@ -58,7 +63,8 @@ Test server: SQL Server 2025 (17.0.4015.4) on Linux, 192.168.1.152:1435, TLS wit
 - Unit tests (no server): all pass, including 11 new deterministic pipeline tests (late ATTENTION acknowledgement, stale cancel, queued cancel, timeout, missing acknowledgement, unsolicited data, truncated message, byte-by-byte token reassembly, paused reads) and error/configuration contract tests.
 - Live hardening suite (`ProductionHardeningTests`, 15 tests): cancellation, timeouts inside transactions, abandoned streams, server-side back-pressure, pooled stream leases, batch stream cancellation, pool reset isolation, impersonation, killed sessions, structured errors, database tracking, concurrent pool use, unreachable-host deadline.
 - Incremental parser stress: the query, data type, LOB, spatial, CLR UDT, execution plan and hardening suites run with every packet split into 7-byte fragments (`TDS_DEBUG_FRAGMENT_SIZE=7`). All pass.
-- Full live suite: see the latest run summary in the PR.
+- Full live suite, run twice: 740 XCTest tests with 0 failures (18 skipped), 4 TDS-layer tests and 68 swift-testing tests, in about 6.5 minutes. Before this pass the same suite hung indefinitely in `QueryTests.testRowDataPreservesNullColumns`.
+- Remaining skips are environmental (no HADR, CDC, AdventureWorks, or on-change policies on the test server). Five other skips hid broken driver SQL (Resource Governor and Policy-Based Management queried columns that do not exist); those queries are fixed and the tests now run.
 
 ## Remaining gaps
 
