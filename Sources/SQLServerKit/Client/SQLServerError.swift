@@ -19,6 +19,10 @@ public enum SQLServerError: Swift.Error, CustomStringConvertible, LocalizedError
     case deadlockDetected(message: String, details: SQLServerErrorDetails? = nil)
     /// The commit acknowledgement was lost; the transaction may have committed.
     case commitOutcomeUnknown(Swift.Error)
+    /// The TLS handshake failed. `SQLServerTLSFailure` says why (for a
+    /// certificate: untrusted, self-signed, expired, not yet valid or for
+    /// another host) and describes the certificate the server presented.
+    case tlsFailed(SQLServerTLSFailure)
     case invalidArgument(String)
     case databaseDoesNotExist(String)
     case notImplemented(String)
@@ -44,7 +48,9 @@ public enum SQLServerError: Swift.Error, CustomStringConvertible, LocalizedError
                 return "Authentication failed."
             }
         case .protocolError(let error):
-            return "TDS error: \(error)"
+            return error.description
+        case .tlsFailed(let failure):
+            return failure.message
         case .unsupportedPlatform:
             return "This platform is not supported."
         case .sqlExecutionError(let message, _):
@@ -221,4 +227,75 @@ extension SQLServerError {
         40143, 40197, 40501, 40540, 40613, 42108, 42109,
         49918, 49919, 49920, 4060, 4221, 615, 926,
     ]
+}
+
+/// Why a TLS handshake with SQL Server failed.
+public struct SQLServerTLSFailure: Sendable, CustomStringConvertible {
+    public enum Kind: String, Sendable {
+        /// The certificate chain does not lead to a trusted root.
+        case certificateUntrusted
+        /// The certificate signs itself and is not trusted.
+        case certificateSelfSigned
+        case certificateExpired
+        case certificateNotYetValid
+        /// The certificate is trusted but names another host.
+        case certificateNameMismatch
+        /// The server offers no TLS version the client accepts (for example
+        /// SQL Server 2008 R2 without its TLS 1.2 update).
+        case protocolVersionTooOld
+        case handshakeFailed
+    }
+
+    public let kind: Kind
+    public let message: String
+    /// The name the certificate had to match.
+    public let expectedHost: String?
+    /// The certificate the server presented, when it could be read.
+    public let certificate: SQLServerCertificateSummary?
+
+    public init(kind: Kind, message: String, expectedHost: String? = nil, certificate: SQLServerCertificateSummary? = nil) {
+        self.kind = kind
+        self.message = message
+        self.expectedHost = expectedHost
+        self.certificate = certificate
+    }
+
+    public var description: String { message }
+
+    /// True for the failures a user can resolve by trusting the certificate
+    /// or naming the host it was issued for.
+    public var isCertificateProblem: Bool {
+        switch kind {
+        case .certificateUntrusted, .certificateSelfSigned, .certificateExpired,
+             .certificateNotYetValid, .certificateNameMismatch:
+            return true
+        case .protocolVersionTooOld, .handshakeFailed:
+            return false
+        }
+    }
+}
+
+/// What a server certificate says about itself.
+public struct SQLServerCertificateSummary: Sendable, Equatable {
+    public let subject: String
+    public let issuer: String
+    /// DNS and IP subject alternative names; the common name when there are none.
+    public let names: [String]
+    public let notValidBefore: Date
+    public let notValidAfter: Date
+    public let isSelfSigned: Bool
+    /// Hex SHA-256 of the DER encoding, for comparing with what the server's
+    /// administrator reports.
+    public let sha256Fingerprint: String
+
+    public init(subject: String, issuer: String, names: [String], notValidBefore: Date, notValidAfter: Date,
+                isSelfSigned: Bool, sha256Fingerprint: String) {
+        self.subject = subject
+        self.issuer = issuer
+        self.names = names
+        self.notValidBefore = notValidBefore
+        self.notValidAfter = notValidAfter
+        self.isSelfSigned = isSelfSigned
+        self.sha256Fingerprint = sha256Fingerprint
+    }
 }

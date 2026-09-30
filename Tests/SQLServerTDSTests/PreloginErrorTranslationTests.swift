@@ -8,30 +8,30 @@ import NIOSSL
 /// see the opaque string "uncleanShutdown" with no actionable guidance.
 final class PreloginErrorTranslationTests: XCTestCase, @unchecked Sendable {
 
-    func testUncleanShutdownDuringTLSBecomesActionableSSLError() {
+    func testUncleanShutdownDuringTLSExplainsTheLikelyVersionMismatch() {
+        // SQL Server hangs up mid-handshake when it cannot agree on a TLS
+        // version (verified against a TLS 1.0-only server in the test lab).
         let translated = translatePreloginError(NIOSSLError.uncleanShutdown, attemptedTLS: true)
-        guard case let TDSError.sslError(message) = translated else {
-            return XCTFail("expected TDSError.sslError, got \(translated)")
+        guard case let TDSError.tlsHandshake(kind, message) = translated else {
+            return XCTFail("expected TDSError.tlsHandshake, got \(translated)")
         }
-        XCTAssertTrue(message.contains("Trust Server Certificate"), "message should reference the toggle: \(message)")
+        XCTAssertEqual(kind, .other)
+        XCTAssertTrue(message.contains("TLS 1.2"), message)
         XCTAssertFalse(message.lowercased() == "uncleanshutdown", "should not surface the raw NIOSSL string")
     }
 
-    func testHandshakeFailedBecomesActionableSSLError() throws {
-        // Construct a real handshakeFailed via NIOSSL by feeding a verify-failure
-        // BoringSSLError reason. We can't easily fabricate one here, so we exercise
-        // the translator with a stand-in that exercises the same case via the
-        // generic NIOSSLError default path: feed an unknown NIOSSLError through.
-        // Instead, validate handshakeFailed mapping by constructing it through the
-        // public NIOSSL API: rely on a known reason.
+    func testHandshakeFailedBecomesClassifiedTLSError() throws {
+        // Verification and version failures are classified from BoringSSL's
+        // reason text; LabTLSTests covers them against real servers. An
+        // unknown reason still becomes a TLS error with the reason attached.
         let translated = translatePreloginError(
             NIOSSLError.handshakeFailed(BoringSSLError.unknownError([])),
             attemptedTLS: true
         )
-        guard case let TDSError.sslError(message) = translated else {
-            return XCTFail("expected TDSError.sslError, got \(translated)")
+        guard case let TDSError.tlsHandshake(_, message) = translated else {
+            return XCTFail("expected TDSError.tlsHandshake, got \(translated)")
         }
-        XCTAssertTrue(message.contains("Trust Server Certificate"), "message should reference the toggle: \(message)")
+        XCTAssertTrue(message.hasPrefix("TLS handshake failed"), message)
     }
 
     func testNonSSLErrorPassesThroughUnchanged() {

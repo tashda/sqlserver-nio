@@ -16,6 +16,15 @@ extension SQLServerError {
                 return .authenticationFailed(message: message)
             case .requestTimeout(let message):
                 return .timeout(description: message, underlying: tds)
+            case .tlsHandshake(let kind, let message):
+                let mapped: SQLServerTLSFailure.Kind
+                switch kind {
+                case .certificateVerification: mapped = .certificateUntrusted
+                case .certificateName: mapped = .certificateNameMismatch
+                case .protocolVersion: mapped = .protocolVersionTooOld
+                case .other: mapped = .handshakeFailed
+                }
+                return .tlsFailed(SQLServerTLSFailure(kind: mapped, message: message))
             case .protocolError(let message):
                 // Map protocol errors that explicitly signal a timeout to SQLServerError.timeout
                 if message.localizedCaseInsensitiveContains("timeout") {

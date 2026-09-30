@@ -3,6 +3,7 @@ import Logging
 import NIO
 import NIOConcurrencyHelpers
 import SQLServerTDS
+import NIOSSL
 
 #if canImport(Darwin)
 import Darwin
@@ -41,9 +42,18 @@ extension SQLServerConnection.Configuration {
     /// protecting everything after the login. `.mandatory` and `.strict`
     /// require an explicit configuration.
     internal var effectiveTLSConfiguration: SQLServerTLSConfiguration? {
-        if let tlsConfiguration { return tlsConfiguration }
-        if encryptionMode == .optional { return .trustingServerCertificate }
-        return nil
+        var configuration: SQLServerTLSConfiguration
+        if let tlsConfiguration {
+            configuration = tlsConfiguration
+        } else if encryptionMode == .optional {
+            configuration = .trustingServerCertificate
+        } else {
+            return nil
+        }
+        if allowLegacyTLS, encryptionMode != .strict {
+            configuration.minimumTLSVersion = .tlsv1
+        }
+        return configuration
     }
 }
 
@@ -174,6 +184,16 @@ extension SQLServerConnection {
         }
 
         connect(host: cfg.hostname, port: cfg.port, redirects: 0)
+            .flatMapError { error -> EventLoopFuture<TDSConnection> in
+                // A certificate that failed verification is fetched again
+                // without verifying it, so the error can say what is wrong.
+                let normalized = SQLServerError.normalize(error)
+                guard case .tlsFailed(let failure) = normalized, failure.isCertificateProblem else {
+                    return eventLoop.makeFailedFuture(normalized)
+                }
+                return diagnoseCertificate(failure, configuration: cfg, on: eventLoop, logger: logger)
+                    .flatMapThrowing { throw SQLServerError.tlsFailed($0) }
+            }
             .flatMap { connection -> EventLoopFuture<TDSConnection> in
                 pending.withLockedValue { $0 = connection }
                 let batch = cfg.sessionBootstrapBatch
@@ -188,6 +208,89 @@ extension SQLServerConnection {
             }
 
         return promise.futureResult
+    }
+
+    /// Explains a certificate failure: connects once more without verifying
+    /// (stopping after TLS, so no credentials are sent), reads the
+    /// certificate and names the first check it fails.
+    internal static func diagnoseCertificate(
+        _ failure: SQLServerTLSFailure,
+        configuration cfg: Configuration,
+        on eventLoop: EventLoop,
+        logger: Logger
+    ) -> EventLoopFuture<SQLServerTLSFailure> {
+        let expectedHost = cfg.hostNameInCertificate ?? cfg.hostname
+        guard let tls = cfg.effectiveTLSConfiguration else {
+            return eventLoop.makeSucceededFuture(failure)
+        }
+        return resolveSocketAddresses(hostname: cfg.hostname, port: cfg.port, transparentResolution: true, on: eventLoop)
+            .flatMap { addresses -> EventLoopFuture<TDSConnection> in
+                guard let address = addresses.first else {
+                    return eventLoop.makeFailedFuture(SQLServerError.connectionClosed)
+                }
+                return TDSConnection.connectForCertificateDiagnosis(
+                    to: address,
+                    tlsConfiguration: tls,
+                    serverHostname: expectedHost,
+                    encryptionMode: cfg.encryptionMode.asTDSMode,
+                    connectTimeout: .seconds(Int64(max(1, cfg.connectTimeoutSeconds))),
+                    on: eventLoop,
+                    logger: logger
+                )
+            }
+            .flatMap { connection in
+                connection.peerCertificate().flatMap { certificate in
+                    connection.close().recover { _ in }.map { certificate }
+                }
+            }
+            .map { certificate -> SQLServerTLSFailure in
+                guard let certificate else { return failure }
+                return classify(certificate, expectedHost: expectedHost, fallback: failure)
+            }
+            .recover { _ in failure }
+    }
+
+    internal static func classify(
+        _ certificate: NIOSSLCertificate,
+        expectedHost: String,
+        fallback: SQLServerTLSFailure,
+        now: Date = Date()
+    ) -> SQLServerTLSFailure {
+        let description = TDSCertificateIdentity.describe(certificate)
+        let summary = SQLServerCertificateSummary(
+            subject: description.subject,
+            issuer: description.issuer,
+            names: description.names,
+            notValidBefore: description.notValidBefore,
+            notValidAfter: description.notValidAfter,
+            isSelfSigned: description.isSelfSigned,
+            sha256Fingerprint: description.sha256Fingerprint
+        )
+        let names = summary.names.joined(separator: ", ")
+        let dateFormatter = ISO8601DateFormatter()
+        dateFormatter.formatOptions = [.withFullDate]
+        let kind: SQLServerTLSFailure.Kind
+        let message: String
+        let nameMatches = TDSCertificateIdentity.matches(certificate, expectedHost: expectedHost)
+        let nameNote = nameMatches ? "" : " It is also issued for \(names), not '\(expectedHost)'."
+        if fallback.kind == .certificateNameMismatch {
+            // The chain was accepted; only the name is wrong.
+            kind = .certificateNameMismatch
+            message = "The server certificate is for \(names), not '\(expectedHost)'. Connect using one of those names, or set Host Name In Certificate."
+        } else if summary.notValidAfter < now {
+            kind = .certificateExpired
+            message = "The server certificate for \(names) expired on \(dateFormatter.string(from: summary.notValidAfter))."
+        } else if summary.notValidBefore > now {
+            kind = .certificateNotYetValid
+            message = "The server certificate for \(names) is not valid until \(dateFormatter.string(from: summary.notValidBefore)). Check this Mac's clock."
+        } else if summary.isSelfSigned {
+            kind = .certificateSelfSigned
+            message = "The server uses a self-signed certificate (\(summary.subject)), which this Mac does not trust. Trust the certificate or install it as a trusted root.\(nameNote)"
+        } else {
+            kind = .certificateUntrusted
+            message = "The server certificate for \(names) was issued by '\(summary.issuer)', which this Mac does not trust. Trust the certificate or provide the CA certificate.\(nameNote)"
+        }
+        return SQLServerTLSFailure(kind: kind, message: message, expectedHost: expectedHost, certificate: summary)
     }
 
     /// Runs a session-control batch and fails if the server reports an error.
