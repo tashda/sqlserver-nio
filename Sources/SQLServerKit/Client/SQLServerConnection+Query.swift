@@ -276,7 +276,8 @@ extension SQLServerConnection {
                         length: Int(column.length),
                         precision: Int(column.precision),
                         scale: Int(column.scale),
-                        flags: column.flags
+                        flags: column.flags,
+                        cellType: SQLServerCellType(metadata: column)
                     )
                 }
                 batcher.yield(.metadata(columns))

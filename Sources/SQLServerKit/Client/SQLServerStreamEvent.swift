@@ -9,6 +9,9 @@ public struct SQLServerColumnDescription: Sendable {
     public let precision: Int?
     public let scale: Int?
     public let flags: UInt16
+    /// The column's wire type, for formatting spooled cells with
+    /// `SQLServerCellFormatter` (store `cellType.encoded`).
+    public let cellType: SQLServerCellType
 }
 
 public struct SQLServerStreamDone: Sendable {
