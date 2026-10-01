@@ -16,7 +16,7 @@ extension SQLServerConstraintClient {
         let sql = """
         SELECT cc.name, cc.definition
         FROM sys.check_constraints cc
-        WHERE cc.parent_object_id = OBJECT_ID(N'\(escapedSchema).\(escapedTable)')
+        WHERE cc.parent_object_id = OBJECT_ID(N'\(SQLServerSQL.escapeLiteral(SQLServerSQL.escapeIdentifier(schema) + "." + SQLServerSQL.escapeIdentifier(table)))')
         ORDER BY cc.name
         """
 
@@ -47,18 +47,14 @@ extension SQLServerConstraintClient {
         column: String,
         database: String? = nil
     ) async throws {
-        let escapedSchema = SQLServerSQL.escapeLiteral(schema)
-        let escapedTable = SQLServerSQL.escapeLiteral(table)
         let escapedColumn = SQLServerSQL.escapeLiteral(column)
-        let escapedSchemaId = SQLServerSQL.escapeIdentifier(schema)
-        let escapedTableId = SQLServerSQL.escapeIdentifier(table)
 
         let sql = """
         DECLARE @constraint NVARCHAR(256);
         SELECT @constraint = d.name FROM sys.default_constraints d
         JOIN sys.columns c ON d.parent_column_id = c.column_id AND d.parent_object_id = c.object_id
-        WHERE d.parent_object_id = OBJECT_ID(N'\(escapedSchema).\(escapedTable)') AND c.name = N'\(escapedColumn)';
-        IF @constraint IS NOT NULL EXEC('ALTER TABLE \(escapedSchemaId).\(escapedTableId) DROP CONSTRAINT [' + @constraint + ']');
+        WHERE d.parent_object_id = OBJECT_ID(N'\(SQLServerSQL.escapeLiteral(SQLServerSQL.escapeIdentifier(schema) + "." + SQLServerSQL.escapeIdentifier(table)))') AND c.name = N'\(escapedColumn)';
+        IF @constraint IS NOT NULL EXEC(N'ALTER TABLE \(SQLServerSQL.escapeLiteral(SQLServerSQL.escapeIdentifier(schema) + "." + SQLServerSQL.escapeIdentifier(table))) DROP CONSTRAINT ' + QUOTENAME(@constraint));
         """
 
         if let database {

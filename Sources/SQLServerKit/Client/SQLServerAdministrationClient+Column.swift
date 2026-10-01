@@ -114,17 +114,15 @@ extension SQLServerAdministrationClient {
         schema: String = "dbo",
         database: String? = nil
     ) async throws {
-        let escapedSchema = schema.replacingOccurrences(of: "'", with: "''")
-        let escapedTable = table.replacingOccurrences(of: "'", with: "''")
         let escapedColumn = column.replacingOccurrences(of: "'", with: "''")
 
         let sql = """
         DECLARE @constraint NVARCHAR(256);
         SELECT @constraint = d.name FROM sys.default_constraints d
         JOIN sys.columns c ON d.parent_column_id = c.column_id AND d.parent_object_id = c.object_id
-        WHERE d.parent_object_id = OBJECT_ID('\(escapedSchema).\(escapedTable)') AND c.name = '\(escapedColumn)';
+        WHERE d.parent_object_id = OBJECT_ID(N'\(SQLServerSQL.escapeLiteral(SQLServerSQL.escapeIdentifier(schema) + "." + SQLServerSQL.escapeIdentifier(table)))') AND c.name = '\(escapedColumn)';
         IF @constraint IS NOT NULL
-            EXEC('ALTER TABLE \(SQLServerSQL.escapeIdentifier(schema)).\(SQLServerSQL.escapeIdentifier(table)) DROP CONSTRAINT [' + @constraint + ']');
+            EXEC(N'ALTER TABLE \(SQLServerSQL.escapeLiteral(SQLServerSQL.escapeIdentifier(schema) + "." + SQLServerSQL.escapeIdentifier(table))) DROP CONSTRAINT ' + QUOTENAME(@constraint));
         """
 
         if let db = database ?? self.database {
