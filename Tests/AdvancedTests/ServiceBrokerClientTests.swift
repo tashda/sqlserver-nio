@@ -59,6 +59,21 @@ final class SQLServerServiceBrokerClientTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    @available(macOS 12.0, *)
+    func testActivationProcedureInAnotherSchema() async throws {
+        try await withTemporaryDatabase(client: self.client, prefix: "tmp_sbact") { db in
+            _ = try await self.client.admin.alterDatabaseOption(name: db, option: .brokerEnabled(true))
+            try await self.client.withDatabase(db) { connection in
+                _ = try await connection.execute("CREATE SCHEMA ops")
+                _ = try await connection.execute("CREATE PROCEDURE ops.usp_Drain AS RETURN 0")
+            }
+            try await self.client.serviceBroker.createQueue(database: db, name: "DrainQueue", options: .init(
+                activationEnabled: true, activationProcedure: "usp_Drain", executeAs: "OWNER", activationProcedureSchema: "ops"))
+            let queue = try await self.client.serviceBroker.listQueues(database: db).first { $0.name == "DrainQueue" }
+            XCTAssertNotNil(queue)
+        }
+    }
+
     // MARK: - Contracts
 
     @available(macOS 12.0, *)

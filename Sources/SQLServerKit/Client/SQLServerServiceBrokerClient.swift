@@ -257,10 +257,14 @@ public final class SQLServerServiceBrokerClient: @unchecked Sendable {
         withParts.append("STATUS = \(options.status ? "ON" : "OFF")")
         withParts.append("RETENTION = \(options.retention ? "ON" : "OFF")")
         if options.activationEnabled, let proc = options.activationProcedure, !proc.isEmpty {
-            var activation = "ACTIVATION (STATUS = ON, PROCEDURE_NAME = \(SQLServerSQL.escapeIdentifier(proc))"
+            let procedure = (options.activationProcedureSchema.map { SQLServerSQL.escapeIdentifier($0) + "." } ?? "")
+                + SQLServerSQL.escapeIdentifier(proc)
+            var activation = "ACTIVATION (STATUS = ON, PROCEDURE_NAME = \(procedure)"
             activation += ", MAX_QUEUE_READERS = \(options.maxQueueReaders)"
             if let ea = options.executeAs {
-                activation += ", EXECUTE AS '\(SQLServerSQL.escapeLiteral(ea))'"
+                // SELF and OWNER are keywords; anything else names a user.
+                let keyword = ["SELF", "OWNER"].contains(ea.uppercased())
+                activation += keyword ? ", EXECUTE AS \(ea.uppercased())" : ", EXECUTE AS '\(SQLServerSQL.escapeLiteral(ea))'"
             } else {
                 activation += ", EXECUTE AS SELF"
             }
