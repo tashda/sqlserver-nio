@@ -13,6 +13,7 @@ env:
 
 on:
   push:
+    branches-ignore: [stall-hunt]
   pull_request:
     branches: [main, dev]
   workflow_dispatch:
