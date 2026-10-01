@@ -30,13 +30,16 @@ final class BulkLoadLiveTests: XCTestCase, @unchecked Sendable {
     }
 
     func testEveryTypeFromText() async throws {
+        // UTF-8 collations arrived in SQL Server 2019 (15); below that the column is nvarchar.
+        let major = try await connection.queryScalar("SELECT CAST(SERVERPROPERTY('ProductMajorVersion') AS int)", as: Int.self) ?? 0
+        let utf8Column = major >= 15 ? "varchar(20) COLLATE Latin1_General_100_CI_AS_SC_UTF8" : "nvarchar(20)"
         _ = try await connection.execute("""
         CREATE TABLE dbo.[\(table)] (
             i int NOT NULL, ti tinyint, si smallint, bi bigint, b bit NOT NULL,
             d decimal(18, 4), n numeric(5, 0), m money, sm smallmoney, f float, r real,
             dt date, t time(3), dt2 datetime2(7), dto datetimeoffset(2), dtm datetime, sdt smalldatetime,
             g uniqueidentifier, c char(3), vc varchar(20) COLLATE Latin1_General_CI_AS,
-            vu varchar(20) COLLATE Latin1_General_100_CI_AS_SC_UTF8, nv nvarchar(20), nmax nvarchar(max),
+            vu \(utf8Column), nv nvarchar(20), nmax nvarchar(max),
             vb varbinary(max), x xml
         )
         """)

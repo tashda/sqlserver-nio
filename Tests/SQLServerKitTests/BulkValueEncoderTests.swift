@@ -76,7 +76,10 @@ import Testing
         #expect(try encode(.string("2000-01-01T00:00:00"), column(.datetime2, scale: 0)) == [0, 0, 0, 0x07, 0x24, 0x0B])
         // datetimeoffset stores UTC plus the offset in minutes.
         let offset = try #require(try encode(.string("2000-01-02 01:00:00 +02:00"), column(.datetimeOffset, scale: 0)))
-        #expect(offset == [0x70, 0x43, 0x01] + [0x07, 0x24, 0x0B] + [120, 0]) // 23:00 on 2000-01-01
+        // 23:00 on 2000-01-01, then +120 minutes. Typed explicitly: on Linux the concatenated
+        // literals type-check differently and the comparison failed with equal-looking bytes.
+        let expectedOffset: [UInt8] = [0x70, 0x43, 0x01, 0x07, 0x24, 0x0B, 120, 0]
+        #expect(offset == expectedOffset)
         // datetime: days since 1900 and 1/300 s ticks.
         #expect(try encode(.string("1900-01-02 00:00:01"), column(.datetimen, length: 8)) == [1, 0, 0, 0, 0x2C, 0x01, 0, 0])
         #expect(try encode(.string("1900-01-01 00:00:30"), column(.smallDateTime)) == [0, 0, 1, 0])
