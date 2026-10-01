@@ -60,7 +60,7 @@ public struct SQLServerChangeTrackingStatus: Sendable, Equatable {
 /// let status = try await client.changeTracking.changeTrackingStatus()
 /// ```
 public final class SQLServerChangeTrackingClient: @unchecked Sendable {
-    private let client: SQLServerClient
+    internal let client: SQLServerClient
 
     internal init(client: SQLServerClient) {
         self.client = client
