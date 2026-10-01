@@ -8,6 +8,12 @@ here=$(dirname "$0")
 
 for _ in $(seq 1 90); do
     if "$here/sqlcmd.sh" "$container" "$password" -Q "SELECT 1" >/dev/null 2>&1; then break; fi
+    if [ "$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null)" != "true" ]; then
+        echo "::error::The SQL Server container stopped:"
+        docker inspect -f 'exit code {{.State.ExitCode}}, OOM killed {{.State.OOMKilled}}' "$container" || true
+        docker logs --tail 80 "$container" || true
+        exit 1
+    fi
     sleep 2
 done
 "$here/sqlcmd.sh" "$container" "$password" -Q "SELECT @@VERSION" -h -1
