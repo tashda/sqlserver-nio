@@ -61,21 +61,40 @@ extension SQLServerAgentOperations {
 
     // MARK: - Categories
 
-    internal func createCategory(name: String, classId: Int = 1) -> EventLoopFuture<Void> {
-        // class_id: 1 = JOB, 2 = ALERT, 3 = OPERATOR
-        run("EXEC msdb.dbo.sp_add_category @class = N'JOB', @type = N'LOCAL', @name = N'\(SQLServerSQL.escapeLiteral(name))';").map { _ in () }
+    /// The `@class` argument of msdb's category procedures for a `syscategories.category_class`:
+    /// 1 = JOB, 2 = ALERT, 3 = OPERATOR.
+    static func categoryClassName(_ classId: Int) -> String? {
+        switch classId {
+        case 1: return "JOB"
+        case 2: return "ALERT"
+        case 3: return "OPERATOR"
+        default: return nil
+        }
     }
 
-    internal func deleteCategory(name: String) -> EventLoopFuture<Void> {
-        run("EXEC msdb.dbo.sp_delete_category @class = N'JOB', @name = N'\(SQLServerSQL.escapeLiteral(name))';").map { _ in () }
+    static func categoryClass(_ classId: Int) throws -> String {
+        guard let className = categoryClassName(classId) else {
+            throw SQLServerError.invalidArgument("Category class \(classId) is not 1 (job), 2 (alert) or 3 (operator)")
+        }
+        return className
     }
 
-    internal func renameCategory(name: String, newName: String) -> EventLoopFuture<Void> {
-        run("EXEC msdb.dbo.sp_update_category @class = N'JOB', @name = N'\(SQLServerSQL.escapeLiteral(name))', @new_name = N'\(SQLServerSQL.escapeLiteral(newName))';").map { _ in () }
+    internal func createCategory(name: String, className: String) -> EventLoopFuture<Void> {
+        // Job categories are local (or multi-server); alert and operator categories have no type.
+        let type = className == "JOB" ? "LOCAL" : "NONE"
+        return run("EXEC msdb.dbo.sp_add_category @class = N'\(className)', @type = N'\(type)', @name = N'\(SQLServerSQL.escapeLiteral(name))';").map { _ in () }
+    }
+
+    internal func deleteCategory(name: String, className: String) -> EventLoopFuture<Void> {
+        run("EXEC msdb.dbo.sp_delete_category @class = N'\(className)', @name = N'\(SQLServerSQL.escapeLiteral(name))';").map { _ in () }
+    }
+
+    internal func renameCategory(name: String, newName: String, className: String) -> EventLoopFuture<Void> {
+        run("EXEC msdb.dbo.sp_update_category @class = N'\(className)', @name = N'\(SQLServerSQL.escapeLiteral(name))', @new_name = N'\(SQLServerSQL.escapeLiteral(newName))';").map { _ in () }
     }
 
     internal func listCategories() -> EventLoopFuture<[SQLServerAgentCategoryInfo]> {
-        run("SELECT name, [class] AS class_id FROM msdb.dbo.syscategories WHERE [class] IN (1,2,3) ORDER BY name;").map { rows in
+        run("SELECT name, category_class AS class_id FROM msdb.dbo.syscategories WHERE category_class IN (1,2,3) ORDER BY category_class, name;").map { rows in
             rows.compactMap { row in
                 guard let name = row.column("name")?.string, let classId = row.column("class_id")?.int else { return nil }
                 return SQLServerAgentCategoryInfo(name: name, classId: classId)

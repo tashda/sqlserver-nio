@@ -306,18 +306,19 @@ extension SQLServerAgentOperations {
     }
 
     @available(macOS 12.0, *)
+    /// Creates a local category. `classId`: 1 = job, 2 = alert, 3 = operator.
     public func createCategory(name: String, classId: Int = 1) async throws {
-        _ = try await createCategory(name: name, classId: classId).get()
+        _ = try await createCategory(name: name, className: Self.categoryClass(classId)).get()
     }
 
     @available(macOS 12.0, *)
-    public func deleteCategory(name: String) async throws {
-        _ = try await deleteCategory(name: name).get()
+    public func deleteCategory(name: String, classId: Int = 1) async throws {
+        _ = try await deleteCategory(name: name, className: Self.categoryClass(classId)).get()
     }
 
     @available(macOS 12.0, *)
-    public func renameCategory(name: String, newName: String) async throws {
-        _ = try await renameCategory(name: name, newName: newName).get()
+    public func renameCategory(name: String, newName: String, classId: Int = 1) async throws {
+        _ = try await renameCategory(name: name, newName: newName, className: Self.categoryClass(classId)).get()
     }
 
     @available(macOS 12.0, *)
