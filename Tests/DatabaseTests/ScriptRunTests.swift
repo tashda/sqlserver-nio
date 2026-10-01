@@ -3,9 +3,8 @@ import SQLServerKit
 import SQLServerKitTesting
 import Testing
 
-@Suite struct ScriptRunTests {
+@Suite(.testServer) struct ScriptRunTests {
     @Test func runsBatchesInTheGivenDatabaseAndRestoresTheConnection() async throws {
-        TestEnvironmentManager.loadEnvironmentVariables()
         let client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
         defer { Task { try? await client.shutdownGracefully() } }
 
@@ -31,7 +30,6 @@ import Testing
     }
 
     @Test func reportsTheFailingBatchAndLine() async throws {
-        TestEnvironmentManager.loadEnvironmentVariables()
         let client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
         defer { Task { try? await client.shutdownGracefully() } }
         do {

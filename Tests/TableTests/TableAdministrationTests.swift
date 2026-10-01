@@ -1,6 +1,7 @@
 import XCTest
 import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 final class SQLServerTableAdministrationTests: XCTestCase, @unchecked Sendable {
     var baseClient: SQLServerClient!
@@ -9,7 +10,7 @@ final class SQLServerTableAdministrationTests: XCTestCase, @unchecked Sendable {
     private var testDatabase: String!
     override func setUp() async throws {
         continueAfterFailure = false
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
         _ = isLoggingConfigured
         self.baseClient = try await SQLServerClient.connect(
             configuration: makeSQLServerClientConfiguration(),

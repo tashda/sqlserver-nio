@@ -321,20 +321,20 @@ internal func waitForDatabaseConnectable(name: String, attempts: Int = 20) async
     }
 }
 
+/// The AdventureWorks (OLTP) database on the test server, for tests written against the sample.
+/// Throws ``SQLServerFixtureUnavailable`` when the server has none, so the test can skip.
 @available(macOS 12.0, *)
-public func requireDatabaseNamedInEnvironment(
-    _ environmentKey: String,
-    using client: SQLServerClient,
-    defaultName: String = "AdventureWorks"
-) async throws -> String {
-    guard let configured = env(environmentKey), !configured.isEmpty else {
-        throw SQLServerFixtureUnavailable("Skipping: \(environmentKey) not set")
+public func requireAdventureWorks(using client: SQLServerClient) async throws -> String {
+    let rows = try await client.query("""
+    SELECT name FROM sys.databases
+    WHERE name LIKE N'AdventureWorks%' AND name NOT LIKE N'AdventureWorksLT%' AND name NOT LIKE N'AdventureWorksDW%'
+      AND state_desc = N'ONLINE'
+    ORDER BY CASE WHEN name = N'AdventureWorks' THEN 0 ELSE 1 END, name DESC
+    """)
+    guard let name = rows.first?.column("name")?.string else {
+        throw SQLServerFixtureUnavailable(
+            "Skipping: no AdventureWorks database on this server (restore AdventureWorks<version>.bak from microsoft/sql-server-samples; see TESTING.md)"
+        )
     }
-
-    let target = configured.isEmpty ? defaultName : configured
-    guard try await databaseExists(client: client, name: target) else {
-        throw SQLServerFixtureUnavailable("Skipping: database '\(target)' is not available on this server")
-    }
-
-    return target
+    return name
 }

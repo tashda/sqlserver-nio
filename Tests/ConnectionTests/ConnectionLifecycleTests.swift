@@ -1,5 +1,6 @@
 import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 import XCTest
 
 final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
@@ -8,7 +9,7 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
         continueAfterFailure = false
 
         // Load environment configuration
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
 
         // Configure logging
         _ = isLoggingConfigured
@@ -250,15 +251,11 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
     }
 
     func testAdventureWorksEmployeeStreamDoesNotPoisonDedicatedConnection() async throws {
-        guard ProcessInfo.processInfo.environment["TDS_AW_DATABASE"] != nil else {
-            throw XCTSkip("AdventureWorks database not configured")
-        }
-
-        let targetDatabase = ProcessInfo.processInfo.environment["TDS_AW_DATABASE"] ?? "AdventureWorks"
-        let databases = try await client.metadata.listDatabases()
-        let availableDatabases = databases.map { $0.name.lowercased() }
-        guard availableDatabases.contains(targetDatabase.lowercased()) else {
-            throw XCTSkip("AdventureWorks database is not available on this server")
+        let targetDatabase: String
+        do {
+            targetDatabase = try await requireAdventureWorks(using: client)
+        } catch let error as SQLServerFixtureUnavailable {
+            throw XCTSkip(error.message)
         }
 
         var configuration = client.configuration.connection
@@ -297,15 +294,11 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
     }
 
     func testAdventureWorksHierarchyIDRendersCanonicalPaths() async throws {
-        guard ProcessInfo.processInfo.environment["TDS_AW_DATABASE"] != nil else {
-            throw XCTSkip("AdventureWorks database not configured")
-        }
-
-        let targetDatabase = ProcessInfo.processInfo.environment["TDS_AW_DATABASE"] ?? "AdventureWorks"
-        let databases = try await client.metadata.listDatabases()
-        let availableDatabases = databases.map { $0.name.lowercased() }
-        guard availableDatabases.contains(targetDatabase.lowercased()) else {
-            throw XCTSkip("AdventureWorks database is not available on this server")
+        let targetDatabase: String
+        do {
+            targetDatabase = try await requireAdventureWorks(using: client)
+        } catch let error as SQLServerFixtureUnavailable {
+            throw XCTSkip(error.message)
         }
 
         var configuration = client.configuration.connection
@@ -487,7 +480,7 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
     func testStreamQueryWithOptionsCompiles() async throws {
         guard #available(macOS 12.0, *) else { return }
         // Ensure environment is loaded for connection details
-        TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
+        try requireSQLServerTestServer(); // Load environment configuration
 
         try await client.withConnection { connection in
             let options = SqlServerExecutionOptions(mode: .auto, rowsetFetchSize: nil, progressThrottleMs: 100)

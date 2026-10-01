@@ -5,9 +5,8 @@ import Testing
 
 /// tableProperties inner-joined the table's index to sys.filegroups; a partitioned table's index is
 /// on a partition scheme, so every property came back empty.
-@Suite struct PartitionedTablePropertiesTests {
+@Suite(.testServer) struct PartitionedTablePropertiesTests {
     @Test func partitionedTableReportsItsPartitions() async throws {
-        TestEnvironmentManager.loadEnvironmentVariables()
         let client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
         defer { Task { try? await client.shutdownGracefully() } }
 

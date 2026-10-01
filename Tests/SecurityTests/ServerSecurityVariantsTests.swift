@@ -1,13 +1,14 @@
 import XCTest
 import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 final class SQLServerServerSecurityVariantsTests: XCTestCase, @unchecked Sendable {
     private var client: SQLServerClient!
 
     override func setUp() async throws {
         try await super.setUp()
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
         client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
     }
 

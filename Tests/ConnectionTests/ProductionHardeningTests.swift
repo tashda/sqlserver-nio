@@ -4,6 +4,7 @@ import Logging
 import NIOConcurrencyHelpers
 import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 /// Live-server tests for the reliability contract Echo depends on:
 /// cancellation, deadlines, streaming back-pressure, pooled session reset and
@@ -24,7 +25,7 @@ final class ProductionHardeningTests: XCTestCase, @unchecked Sendable {
         self.watchdog = watchdog
         DispatchQueue.global().asyncAfter(deadline: .now() + 300, execute: watchdog)
         _ = isLoggingConfigured
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
         var config = makeSQLServerClientConfiguration()
         config.poolConfiguration.maximumConcurrentConnections = 1
         config.poolConfiguration.connectionIdleTimeout = nil

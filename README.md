@@ -796,16 +796,6 @@ try await agent.grantLoginToProxy(proxyName: "nio_proxy", loginName: currentLogi
 try await agent.grantProxyToSubsystem(proxyName: "nio_proxy", subsystem: "CmdExec")
 let proxies = try await agent.listProxies()
 
-### Testing Agent end-to-end
-
-Agent integration tests now run as part of the normal suite. The recommended setup is the Docker-backed test environment so the package, Xcode test plan, and GitHub Actions all exercise the same path.
-
-Use focused filters only for iteration speed, not feature gating:
-
-```bash
-USE_DOCKER=1 TDS_VERSION=2022-latest TDS_DOCKER_PORT=14331 swift test --filter MinimalAgentTests
-```
-
 ## Error Handling & Retries
 
 
@@ -822,23 +812,18 @@ Configure retries via `SQLServerRetryConfiguration` on your connection/client co
 
 ## Testing
 
-1. For a host-managed instance, export `TDS_HOSTNAME`, `TDS_PORT`, `TDS_DATABASE`, `TDS_USERNAME`, and `TDS_PASSWORD`.
-2. For the full Docker-backed matrix, set `USE_DOCKER=1`, pick a `TDS_VERSION`, and optionally enable `TDS_LOAD_ADVENTUREWORKS=1`.
-3. Run `swift test` or open `SQLServerNIO.xctestplan` in Xcode.
-
-Host-managed example:
-
 ```bash
-TDS_HOSTNAME=127.0.0.1 TDS_PORT=1433 TDS_DATABASE=master TDS_USERNAME=sa TDS_PASSWORD=<your_password> swift test
+swift test   # unit tests; integration tests skip without a server
+docker run -d --name sqlserver-test -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD='Your_password1' \
+    -p 1433:1433 mcr.microsoft.com/mssql/server:2022-latest
+SQLSERVER_TEST_URL='sqlserver://sa:Your_password1@localhost:1433/master?trustServerCertificate=true' swift test
 ```
 
-Docker-backed example:
-
-```bash
-USE_DOCKER=1 TDS_VERSION=2022-latest TDS_DOCKER_PORT=14331 TDS_LOAD_ADVENTUREWORKS=1 TDS_AW_DATABASE=AdventureWorks swift test
-```
-
-The Docker-backed CI matrix runs against actual SQL Server 2017, 2019, 2022, and 2025 images. A database compatibility level on a newer server does not establish support for older server binaries.
+Integration tests find their server through one URL variable per setup (`SQLSERVER_TEST_URL`,
+`SQLSERVER_TEST_TLS_URL`, `SQLSERVER_TEST_KERBEROS_URL`, `SQLSERVER_TEST_AG_URLS`,
+`SQLSERVER_TEST_PROXY_URL`) and are skipped, naming the variable, when it is not set.
+[TESTING.md](TESTING.md) has the URL form, how to get each setup with Docker, and what CI runs
+(SQL Server 2017, 2019, 2022 and 2025).
 
 ## Contributing
 

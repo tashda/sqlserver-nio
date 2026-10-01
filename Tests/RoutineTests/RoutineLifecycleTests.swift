@@ -2,6 +2,7 @@ import XCTest
 import Logging
 import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 final class SQLServerRoutineTests: XCTestCase, @unchecked Sendable {
     private var baseClient: SQLServerClient!
@@ -11,7 +12,7 @@ final class SQLServerRoutineTests: XCTestCase, @unchecked Sendable {
 
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
         self.baseClient = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
         do {
             _ = try await withTimeout(5) { try await self.baseClient.query("SELECT 1") }

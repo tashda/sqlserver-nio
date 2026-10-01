@@ -1,6 +1,7 @@
 import XCTest
 import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 /// Integration tests for Resource Governor (`client.resourceGovernor`).
 ///
@@ -11,11 +12,7 @@ final class ResourceGovernorTests: XCTestCase, @unchecked Sendable {
     private var client: SQLServerClient!
 
     override func setUp() async throws {
-        TestEnvironmentManager.loadEnvironmentVariables()
-
-        if envFlagEnabled("USE_DOCKER") {
-            try SQLServerDockerManager.shared.startIfNeeded()
-        }
+        try requireSQLServerTestServer()
 
         let config = makeSQLServerClientConfiguration()
         self.client = try await SQLServerClient.connect(

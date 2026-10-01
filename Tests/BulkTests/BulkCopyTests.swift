@@ -5,6 +5,7 @@ import NIO
 import NIOConcurrencyHelpers
 @testable import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 final class SQLServerBulkCopyTests: XCTestCase, @unchecked Sendable {
     private var client: SQLServerClient!
@@ -15,7 +16,7 @@ final class SQLServerBulkCopyTests: XCTestCase, @unchecked Sendable {
     override func setUp() async throws {
         try await super.setUp()
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
         let config = makeSQLServerClientConfiguration()
         client = try await SQLServerClient.connect(configuration: config, numberOfThreads: 1)
         adminClient = SQLServerAdministrationClient(client: client)

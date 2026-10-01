@@ -1,17 +1,14 @@
 import XCTest
 import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 /// Integration tests for the Change Tracking and CDC namespace (`client.changeTracking`).
 final class ChangeTrackingTests: XCTestCase, @unchecked Sendable {
     private var client: SQLServerClient!
 
     override func setUp() async throws {
-        TestEnvironmentManager.loadEnvironmentVariables()
-
-        if envFlagEnabled("USE_DOCKER") {
-            try SQLServerDockerManager.shared.startIfNeeded()
-        }
+        try requireSQLServerTestServer()
 
         let config = makeSQLServerClientConfiguration()
         self.client = try await SQLServerClient.connect(

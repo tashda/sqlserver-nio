@@ -1,6 +1,7 @@
 import XCTest
 import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 final class SQLServerSecurityParityTests: XCTestCase, @unchecked Sendable {
     private var client: SQLServerClient!
@@ -10,7 +11,7 @@ final class SQLServerSecurityParityTests: XCTestCase, @unchecked Sendable {
         try await super.setUp()
 
         // Load environment configuration
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
 
         // Configure logging
         _ = isLoggingConfigured

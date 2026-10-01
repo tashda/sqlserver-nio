@@ -2,13 +2,14 @@ import XCTest
 import Foundation
 import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 /// What a session reports about its client: the application name as APP_NAME() and program_name
 /// (what DBAs see in Activity Monitor and sp_who2), the driver as client_interface_name.
 final class ApplicationNameLiveTests: XCTestCase, @unchecked Sendable {
     override func setUp() async throws {
         _ = isLoggingConfigured
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
     }
 
     func testApplicationNameIsTheProgramName() async throws {

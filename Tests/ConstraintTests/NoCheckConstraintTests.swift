@@ -5,9 +5,8 @@ import Testing
 
 /// Constraints created without checking existing rows. WITH NOCHECK used to be appended after the
 /// constraint definition, which SQL Server rejects.
-@Suite struct NoCheckConstraintTests {
+@Suite(.testServer) struct NoCheckConstraintTests {
     @Test func constraintsSkipExistingRowsAndAreNotTrusted() async throws {
-        TestEnvironmentManager.loadEnvironmentVariables()
         let client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
         defer { Task { try? await client.shutdownGracefully() } }
 

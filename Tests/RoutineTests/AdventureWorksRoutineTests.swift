@@ -1,5 +1,6 @@
 import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 import XCTest
 import Logging
 
@@ -8,7 +9,7 @@ final class SQLServerAdventureWorksRoutineTests: XCTestCase, @unchecked Sendable
 
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
+        try requireSQLServerTestServer(); // Load environment configuration
         client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
     }
 
@@ -21,7 +22,7 @@ final class SQLServerAdventureWorksRoutineTests: XCTestCase, @unchecked Sendable
     func testAdventureWorksUfnGetAccountingEndDateParameters() async throws {
         let dbName: String
         do {
-            dbName = try await requireDatabaseNamedInEnvironment("TDS_AW_DATABASE", using: client)
+            dbName = try await requireAdventureWorks(using: client)
         } catch let error as SQLServerFixtureUnavailable {
             throw XCTSkip(error.message)
         }
@@ -37,7 +38,7 @@ final class SQLServerAdventureWorksRoutineTests: XCTestCase, @unchecked Sendable
         // that App would need when working with AdventureWorks2022 database
         let dbName: String
         do {
-            dbName = try await requireDatabaseNamedInEnvironment("TDS_AW_DATABASE", using: client)
+            dbName = try await requireAdventureWorks(using: client)
         } catch let error as SQLServerFixtureUnavailable {
             throw XCTSkip(error.message)
         }

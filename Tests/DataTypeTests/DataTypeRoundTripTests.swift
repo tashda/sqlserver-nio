@@ -2,6 +2,7 @@ import XCTest
 import Logging
 import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 import Foundation
 
 final class SQLServerDataTypeRoundTripTests: XCTestCase, @unchecked Sendable {
@@ -13,7 +14,7 @@ final class SQLServerDataTypeRoundTripTests: XCTestCase, @unchecked Sendable {
         continueAfterFailure = false
 
         // Load environment configuration
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
 
         // Configure logging
         _ = isLoggingConfigured

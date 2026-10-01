@@ -1,5 +1,6 @@
 import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 import XCTest
 import Logging
 
@@ -7,7 +8,7 @@ final class SQLServerViewIndexMatrixTests: XCTestCase, @unchecked Sendable {
     var client: SQLServerClient!
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
         client = try await SQLServerClient.connect(
             configuration: makeSQLServerClientConfiguration(),
             numberOfThreads: 1

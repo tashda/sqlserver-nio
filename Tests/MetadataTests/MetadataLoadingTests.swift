@@ -1,5 +1,6 @@
 import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 import XCTest
 
 final class SQLServerAppMetadataLoadingTests: XCTestCase, @unchecked Sendable {
@@ -16,7 +17,7 @@ final class SQLServerAppMetadataLoadingTests: XCTestCase, @unchecked Sendable {
 
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
 
         var config = makeSQLServerClientConfiguration()
         // Per-query timeout: 60s is enough for any single catalog query, while
@@ -40,7 +41,7 @@ final class SQLServerAppMetadataLoadingTests: XCTestCase, @unchecked Sendable {
     func testAppMetadataLoadForAdventureWorks2022() async throws {
         let dbName: String
         do {
-            dbName = try await requireDatabaseNamedInEnvironment("TDS_AW_DATABASE", using: client)
+            dbName = try await requireAdventureWorks(using: client)
         } catch let error as SQLServerFixtureUnavailable {
             throw XCTSkip(error.message)
         }

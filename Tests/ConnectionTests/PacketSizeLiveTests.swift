@@ -2,6 +2,7 @@ import XCTest
 import Foundation
 import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 /// The network packet size against a live server: the size LOGIN7 asks for is the one SQL Server
 /// reports for the session, and requests and results that span many packets arrive intact at the
@@ -9,7 +10,7 @@ import SQLServerKitTesting
 final class PacketSizeLiveTests: XCTestCase, @unchecked Sendable {
     override func setUp() async throws {
         _ = isLoggingConfigured
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
     }
 
     private func connect(packetSize: Int?) async throws -> SQLServerConnection {

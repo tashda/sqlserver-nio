@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 @testable import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 /// The TDS bulk load against a live server: values given as text (as imports give them) land in
 /// every supported column type exactly as SQL Server would convert them.
@@ -11,7 +12,7 @@ final class BulkLoadLiveTests: XCTestCase, @unchecked Sendable {
 
     override func setUp() async throws {
         _ = isLoggingConfigured
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
         var configuration = makeSQLServerConnectionConfiguration()
         configuration.packetSize = 512 // every batch spans many packets
         connection = try await SQLServerConnection.connect(configuration: configuration)
@@ -19,6 +20,7 @@ final class BulkLoadLiveTests: XCTestCase, @unchecked Sendable {
     }
 
     override func tearDown() async throws {
+        guard let connection else { return }
         _ = try? await connection.execute("IF OBJECT_ID(N'dbo.\(table)') IS NOT NULL DROP TABLE dbo.[\(table)]")
         try? await connection.close()
     }

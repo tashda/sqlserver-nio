@@ -3,6 +3,7 @@ import Logging
 import SQLServerTDS
 import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 /// Diagnostics and Performance Tuning tests (Phase 5)
 final class DiagnosticsTests: XCTestCase, @unchecked Sendable {
@@ -10,7 +11,7 @@ final class DiagnosticsTests: XCTestCase, @unchecked Sendable {
     private let logger = Logger(label: "DiagnosticsTests")
 
     override func setUp() async throws {
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
         
         let config = makeSQLServerClientConfiguration()
         self.client = try await SQLServerClient.connect(

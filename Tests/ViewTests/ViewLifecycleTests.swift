@@ -2,6 +2,7 @@ import XCTest
 import Logging
 import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 final class SQLServerViewTests: XCTestCase, @unchecked Sendable {
     private var client: SQLServerClient!
@@ -13,7 +14,7 @@ final class SQLServerViewTests: XCTestCase, @unchecked Sendable {
     override func setUp() async throws {
         try await super.setUp()
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
 
         let config = makeSQLServerClientConfiguration()
         self.client = try await SQLServerClient.connect(configuration: config, numberOfThreads: 1)

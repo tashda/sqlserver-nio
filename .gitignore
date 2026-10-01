@@ -31,7 +31,6 @@ build/
 # -----------------------------------------------------------------------
 # Credentials / local-only configuration
 # -----------------------------------------------------------------------
-# Copy Tests/EnvironmentConfig.swift.template → Tests/EnvironmentConfig.swift
 # and fill in your server details. Never commit the filled-in copy.
 .env
 Tests/EnvironmentConfig.swift
@@ -77,5 +76,3 @@ debug_*.swift
 test_*.swift
 
 # Test lab secrets and logs
-testlab/*.env
-testlab/certs/

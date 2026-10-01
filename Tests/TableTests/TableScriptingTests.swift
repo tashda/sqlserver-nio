@@ -1,5 +1,6 @@
 import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 import XCTest
 import Logging
 import Foundation
@@ -8,7 +9,7 @@ final class SQLServerTableScriptingMatrixTests: XCTestCase, @unchecked Sendable 
     var client: SQLServerClient!
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
+        try requireSQLServerTestServer(); // Load environment configuration
         client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
         // Probe basic connectivity; skip if unstable
         do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1 as ready") } } catch { throw error }

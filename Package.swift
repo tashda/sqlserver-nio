@@ -81,9 +81,6 @@ let package = Package(
             ],
             path: "Tests",
             exclude: [
-                "EnvironmentConfig.swift.template",
-                "README.md",
-                "Support",
                 "TestTemplate.swift",
                 "CoreTests/QueryTests.swift.disabled",
                 "CoreTests/StreamingTests.swift.disabled",

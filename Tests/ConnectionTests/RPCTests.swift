@@ -1,6 +1,7 @@
 @testable import SQLServerKit
 import SQLServerTDS
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 import XCTest
 
 final class SQLServerRPCTests: XCTestCase, @unchecked Sendable {
@@ -8,7 +9,7 @@ final class SQLServerRPCTests: XCTestCase, @unchecked Sendable {
 
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
+        try requireSQLServerTestServer(); // Load environment configuration
         client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
     }
 

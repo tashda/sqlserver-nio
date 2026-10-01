@@ -1,6 +1,7 @@
 import Foundation
 import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 import XCTest
 
 final class QueryStoreWaitStatsTests: XCTestCase, @unchecked Sendable {
@@ -10,11 +11,7 @@ final class QueryStoreWaitStatsTests: XCTestCase, @unchecked Sendable {
 
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables()
-
-        if envFlagEnabled("USE_DOCKER") {
-            try SQLServerDockerManager.shared.startIfNeeded()
-        }
+        try requireSQLServerTestServer()
 
         var config = makeSQLServerClientConfiguration()
         config.poolConfiguration.connectionIdleTimeout = nil
@@ -42,7 +39,7 @@ final class QueryStoreWaitStatsTests: XCTestCase, @unchecked Sendable {
     func testWaitStatsReturnsArray() async throws {
         // Query Store may not be enabled on all databases.
         // Use a database that likely has Query Store enabled, or skip gracefully.
-        let database = env("TDS_AW_DATABASE") ?? "master"
+        let database = (try? await requireAdventureWorks(using: client)) ?? "master"
 
         do {
             // planId 1 is arbitrary — may not exist, but the API should still return an empty array

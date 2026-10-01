@@ -5,9 +5,8 @@ import Testing
 
 /// Columns of CLR types (hierarchyid, geometry, geography) have system type 240, which has no row of
 /// its own in sys.types. listColumns once dropped them.
-@Suite struct ClrTypeColumnsTests {
+@Suite(.testServer) struct ClrTypeColumnsTests {
     @Test func listColumnsIncludesClrTypeColumns() async throws {
-        TestEnvironmentManager.loadEnvironmentVariables()
         let client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
         defer { Task { try? await client.shutdownGracefully() } }
 

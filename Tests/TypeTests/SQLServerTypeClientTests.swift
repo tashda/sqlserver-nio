@@ -1,5 +1,6 @@
 import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 import Foundation
 import XCTest
 import Logging
@@ -11,7 +12,7 @@ final class SQLServerTypeClientTests: XCTestCase, @unchecked Sendable {
         try await super.setUp()
 
         // Load environment configuration
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
 
         // Configure logging
         _ = isLoggingConfigured

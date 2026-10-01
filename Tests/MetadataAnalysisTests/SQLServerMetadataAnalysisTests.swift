@@ -2,6 +2,7 @@ import XCTest
 import Logging
 import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 /// Comprehensive metadata analysis test to systematically identify failure patterns
 /// This test enumerates all schemas, tables, and views in a database and tests
@@ -14,9 +15,7 @@ final class SQLServerMetadataAnalysisTests: XCTestCase, @unchecked Sendable {
     private let metadataTimeBudget: TimeInterval = 120
 
     override func setUp() async throws {
-        TestEnvironmentManager.loadEnvironmentVariables()
-        // Prefer the explicitly restored AdventureWorks database when running in Docker.
-        testDatabase = env("TDS_TEST_DB") ?? env("TDS_AW_DATABASE") ?? env("TDS_DATABASE") ?? "AdventureWorks"
+        try requireSQLServerTestServer()
 
         let threadCount = max(2, min(ProcessInfo.processInfo.processorCount, 8))
 
@@ -36,22 +35,10 @@ final class SQLServerMetadataAnalysisTests: XCTestCase, @unchecked Sendable {
 
     /// Main analysis test - systematically tests all metadata operations
     func testComprehensiveMetadataAnalysis() async throws {
-        if env("TDS_AW_DATABASE") != nil || env("TDS_TEST_DB") != nil {
-            do {
-                _ = try await requireDatabaseNamedInEnvironment(
-                    env("TDS_TEST_DB") != nil ? "TDS_TEST_DB" : "TDS_AW_DATABASE",
-                    using: client,
-                    defaultName: testDatabase
-                )
-            } catch let error as SQLServerFixtureUnavailable {
-                throw XCTSkip(error.message)
-            }
-        } else {
-            let rows = try await client.query("SELECT name FROM sys.databases")
-            let availableDatabases = rows.compactMap { $0.column("name")?.string?.lowercased() }
-            guard availableDatabases.contains(testDatabase.lowercased()) else {
-                throw XCTSkip("Skipping: database '\(testDatabase)' is not available on this server")
-            }
+        do {
+            testDatabase = try await requireAdventureWorks(using: client)
+        } catch let error as SQLServerFixtureUnavailable {
+            throw XCTSkip(error.message)
         }
 
         print("\n🚀 COMPREHENSIVE METADATA ANALYSIS STARTING")

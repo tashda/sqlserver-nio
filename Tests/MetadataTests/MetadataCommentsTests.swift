@@ -1,6 +1,7 @@
 import XCTest
 import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 import Foundation
 
 final class SQLServerMetadataCommentsTests: XCTestCase, @unchecked Sendable {
@@ -12,7 +13,7 @@ final class SQLServerMetadataCommentsTests: XCTestCase, @unchecked Sendable {
         try await super.setUp()
 
         // Load environment configuration
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
 
         // Configure logging
         _ = isLoggingConfigured

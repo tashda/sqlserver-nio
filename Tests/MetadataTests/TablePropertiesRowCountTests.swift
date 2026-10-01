@@ -5,9 +5,8 @@ import Testing
 
 /// A table with LOB columns has several allocation units per partition. tableProperties once
 /// counted every row once per unit.
-@Suite struct TablePropertiesRowCountTests {
+@Suite(.testServer) struct TablePropertiesRowCountTests {
     @Test func rowCountIgnoresLobAllocationUnits() async throws {
-        TestEnvironmentManager.loadEnvironmentVariables()
         let client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
         defer { Task { try? await client.shutdownGracefully() } }
 

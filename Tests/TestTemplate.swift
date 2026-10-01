@@ -1,6 +1,7 @@
 import XCTest
 import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 final class TestNameTests: XCTestCase, @unchecked Sendable {
     var client: SQLServerClient!
@@ -9,7 +10,7 @@ final class TestNameTests: XCTestCase, @unchecked Sendable {
         continueAfterFailure = false
 
         // Load environment configuration
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
 
         // Configure logging
         _ = isLoggingConfigured

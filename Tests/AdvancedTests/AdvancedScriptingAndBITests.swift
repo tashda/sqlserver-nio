@@ -2,6 +2,7 @@ import XCTest
 import Logging
 import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 /// Advanced scripting and Data Movement tests (Phase 6 & 7)
 final class AdvancedScriptingAndBITests: XCTestCase, @unchecked Sendable {
@@ -9,7 +10,7 @@ final class AdvancedScriptingAndBITests: XCTestCase, @unchecked Sendable {
     private let logger = Logger(label: "AdvancedScriptingAndBITests")
 
     override func setUp() async throws {
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
         
         let config = makeSQLServerClientConfiguration()
         self.client = try await SQLServerClient.connect(

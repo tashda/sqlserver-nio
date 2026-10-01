@@ -5,38 +5,27 @@ import FoundationNetworking
 #endif
 import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 /// Network faults injected with Toxiproxy between the driver and SQL Server
-/// (`Tests/Fixtures/faults/start-server.sh`). Each test states the failure it injects and
-/// what the driver must do: keep working, fail with a lost-connection error,
-/// or recover on the next operation. None may hang.
-final class LabFaultTests: XCTestCase, @unchecked Sendable {
-    private struct Lab {
-        let host: String
-        let port: Int
-        let api: URL
-        let proxy: String
-        let username: String
-        let password: String
-    }
-
-    private var lab: Lab!
+/// (`SQLSERVER_TEST_PROXY_URL` is the server through the proxy, `SQLSERVER_TEST_PROXY_CONTROL` the
+/// proxy's HTTP API). Each test states the failure it injects and what the driver must do: keep
+/// working, fail with a lost-connection error, or recover on the next operation. None may hang.
+final class NetworkFaultTests: XCTestCase, @unchecked Sendable {
+    private var server: TestServer!
+    private var api: URL!
+    private var proxy: String!
     private var watchdog: DispatchWorkItem?
 
     override func setUp() async throws {
         _ = isLoggingConfigured
-        guard let host = env("NIO_LAB_FAULT_HOST"),
-              let port = env("NIO_LAB_FAULT_PORT").flatMap(Int.init),
-              let api = env("NIO_LAB_TOXIPROXY").flatMap(URL.init(string:)),
-              let proxy = env("NIO_LAB_FAULT_PROXY"),
-              let username = env("NIO_LAB_FAULT_USERNAME"),
-              let password = env("NIO_LAB_FAULT_PASSWORD") else {
-            if envFlagEnabled("NIO_LAB_REQUIRE") {
-                XCTFail("Fault lab is required but NIO_LAB_FAULT_* is not set; run Tests/Fixtures/faults/start-server.sh")
-            }
-            throw XCTSkip("Fault lab not configured (Tests/Fixtures/faults/start-server.sh)")
+        server = try requireSQLServerTestServer(TestServer.proxyVariable)
+        guard let control = TestServer.proxyControl else {
+            if TestServer.isRequired { throw TestServer.Unavailable(TestServer.missingMessage(TestServer.proxyControlVariable)) }
+            throw XCTSkip(TestServer.missingMessage(TestServer.proxyControlVariable))
         }
-        lab = Lab(host: host, port: port, api: api, proxy: proxy, username: username, password: password)
+        api = control
+        proxy = try await proxyName()
         let name = self.name
         let watchdog = DispatchWorkItem { fatalError("\(name) did not finish within 300 seconds") }
         self.watchdog = watchdog
@@ -45,49 +34,56 @@ final class LabFaultTests: XCTestCase, @unchecked Sendable {
     }
 
     override func tearDown() async throws {
-        if lab != nil { try? await resetProxy() }
+        if proxy != nil { try? await resetProxy() }
         watchdog?.cancel()
     }
 
     // MARK: - Toxiproxy API
 
-    private func request(_ method: String, _ path: String, body: [String: Any]? = nil) async throws {
-        var request = URLRequest(url: lab.api.appendingPathComponent(path))
+    private func request(_ method: String, _ path: String, body: [String: Any]? = nil) async throws -> Data {
+        var request = URLRequest(url: api.appendingPathComponent(path))
         request.httpMethod = method
         if let body {
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
             throw SQLServerError.invalidArgument("Toxiproxy \(method) \(path) returned \(status)")
         }
+        return data
+    }
+
+    /// The proxy in front of the server: the only one, or the one listening on the URL's port.
+    private func proxyName() async throws -> String {
+        let data = try await request("GET", "proxies")
+        let proxies = (try JSONSerialization.jsonObject(with: data) as? [String: [String: Any]]) ?? [:]
+        if proxies.count == 1, let name = proxies.keys.first { return name }
+        if let match = proxies.first(where: { ($0.value["listen"] as? String)?.hasSuffix(":\(server.port)") == true }) {
+            return match.key
+        }
+        throw XCTSkip("Toxiproxy at \(api!) has no proxy listening on port \(server.port)")
     }
 
     private func resetProxy() async throws {
-        try await request("POST", "reset")
+        _ = try await request("POST", "reset")
     }
 
     private func addToxic(_ name: String, type: String, stream: String = "downstream", attributes: [String: Any]) async throws {
-        try await request("POST", "proxies/\(lab.proxy)/toxics", body: [
+        _ = try await request("POST", "proxies/\(proxy!)/toxics", body: [
             "name": name, "type": type, "stream": stream, "toxicity": 1.0, "attributes": attributes,
         ])
     }
 
     private func setProxyEnabled(_ enabled: Bool) async throws {
-        try await request("POST", "proxies/\(lab.proxy)", body: ["enabled": enabled])
+        _ = try await request("POST", "proxies/\(proxy!)", body: ["enabled": enabled])
     }
 
     // MARK: - Connections
 
     private func connectionConfiguration() -> SQLServerConnection.Configuration {
-        var configuration = SQLServerConnection.Configuration(
-            hostname: lab.host,
-            port: lab.port,
-            login: .init(database: "master", authentication: .sqlPassword(username: lab.username, password: lab.password)),
-            tlsConfiguration: .trustingServerCertificate
-        )
+        var configuration = server.configuration
         configuration.connectTimeoutSeconds = 20
         return configuration
     }

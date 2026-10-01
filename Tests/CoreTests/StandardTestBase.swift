@@ -2,6 +2,7 @@ import XCTest
 import Logging
 import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 /// Standard base class for all SQLServer tests
 /// Provides consistent setup, teardown, and query execution patterns
@@ -20,7 +21,7 @@ open class StandardTestBase: XCTestCase, @unchecked Sendable {
 
     override open func setUp() async throws {
         _ = isLoggingConfigured
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
 
         var config = makeSQLServerClientConfiguration()
         config.poolConfiguration.connectionIdleTimeout = nil
