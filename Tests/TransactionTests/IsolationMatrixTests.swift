@@ -92,16 +92,21 @@ final class SQLServerTransactionIsolationMatrixTests: XCTestCase, @unchecked Sen
                 async let w2 = dbClient.withConnection { conn in try await conn.query("SELECT 1") }
                 _ = try await (w1, w2)
 
+                // The reader starts once the writer holds the row lock, not after a guessed delay:
+                // on a slow runner the writer's UPDATE could land after the reader had finished.
+                let (locked, lockedContinuation) = AsyncStream<Void>.makeStream()
                 let writer = Task {
+                    defer { lockedContinuation.finish() } // never leave the reader waiting
                     try await dbClient.withConnection { conn in
                         try await conn.beginTransaction()
                         try await conn.updateRows(in: tableName, set: ["value": .nString("Updated")], where: "id = 1")
+                        lockedContinuation.yield()
                         try await Task.sleep(nanoseconds: 600_000_000)
                         try await conn.rollback()
                     }
                 }
 
-                try await Task.sleep(nanoseconds: 100_000_000)
+                for await _ in locked { break }
                 // Under READ COMMITTED (default), the reader is blocked until writer commits/rolls back
                 let elapsed = try await dbClient.withConnection { conn in
                     let start = DispatchTime.now()
