@@ -58,7 +58,14 @@ extension SQLServerSecurityClient {
     /// TDE state of every database that has a database encryption key.
     public func listDatabaseEncryption() async throws -> [DatabaseEncryptionState] {
         let rows = try await query("""
-            SELECT DB_NAME(k.database_id) AS database_name, k.encryption_state_desc, k.key_algorithm, k.key_length,
+            SELECT DB_NAME(k.database_id) AS database_name,
+                   -- encryption_state_desc arrived in SQL Server 2019; the number is on every version.
+                   CASE k.encryption_state
+                       WHEN 0 THEN 'NONE' WHEN 1 THEN 'UNENCRYPTED' WHEN 2 THEN 'ENCRYPTION_IN_PROGRESS'
+                       WHEN 3 THEN 'ENCRYPTED' WHEN 4 THEN 'KEY_CHANGE_IN_PROGRESS' WHEN 5 THEN 'DECRYPTION_IN_PROGRESS'
+                       WHEN 6 THEN 'PROTECTION_CHANGE_IN_PROGRESS' ELSE CAST(k.encryption_state AS VARCHAR(10))
+                   END AS encryption_state_desc,
+                   k.key_algorithm, k.key_length,
                    CAST(k.percent_complete AS FLOAT) AS percent_complete, c.name AS certificate_name
             FROM sys.dm_database_encryption_keys k
             LEFT JOIN master.sys.certificates c ON c.thumbprint = k.encryptor_thumbprint
