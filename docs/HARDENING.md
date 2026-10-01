@@ -68,7 +68,7 @@ Test server: SQL Server 2025 (17.0.4015.4) on Linux, 192.168.1.152:1435, TLS wit
 
 ## Test lab verification
 
-Run locally on Apple silicon (Docker Desktop, SQL Server amd64 images under Rosetta) with `testlab/testlab.sh matrix` and the scripts in `Tests/Fixtures/` (CI runs each fixture in its own job):
+Run on 2026-09-30 with the fixture scripts that have since been replaced by URL variables (see `TESTING.md`; the suites are now `TLSCertificateTests`, `AvailabilityGroupRoutingTests`, `NetworkFaultTests` and `KerberosLoginTests`):
 
 | Scenario | Result |
 |---|---|
@@ -82,14 +82,15 @@ Defects the lab found and fixed:
 - A certificate that did not name the configured host was accepted when it listed the IP address the socket connected to (NIOSSL's identity check falls back to the socket address). The driver now checks the name itself (RFC 6125) after both TLS handshakes.
 - A TCP reset during a TLS session was reported as an unknown error instead of a lost connection.
 - After giving up on a connection (unacknowledged cancellation, protocol failure) `isClosed` stayed false until the TLS close finished, which takes seconds on a dead network.
+- A certificate that named another host was reported with NIOSSL's raw error, not as a name mismatch with the certificate's names, whenever it did not also list the address the socket connected to (the usual case; the lab's certificates listed it, which hid this until plain-Docker servers were used).
 - `TCP_NODELAY` was set at the socket level, which is `SO_DEBUG` on Linux and failed every connection there.
 - The cancellation acknowledgement deadline measured total time, so draining a large cancelled result on a slow link closed a healthy connection. It now measures silence.
 
 ## Remaining gaps
 
-1. **SQL Server 2008 R2, 2012, 2014 and 2016, and NTLM**: need the Windows Server VM described in `testlab/README.md`. SQL Server 2008 R2 speaks TDS 7.3 and needs its TLS 1.2 update; the driver requires TLS 1.2.
-2. **Azure SQL Database** (gateway redirect and Entra ID tokens): needs the Azure account described in `testlab/README.md`.
-3. **Kerberos** works against Samba AD and SQL Server 2022 on Linux (`Tests/Fixtures/kerberos`, `LabKerberosTests`: `auth_scheme = KERBEROS`, pooled sessions, wrong password, unknown realm). The lab found two defects, both fixed: Windows authentication with a password always used NTLMv2, so SQL Server on Linux (Kerberos only) refused it with 18452; it now negotiates like SSPI (Kerberos first, NTLMv2 when Kerberos is unavailable for the server). And the service principal `MSSQLSvc/host:port` was imported as a GSS host-based service name, which names a different principal; it is now a Kerberos principal name in the login's realm. Still macOS-only (GSS.framework); Linux (MIT Kerberos) is planned so CI can run it. NTLM against Windows servers needs the Windows VM.
+1. **SQL Server 2008 R2, 2012, 2014 and 2016, and NTLM**: need the Windows Server VM described in `TESTING.md`. SQL Server 2008 R2 speaks TDS 7.3 and needs its TLS 1.2 update; the driver requires TLS 1.2.
+2. **Azure SQL Database** (gateway redirect and Entra ID tokens): needs the Azure database described in `TESTING.md`.
+3. **Kerberos** works against Samba AD and SQL Server 2022 on Linux (`KerberosLoginTests` on `SQLSERVER_TEST_KERBEROS_URL`: a Windows login, `auth_scheme = KERBEROS` where the login may read it, pooled sessions, wrong password, unknown realm). A server reached by another address than its SPN names (an IP address, a load balancer) takes `serverSPN`, like ODBC's `ServerSPN`. The lab found two defects, both fixed: Windows authentication with a password always used NTLMv2, so SQL Server on Linux (Kerberos only) refused it with 18452; it now negotiates like SSPI (Kerberos first, NTLMv2 when Kerberos is unavailable for the server). And the service principal `MSSQLSvc/host:port` was imported as a GSS host-based service name, which names a different principal; it is now a Kerberos principal name in the login's realm. Still macOS-only (GSS.framework); Linux (MIT Kerberos) is planned so CI can run it. NTLM against Windows servers needs the Windows VM.
 4. **Not implemented:** Always Encrypted column encryption (planned), data classification (never requested at login). Deliberately not planned: MARS (Echo gives each tab its own connection) and transparent reconnect of broken idle sessions (Echo tells the user and offers Reconnect; the pool replaces dead idle sessions).
 5. **Echo integration**: see `docs/ECHO_TASKS.md`.
 6. **Soak testing**: hours of mixed load under faults.

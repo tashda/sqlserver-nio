@@ -210,7 +210,7 @@ extension TDSConnection {
                 return strictHandshake.flatMapError { error in
                     // Closing a TLS channel whose handshake failed reports its
                     // own error; the handshake failure is the one to surface.
-                    channel.close().recover { _ in }.flatMapThrowing { throw translatePreloginError(error, attemptedTLS: true) }
+                    channel.close().recover { _ in }.flatMapThrowing { throw translatePreloginError(error, attemptedTLS: true, expectedHost: serverHostname) }
                 }.map { connection }
             }
             return channel.eventLoop.makeSucceededFuture(connection)
@@ -218,7 +218,7 @@ extension TDSConnection {
             let attemptedTLS = true
             return conn.prelogin(encryptionMode: encryptionMode, hasTLSConfiguration: attemptedTLS)
                 .flatMapError { error in
-                    let translated = translatePreloginError(error, attemptedTLS: attemptedTLS)
+                    let translated = translatePreloginError(error, attemptedTLS: attemptedTLS, expectedHost: serverHostname)
                     return conn.close().recover { _ in }.flatMap {
                         conn.channel.eventLoop.makeFailedFuture(translated)
                     }
@@ -307,8 +307,15 @@ private final class TDSStrictHandshakeObserver: ChannelInboundHandler, @unchecke
 private let serverClosedDuringHandshake = TDSError.tlsHandshake(.other,
     "The server closed the connection during the TLS handshake. It most likely does not support TLS 1.2: an older SQL Server needs its TLS 1.2 update, or TLS 1.0 must be allowed for this connection.")
 
-internal func translatePreloginError(_ error: Error, attemptedTLS: Bool) -> Error {
+internal func translatePreloginError(_ error: Error, attemptedTLS: Bool, expectedHost: String? = nil) -> Error {
     guard attemptedTLS else { return error }
+
+    // NIOSSL checks the name itself when the certificate does not list the address the socket
+    // connected to (the usual case); its failure is the same mismatch the driver reports.
+    if let extra = error as? NIOSSLExtraError, extra == .failedToValidateHostname {
+        let host = expectedHost.map { "'\($0)'" } ?? "the server's name"
+        return TDSError.tlsHandshake(.certificateName, "The server certificate does not name \(host). Check the server name or Host Name In Certificate.")
+    }
 
     if let sslError = error as? NIOSSLError {
         switch sslError {
