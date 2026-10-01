@@ -37,6 +37,8 @@ public protocol MSSQLSession: Sendable {
     var dac: SQLServerDACClient { get }
     var bulk: SQLServerBulkClient { get }
     var ssis: SQLServerSSISClient { get }
+    /// Runs or parses T-SQL scripts with `GO` separators.
+    var scripts: SQLServerScriptClient { get }
 }
 
 extension MSSQLSession {

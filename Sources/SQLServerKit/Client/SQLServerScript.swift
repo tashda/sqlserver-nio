@@ -102,6 +102,20 @@ public struct SQLServerScriptSummary: Sendable {
     public let messages: [SQLServerStreamMessage]
 }
 
+/// Where a script fails to parse: the server's message and the line in the whole script.
+public struct SQLServerParseIssue: Sendable, Equatable {
+    public let message: String
+    /// 1-based line in the script, counting every batch and `GO` line.
+    public let line: Int
+    public let number: Int32
+
+    public init(message: String, line: Int, number: Int32) {
+        self.message = message
+        self.line = line
+        self.number = number
+    }
+}
+
 public struct SQLServerScriptError: Error, CustomStringConvertible, Sendable {
     public let batchIndex: Int
     public let line: Int
@@ -150,6 +164,40 @@ public final class SQLServerScriptClient: @unchecked Sendable {
                 try await connection.changeDatabase(original)
             }
             return SQLServerScriptSummary(batchesRun: batches.count, messages: messages)
+        }
+    }
+
+    /// Checks a script's syntax without running it, as SSMS's Parse does: `SET PARSEONLY ON`, then
+    /// each batch, then `SET PARSEONLY OFF`, all on one connection. The setting is switched off
+    /// again even when a batch fails, so the pooled connection never stays parse-only. Names are not
+    /// resolved, so a missing table is not an issue. Returns nil when every batch parses.
+    @available(macOS 12.0, *)
+    public func parse(_ script: String) async throws -> SQLServerParseIssue? {
+        let batches = SQLServerScript.batches(in: script)
+        guard !batches.isEmpty else { return nil }
+        return try await client.withConnection { connection in
+            _ = try await connection.execute("SET PARSEONLY ON")
+            var issue: SQLServerParseIssue?
+            for batch in batches where issue == nil {
+                do {
+                    _ = try await connection.execute(batch.sql)
+                } catch let error as SQLServerError {
+                    guard let details = error.serverDetails else {
+                        _ = try? await connection.execute("SET PARSEONLY OFF")
+                        throw error
+                    }
+                    issue = SQLServerParseIssue(
+                        message: details.primary.message,
+                        line: batch.line + max(Int(details.lineNumber), 1) - 1,
+                        number: details.number
+                    )
+                } catch {
+                    _ = try? await connection.execute("SET PARSEONLY OFF")
+                    throw error
+                }
+            }
+            _ = try await connection.execute("SET PARSEONLY OFF")
+            return issue
         }
     }
 
