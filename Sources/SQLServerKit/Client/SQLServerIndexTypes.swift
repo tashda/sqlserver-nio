@@ -76,6 +76,8 @@ public struct IndexInfo: Sendable {
     public let isUnique: Bool
     public let isPrimaryKey: Bool
     public let columns: [IndexColumnInfo]
+    /// `ALTER INDEX … DISABLE`d: kept in the catalog, not used or maintained until rebuilt.
+    public var isDisabled: Bool = false
     
     public enum IndexType: String, Sendable {
         case clustered = "CLUSTERED"

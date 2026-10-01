@@ -139,6 +139,18 @@ final class SQLServerIndexTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(columnNames.contains("age"), "Should contain age column")
     }
 
+    func testDisabledIndexIsReported() async throws {
+        let tableName = "test_disabled_index_table_\(UUID().uuidString.prefix(8))"
+        let indexName = "IX_\(tableName)_name"
+        try await self.createTestTable(name: tableName)
+        try await withTimeout(15) { try await self.indexClient.createIndex(name: indexName, table: tableName, columns: [IndexColumn(name: "name")]) }
+        var info = try await self.indexClient.getIndexInfo(name: indexName, table: tableName)
+        XCTAssertEqual(info?.isDisabled, false)
+        _ = try await self.indexClient.disableIndex(name: indexName, table: tableName)
+        info = try await self.indexClient.getIndexInfo(name: indexName, table: tableName)
+        XCTAssertEqual(info?.isDisabled, true)
+    }
+
     func testCreateIndexWithIncludedColumns() async throws {
         let tableName = "test_included_index_table_\(UUID().uuidString.prefix(8))"
         let indexName = "IX_\(tableName)_name_incl_email"
