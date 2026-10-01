@@ -159,6 +159,16 @@ extension SQLServerAdministrationClient {
         return result.messages
     }
 
+    /// Make `login` the owner of a database (`ALTER AUTHORIZATION ON DATABASE`).
+    @available(macOS 12.0, *)
+    @discardableResult
+    public func setDatabaseOwner(name: String, login: String) async throws -> [SQLServerStreamMessage] {
+        let result = try await client.execute(
+            "ALTER AUTHORIZATION ON DATABASE::\(SQLServerSQL.escapeIdentifier(name)) TO \(SQLServerSQL.escapeIdentifier(login))"
+        )
+        return result.messages
+    }
+
     /// Shrink a database to reclaim unused space.
     /// Returns informational messages from SQL Server.
     @available(macOS 12.0, *)

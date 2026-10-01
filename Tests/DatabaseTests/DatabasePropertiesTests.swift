@@ -154,6 +154,21 @@ final class DatabasePropertiesTests: DatabaseTestBase, @unchecked Sendable {
         XCTAssertEqual(props.stateDescription, "ONLINE")
     }
 
+    func testSetDatabaseOwner() async throws {
+        let security = SQLServerServerSecurityClient(client: baseClient)
+        let login = "owner_\(UUID().uuidString.prefix(8))"
+        let originalOwner = try await adminClient.getDatabaseProperties(name: testDatabase).owner
+        try await security.createSqlLogin(name: login, password: "Owner-\(UUID().uuidString)")
+        try await adminClient.setDatabaseOwner(name: testDatabase, login: login)
+        var props = try await adminClient.getDatabaseProperties(name: testDatabase)
+        XCTAssertEqual(props.owner, login)
+
+        try await adminClient.setDatabaseOwner(name: testDatabase, login: originalOwner)
+        props = try await adminClient.getDatabaseProperties(name: testDatabase)
+        XCTAssertEqual(props.owner, originalOwner)
+        try await security.dropLogin(name: login)
+    }
+
     func testShrinkDatabase() async throws {
 
         // Shrink should execute without error
