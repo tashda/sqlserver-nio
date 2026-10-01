@@ -10,8 +10,9 @@ extension SQLServerSecurityClient {
     }
 
     /// Creates a self-signed certificate in the connection's database. Needs a database master key.
-    public func createCertificate(name: String, subject: String, expiryDate: Date? = nil) async throws {
-        _ = try await exec(Self.certificateSQL(name: name, subject: subject, expiryDate: expiryDate))
+    /// A start date in the past with an expiry date before today makes an expired certificate.
+    public func createCertificate(name: String, subject: String, startDate: Date? = nil, expiryDate: Date? = nil) async throws {
+        _ = try await exec(Self.certificateSQL(name: name, subject: subject, startDate: startDate, expiryDate: expiryDate))
     }
 
     /// Writes a certificate and its private key to files on the server (`BACKUP CERTIFICATE`), e.g. to
@@ -46,15 +47,14 @@ extension SQLServerSecurityClient {
         "CREATE MASTER KEY ENCRYPTION BY PASSWORD = N'\(SQLServerSQL.escapeLiteral(password))'"
     }
 
-    internal static func certificateSQL(name: String, subject: String, expiryDate: Date?) -> String {
+    internal static func certificateSQL(name: String, subject: String, startDate: Date? = nil, expiryDate: Date?) -> String {
         var sql = "CREATE CERTIFICATE \(SQLServerSQL.escapeIdentifier(name)) WITH SUBJECT = N'\(SQLServerSQL.escapeLiteral(subject))'"
-        if let expiryDate {
-            let formatter = DateFormatter()
-            formatter.locale = Locale(identifier: "en_US_POSIX")
-            formatter.timeZone = TimeZone(secondsFromGMT: 0)
-            formatter.dateFormat = "yyyyMMdd"
-            sql += ", EXPIRY_DATE = '\(formatter.string(from: expiryDate))'"
-        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyyMMdd"
+        if let startDate { sql += ", START_DATE = '\(formatter.string(from: startDate))'" }
+        if let expiryDate { sql += ", EXPIRY_DATE = '\(formatter.string(from: expiryDate))'" }
         return sql
     }
 }

@@ -21,6 +21,9 @@ final class EncryptionKeyTests: XCTestCase, @unchecked Sendable {
                        "CREATE ASYMMETRIC KEY [k] WITH ALGORITHM = RSA_2048 ENCRYPTION BY PASSWORD = N'p''w'")
         XCTAssertEqual(SQLServerSecurityClient.symmetricKeySQL(name: "s", algorithm: .aes256, certificate: "c"),
                        "CREATE SYMMETRIC KEY [s] WITH ALGORITHM = AES_256 ENCRYPTION BY CERTIFICATE [c]")
+        XCTAssertEqual(SQLServerSecurityClient.certificateSQL(name: "old", subject: "s", startDate: Date(timeIntervalSince1970: 1_262_304_000),
+                                                              expiryDate: Date(timeIntervalSince1970: 1_577_836_800)),
+                       "CREATE CERTIFICATE [old] WITH SUBJECT = N's', START_DATE = '20100101', EXPIRY_DATE = '20200101'")
     }
 
     func testKeysInADatabase() async throws {
@@ -29,6 +32,8 @@ final class EncryptionKeyTests: XCTestCase, @unchecked Sendable {
                 let security = SQLServerSecurityClient(connection: connection)
                 try await security.createMasterKey(password: "Master-\(UUID().uuidString)")
                 try await security.createCertificate(name: "KeyCert", subject: "Protects the data key")
+                try await security.createCertificate(name: "OldCert", subject: "Expired", startDate: Date(timeIntervalSince1970: 1_262_304_000),
+                                                     expiryDate: Date(timeIntervalSince1970: 1_577_836_800))
                 try await security.createSymmetricKey(name: "DataKey", algorithm: .aes256, encryptedByCertificate: "KeyCert")
                 try await security.createAsymmetricKey(name: "SigningKey", algorithm: .rsa2048)
                 let symmetric = try await security.listSymmetricKeys().first { $0.name == "DataKey" }
