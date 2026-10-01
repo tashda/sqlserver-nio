@@ -119,7 +119,7 @@ extension TDSData {
             }
             return String(format: "%02d:%02d:%02d", hours, minutes, seconds)
         case .binaryLegacy, .varbinaryLegacy, .varbinary, .binary, .image:
-            return self.bytes.map { $0.map { String(format: "0x%02X", $0) }.joined() }
+            return self.bytes.map { "0x" + $0.map { String(format: "%02X", $0) }.joined() }
         case .xml, .json:
             // xml and json are stored as UTF-16LE on the wire
             guard value.readableBytes.isMultiple(of: 2) else {
