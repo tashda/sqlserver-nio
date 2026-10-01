@@ -216,6 +216,9 @@ extension SQLServerAdministrationClient {
             if let collate = std.collation, !collate.isEmpty {
                 parts.append("COLLATE \(collate)")
             }
+            if let encrypted = std.alwaysEncrypted {
+                parts.append(encrypted.clause)
+            }
 
             if let identity = std.identity {
                 parts.append("IDENTITY(\(identity.seed), \(identity.increment))")

@@ -385,6 +385,9 @@ extension SQLServerConnection {
             if let collation = standardColumn.collation, !collation.isEmpty {
                 parts.append("COLLATE \(collation)")
             }
+            if let encrypted = standardColumn.alwaysEncrypted {
+                parts.append(encrypted.clause)
+            }
             if let identity = standardColumn.identity {
                 parts.append("IDENTITY(\(identity.seed), \(identity.increment))")
             }

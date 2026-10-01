@@ -41,6 +41,32 @@ final class AlwaysEncryptedTests: SecurityTestBase, @unchecked Sendable {
         _ = keys
     }
 
+    /// Keys and an encrypted table (no data: inserting needs client-side encryption). The CEK's
+    /// value is not checked when it is created, so a placeholder stands in for a wrapped key.
+    func testEncryptedColumnsAreCreatedAndListed() async throws {
+        try await withTemporaryDatabase(client: client, prefix: "tmp_ae") { db in
+            try await self.client.withDatabase(db) { connection in
+                let ae = self.client.alwaysEncrypted
+                try await ae.createColumnMasterKey(name: "LabCMK", keyStoreProviderName: "MSSQL_CERTIFICATE_STORE",
+                                                   keyPath: "CurrentUser/My/0123456789ABCDEF0123456789ABCDEF01234567")
+                try await ae.createColumnEncryptionKey(name: "LabCEK", cmkName: "LabCMK", algorithm: "RSA_OAEP",
+                                                       encryptedValue: "0x" + String(repeating: "AB", count: 256))
+                _ = connection
+                try await self.client.admin.createTable(name: "Patients", columns: [
+                    SQLServerColumnDefinition(name: "Id", definition: .standard(.init(dataType: .int, isPrimaryKey: true))),
+                    SQLServerColumnDefinition(name: "SSN", definition: .standard(.init(
+                        dataType: .nvarchar(length: .length(11)), collation: "Latin1_General_BIN2",
+                        alwaysEncrypted: .init(columnEncryptionKey: "LabCEK", type: .deterministic)))),
+                    SQLServerColumnDefinition(name: "Salary", definition: .standard(.init(
+                        dataType: .int, alwaysEncrypted: .init(columnEncryptionKey: "LabCEK", type: .randomized)))),
+                ])
+                let columns = try await ae.listEncryptedColumns()
+                XCTAssertEqual(Set(columns.map(\.column)), ["SSN", "Salary"])
+                XCTAssertEqual(columns.first { $0.column == "SSN" }?.encryptionType.uppercased(), "DETERMINISTIC")
+            }
+        }
+    }
+
     func testListEncryptedColumns() async throws {
         let cols = try await aeClient.listEncryptedColumns()
         _ = cols

@@ -30,6 +30,9 @@ public struct SQLServerColumnDefinition: Sendable {
         public let collation: String?
         /// Marks the column as ROWGUIDCOL (for UNIQUEIDENTIFIER columns).
         public let isRowGuidCol: Bool
+        /// Always Encrypted: the column is encrypted with a column encryption key. Deterministic
+        /// character columns need a `*_BIN2` collation.
+        public let alwaysEncrypted: AlwaysEncryptedColumn?
 
         public init(
             dataType: SQLDataType,
@@ -41,7 +44,8 @@ public struct SQLServerColumnDefinition: Sendable {
             isSparse: Bool = false,
             comment: String? = nil,
             collation: String? = nil,
-            isRowGuidCol: Bool = false
+            isRowGuidCol: Bool = false,
+            alwaysEncrypted: AlwaysEncryptedColumn? = nil
         ) {
             self.dataType = dataType
             self.isNullable = isNullable
@@ -53,6 +57,27 @@ public struct SQLServerColumnDefinition: Sendable {
             self.comment = comment
             self.collation = collation
             self.isRowGuidCol = isRowGuidCol
+            self.alwaysEncrypted = alwaysEncrypted
+        }
+    }
+
+    /// `ENCRYPTED WITH (COLUMN_ENCRYPTION_KEY = …, ENCRYPTION_TYPE = …, ALGORITHM = …)`.
+    public struct AlwaysEncryptedColumn: Sendable, Hashable {
+        public enum EncryptionType: String, Sendable, Hashable { case deterministic = "Deterministic", randomized = "Randomized" }
+
+        public let columnEncryptionKey: String
+        public let type: EncryptionType
+        public let algorithm: String
+
+        public init(columnEncryptionKey: String, type: EncryptionType, algorithm: String = "AEAD_AES_256_CBC_HMAC_SHA_256") {
+            self.columnEncryptionKey = columnEncryptionKey
+            self.type = type
+            self.algorithm = algorithm
+        }
+
+        var clause: String {
+            "ENCRYPTED WITH (COLUMN_ENCRYPTION_KEY = \(SQLServerSQL.escapeIdentifier(columnEncryptionKey)), "
+                + "ENCRYPTION_TYPE = \(type.rawValue), ALGORITHM = '\(SQLServerSQL.escapeLiteral(algorithm))')"
         }
     }
 }
