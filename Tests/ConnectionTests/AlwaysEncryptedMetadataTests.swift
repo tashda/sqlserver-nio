@@ -102,6 +102,10 @@ final class AlwaysEncryptedMetadataTests: XCTestCase, @unchecked Sendable {
             XCTAssertEqual(rows.first?.column("SSN")?.bytes, ssn, "The ciphertext comes back as stored")
             XCTAssertEqual(rows.first?.column("Salary")?.bytes, salary)
             XCTAssertTrue(rows.first?.column("Notes")?.isNull ?? false)
+            // The rows of query() carry the same description.
+            let queried = try await reader.query("SELECT Id, SSN FROM dbo.Patients")
+            XCTAssertNil(queried.first?.columns[0].encryption)
+            XCTAssertEqual(queried.first?.columns[1].encryption?.typeName, "nvarchar(11)")
 
             // Plain work on the same connection: every COLMETADATA now has a CekTable, RPC return
             // values may carry crypto metadata, and bulk loads write a CekTable of their own.

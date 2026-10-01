@@ -219,6 +219,8 @@ public struct SQLServerColumn: Sendable {
     public var precision: Int? { base.precision == 0 ? nil : Int(base.precision) }
     public var scale: Int? { base.scale == 0 ? nil : Int(base.scale) }
     public var flags: UInt16 { base.flags }
+    /// Always Encrypted: how the column is encrypted, on a connection with `columnEncryption`.
+    public var encryption: SQLServerColumnEncryption? { base.encryption.map(SQLServerColumnEncryption.init) }
     public var normalizedLength: Int? {
         guard base.length >= 0 else { return nil }
         switch base.dataType {
