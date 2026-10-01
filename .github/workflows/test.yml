@@ -42,7 +42,7 @@ jobs:
         run: swift test --skip-build
 
   integration:
-    name: "SQL Server ${{ matrix.version }}"
+    name: "SQL Server ${{ matrix.version }}${{ matrix.columnEncryption == 'true' && ' (Always Encrypted metadata on)' || '' }}"
     needs: unit
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -50,6 +50,11 @@ jobs:
       fail-fast: false
       matrix:
         version: ["2017", "2019", "2022", "2025"]
+        columnEncryption: ["false"]
+        include:
+          # Every result set, row and RPC parsed with COLUMNENCRYPTION negotiated (CekTable in every COLMETADATA).
+          - version: "2022"
+            columnEncryption: "true"
     services:
       sqlserver:
         image: mcr.microsoft.com/mssql/server:${{ matrix.version }}-latest
@@ -60,7 +65,7 @@ jobs:
         ports:
           - 1433:1433
     env:
-      SQLSERVER_TEST_URL: "sqlserver://sa:Ci_sqlserver-nio_1@localhost:1433/master?encrypt=mandatory&trustServerCertificate=true"
+      SQLSERVER_TEST_URL: "sqlserver://sa:Ci_sqlserver-nio_1@localhost:1433/master?encrypt=mandatory&trustServerCertificate=true&columnEncryption=${{ matrix.columnEncryption }}"
       SQLSERVER_TEST_REQUIRED: "1"
     steps:
       - uses: actions/checkout@v5
