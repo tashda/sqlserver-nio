@@ -17,9 +17,9 @@ Echo branch unless noted. Add new rows at the bottom when a driver change needs 
 | 10 | Prefer `client.withStreamQuery(sql) { … }` over `client.streamQuery(sql)` for pooled streams. | Open |
 | 11 | Spool every row as wire bytes and format with `SQLServerCellFormatter` (values after row 200). | Done (`ce98d8e4`) |
 | 12 | "Transaction rolled back" after a cancel inside a transaction (`isInTransaction`, driver #14). | Done (`c051c455`) |
-| 13 | Imports use the TDS bulk load (`client.bulk.copy`, unchanged call). New options to offer in the import sheet: `tableLock`, `checkConstraints`, `fireTriggers`, `keepNulls` (and `identityInsert`); show `summary.method`. Text converts as before (SQL Server converts what the client cannot read), so today's files import unchanged. Lab round first. | Open |
+| 13 | Imports use the TDS bulk load (`client.bulk.copy`, unchanged call). New options to offer in the import sheet: `tableLock`, `checkConstraints`, `fireTriggers`, `keepNulls` (and `identityInsert`); show `summary.method`. Text converts as before (SQL Server converts what the client cannot read), so today's files import unchanged. Lab round first. | Done (`2a235de8`, round 25: Options section, one transaction, 10,000-row batches) |
 | 14 | Windows authentication: an optional "Server SPN" field (`SQLServerConnection.Configuration.serverSPN`, like ODBC's ServerSPN) for servers reached by an IP address or a load balancer. Lab round first. | Open |
-| 15 | Always Encrypted columns: turn on `columnEncryption` for SQL Server connections and show encrypted columns (`SQLServerColumnDescription.encryption`) as encrypted instead of their ciphertext bytes, with editing off. Lab round first. | Open |
+| 15 | Always Encrypted columns: turn on `columnEncryption` for SQL Server connections and show encrypted columns (`SQLServerColumnDescription.encryption`) as encrypted instead of their ciphertext bytes, with editing off. Lab round first. | Done (`c25d5be9`, round 29: 🔒 Encrypted cells, a lock in the header with details on hover, read-only with an explanation; Copy gives the ciphertext) |
 
 Checks to run in the app (owner): run, cancel mid-result, run again (temp tables survive); a cancel
 inside `BEGIN TRAN` says Transaction rolled back; several million rows keep memory flat; `KILL` the
