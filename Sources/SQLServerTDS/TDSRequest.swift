@@ -43,10 +43,18 @@ public final class TDSRequestHandle: @unchecked Sendable {
     /// Stops reading from the socket while this request is receiving rows.
     /// Used for streaming back-pressure. Has no effect once the request has
     /// completed, and reading resumes automatically when it completes.
+    ///
+    /// On the event loop (where a stream learns its buffer is full) the pause applies at once.
+    /// Scheduling it instead let a `resumeReading()` from the consumer, scheduled in between, run
+    /// first: the pause then won, nothing resumed it, and the stream waited forever.
     public func pauseReading() {
         guard let connection else { return }
-        connection.eventLoop.execute {
-            connection.requestHandler.setReadPaused(true, for: self.context)
+        if connection.eventLoop.inEventLoop {
+            connection.requestHandler.setReadPaused(true, for: context)
+        } else {
+            connection.eventLoop.execute {
+                connection.requestHandler.setReadPaused(true, for: self.context)
+            }
         }
     }
 
