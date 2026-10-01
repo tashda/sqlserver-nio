@@ -348,6 +348,15 @@ public final class SQLServerQueryStoreClient: @unchecked Sendable {
         _ = try await client.execute(sql)
     }
 
+    /// Writes the Query Store data held in memory to disk (`sp_query_store_flush_db`), e.g.
+    /// before the server is stopped or its files are copied.
+    @available(macOS 12.0, *)
+    public func flush(database: String) async throws {
+        try await client.withDatabase(database) { connection in
+            _ = try await connection.execute("EXEC sys.sp_query_store_flush_db")
+        }
+    }
+
     /// Purges all Query Store data for a database.
     @available(macOS 12.0, *)
     public func purgeData(database: String) async throws {

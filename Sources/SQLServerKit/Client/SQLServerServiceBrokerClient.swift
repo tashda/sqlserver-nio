@@ -302,6 +302,46 @@ public final class SQLServerServiceBrokerClient: @unchecked Sendable {
         }
     }
 
+    /// Opens a dialog from one service to another and sends one message on it; returns the
+    /// conversation handle. The conversation stays open (no END CONVERSATION), so the message
+    /// waits in the target queue until something receives it.
+    @available(macOS 12.0, *)
+    @discardableResult
+    public func send(
+        database: String,
+        fromService: String,
+        toService: String,
+        contract: String,
+        messageType: String,
+        body: String,
+        encryption: Bool = false
+    ) async throws -> String {
+        let sql = """
+        DECLARE @handle UNIQUEIDENTIFIER;
+        BEGIN DIALOG CONVERSATION @handle
+            FROM SERVICE \(SQLServerSQL.escapeIdentifier(fromService))
+            TO SERVICE N'\(SQLServerSQL.escapeLiteral(toService))'
+            ON CONTRACT \(SQLServerSQL.escapeIdentifier(contract))
+            WITH ENCRYPTION = \(encryption ? "ON" : "OFF");
+        SEND ON CONVERSATION @handle MESSAGE TYPE \(SQLServerSQL.escapeIdentifier(messageType)) (N'\(SQLServerSQL.escapeLiteral(body))');
+        SELECT CONVERT(NVARCHAR(36), @handle) AS handle;
+        """
+        let rows = try await client.withDatabase(database) { connection in
+            try await connection.query(sql)
+        }
+        guard let handle = rows.first?.column("handle")?.string else {
+            throw SQLServerError.invalidArgument("SEND returned no conversation handle")
+        }
+        return handle
+    }
+
+    /// How many messages wait in a queue.
+    @available(macOS 12.0, *)
+    public func messageCount(database: String, schema: String = "dbo", queue: String) async throws -> Int {
+        let sql = "SELECT COUNT(*) AS waiting FROM \(SQLServerSQL.escapeIdentifier(database)).\(SQLServerSQL.escapeIdentifier(schema)).\(SQLServerSQL.escapeIdentifier(queue))"
+        return try await client.query(sql).first?.column("waiting")?.int ?? 0
+    }
+
     /// Drops a service.
     @available(macOS 12.0, *)
     public func dropService(database: String, name: String) async throws {

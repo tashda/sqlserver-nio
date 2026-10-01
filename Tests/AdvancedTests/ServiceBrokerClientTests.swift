@@ -37,6 +37,28 @@ final class SQLServerServiceBrokerClientTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    // MARK: - Messages
+
+    @available(macOS 12.0, *)
+    func testSendLeavesAMessageInTheTargetQueue() async throws {
+        try await withTemporaryDatabase(client: self.client, prefix: "tmp_sbsend") { db in
+            _ = try await self.client.admin.alterDatabaseOption(name: db, option: .brokerEnabled(true))
+            let broker = self.client.serviceBroker
+            try await broker.createMessageType(database: db, name: "OrderMessage", validation: .wellFormedXML)
+            try await broker.createContract(database: db, name: "OrderContract", messageUsages: [("OrderMessage", .initiator)])
+            try await broker.createQueue(database: db, name: "SenderQueue")
+            try await broker.createQueue(database: db, name: "OrderQueue")
+            try await broker.createService(database: db, name: "SenderService", queue: "SenderQueue")
+            try await broker.createService(database: db, name: "OrderService", queue: "OrderQueue", contracts: ["OrderContract"])
+
+            let handle = try await broker.send(database: db, fromService: "SenderService", toService: "OrderService",
+                                               contract: "OrderContract", messageType: "OrderMessage", body: "<order id=\"1\"/>")
+            XCTAssertEqual(handle.count, 36)
+            let waiting = try await broker.messageCount(database: db, queue: "OrderQueue")
+            XCTAssertEqual(waiting, 1)
+        }
+    }
+
     // MARK: - Contracts
 
     @available(macOS 12.0, *)

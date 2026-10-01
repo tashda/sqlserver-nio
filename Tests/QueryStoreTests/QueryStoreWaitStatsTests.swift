@@ -70,6 +70,27 @@ final class QueryStoreWaitStatsTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    // MARK: - Capture and flush
+
+    func testCapturedQueryCanBeFlushedAndForced() async throws {
+        try await withTemporaryDatabase(client: self.client, prefix: "tmp_qs") { db in
+            let store = self.client.queryStore
+            try await store.setEnabled(database: db, enabled: true)
+            try await store.alterOption(database: db, option: .queryCaptureMode(.all))
+            for _ in 1...3 {
+                _ = try await self.client.withDatabase(db) { try await $0.query("SELECT COUNT(*) AS n FROM sys.objects WHERE type = 'U'") }
+            }
+            try await store.flush(database: db)
+            let queries = try await store.topQueries(database: db, limit: 50, queryTextFilter: "sys.objects")
+            let query = try XCTUnwrap(queries.first)
+            let plans = try await store.queryPlans(database: db, queryId: query.queryId)
+            let plan = try XCTUnwrap(plans.first)
+            try await store.forcePlan(database: db, queryId: query.queryId, planId: plan.planId)
+            let forced = try await store.queryPlans(database: db, queryId: query.queryId).first { $0.planId == plan.planId }
+            XCTAssertEqual(forced?.isForcedPlan, true)
+        }
+    }
+
     // MARK: - Type Structure
 
     func testWaitStatTypeFields() {
