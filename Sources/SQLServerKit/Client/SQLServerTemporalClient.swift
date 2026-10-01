@@ -161,9 +161,9 @@ public final class SQLServerTemporalClient: @unchecked Sendable {
         let addColumnsSql = """
         ALTER TABLE \(qualified) ADD
             \(startCol) DATETIME2 GENERATED ALWAYS AS ROW START HIDDEN
-                CONSTRAINT [DF_\(SQLServerSQL.escapeLiteral(table))_\(SQLServerSQL.escapeLiteral(startColumn))] DEFAULT SYSUTCDATETIME() NOT NULL,
+                CONSTRAINT \(SQLServerSQL.escapeIdentifier("DF_\(table)_\(startColumn)")) DEFAULT SYSUTCDATETIME() NOT NULL,
             \(endCol) DATETIME2 GENERATED ALWAYS AS ROW END HIDDEN
-                CONSTRAINT [DF_\(SQLServerSQL.escapeLiteral(table))_\(SQLServerSQL.escapeLiteral(endColumn))] DEFAULT CONVERT(DATETIME2, '9999-12-31 23:59:59.9999999') NOT NULL,
+                CONSTRAINT \(SQLServerSQL.escapeIdentifier("DF_\(table)_\(endColumn)")) DEFAULT CONVERT(DATETIME2, '9999-12-31 23:59:59.9999999') NOT NULL,
             PERIOD FOR SYSTEM_TIME (\(startCol), \(endCol))
         """
         _ = try await client.execute(addColumnsSql)

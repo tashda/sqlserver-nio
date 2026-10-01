@@ -21,7 +21,7 @@ extension SQLServerConnection {
             primaryKeyConstraint = ""
         } else {
             let keys = primaryKeyColumns.map { SQLServerSQL.escapeIdentifier($0) }.joined(separator: ", ")
-            primaryKeyConstraint = ", CONSTRAINT [PK_\(name)] PRIMARY KEY (\(keys))"
+            primaryKeyConstraint = ", CONSTRAINT \(SQLServerSQL.escapeIdentifier("PK_" + name)) PRIMARY KEY (\(keys))"
         }
 
         let createTableSql = "CREATE TABLE \(qualifiedTableName(name: name, schema: schema, database: database)) (\n  \(columnStrings.joined(separator: ", "))\(primaryKeyConstraint)\n)"
@@ -91,7 +91,7 @@ extension SQLServerConnection {
             primaryKeyConstraint = ""
         } else {
             let keys = primaryKeyColumns.map { SQLServerSQL.escapeIdentifier($0) }.joined(separator: ", ")
-            primaryKeyConstraint = ", CONSTRAINT [PK_\(name)] PRIMARY KEY CLUSTERED (\(keys))"
+            primaryKeyConstraint = ", CONSTRAINT \(SQLServerSQL.escapeIdentifier("PK_" + name)) PRIMARY KEY CLUSTERED (\(keys))"
         }
 
         let sql = """
@@ -118,7 +118,7 @@ extension SQLServerConnection {
             [ValidFrom] DATETIME2(7) GENERATED ALWAYS AS ROW START NOT NULL,
             [ValidTo] DATETIME2(7) GENERATED ALWAYS AS ROW END NOT NULL,
             PERIOD FOR SYSTEM_TIME ([ValidFrom], [ValidTo]),
-            CONSTRAINT [PK_\(name)] PRIMARY KEY CLUSTERED (\(SQLServerSQL.escapeIdentifier(primaryKeyColumn)))
+            CONSTRAINT \(SQLServerSQL.escapeIdentifier("PK_" + name)) PRIMARY KEY CLUSTERED (\(SQLServerSQL.escapeIdentifier(primaryKeyColumn)))
         ) WITH (SYSTEM_VERSIONING = ON
         """
         if let historyTableName, !historyTableName.isEmpty {
