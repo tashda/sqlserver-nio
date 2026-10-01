@@ -14,6 +14,10 @@ public struct SQLServerAgentJobScheduleDetail: Sendable {
     public let activeEndDate: Int?
     public let activeEndTime: Int?
     public let nextRunDate: Date?
+    /// Weeks or months between runs for weekly and monthly schedules.
+    public let freqRecurrenceFactor: Int?
+    /// For monthly-relative schedules: first, second, third, fourth or last.
+    public let freqRelativeInterval: Int?
 
     public init(
         scheduleId: String,
@@ -27,7 +31,9 @@ public struct SQLServerAgentJobScheduleDetail: Sendable {
         activeStartTime: Int? = nil,
         activeEndDate: Int? = nil,
         activeEndTime: Int? = nil,
-        nextRunDate: Date? = nil
+        nextRunDate: Date? = nil,
+        freqRecurrenceFactor: Int? = nil,
+        freqRelativeInterval: Int? = nil
     ) {
         self.scheduleId = scheduleId
         self.name = name
@@ -41,5 +47,7 @@ public struct SQLServerAgentJobScheduleDetail: Sendable {
         self.activeEndDate = activeEndDate
         self.activeEndTime = activeEndTime
         self.nextRunDate = nextRunDate
+        self.freqRecurrenceFactor = freqRecurrenceFactor
+        self.freqRelativeInterval = freqRelativeInterval
     }
 }

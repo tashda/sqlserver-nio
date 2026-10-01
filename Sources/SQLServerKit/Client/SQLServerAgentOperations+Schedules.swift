@@ -55,24 +55,54 @@ extension SQLServerAgentOperations {
         freqInterval: Int? = nil,
         activeStartDate: Int? = nil,
         activeStartTime: Int? = nil,
+        activeEndDate: Int? = nil,
+        activeEndTime: Int? = nil,
         freqSubdayType: Int? = nil,
         freqSubdayInterval: Int? = nil,
         freqRelativeInterval: Int? = nil,
         freqRecurrenceFactor: Int? = nil
     ) -> EventLoopFuture<Void> {
-        var sql = "EXEC msdb.dbo.sp_update_schedule @schedule_name = N'\(SQLServerSQL.escapeLiteral(name))'"
+        var sql = "EXEC msdb.dbo.sp_update_schedule @name = N'\(SQLServerSQL.escapeLiteral(name))'"
         if let v = newName { sql += ", @new_name = N'\(SQLServerSQL.escapeLiteral(v))'" }
         if let v = enabled { sql += ", @enabled = \(v ? 1 : 0)" }
         if let v = freqType { sql += ", @freq_type = \(v)" }
         if let v = freqInterval { sql += ", @freq_interval = \(v)" }
         if let v = activeStartDate { sql += ", @active_start_date = \(v)" }
         if let v = activeStartTime { sql += ", @active_start_time = \(v)" }
+        if let v = activeEndDate { sql += ", @active_end_date = \(v)" }
+        if let v = activeEndTime { sql += ", @active_end_time = \(v)" }
         if let v = freqSubdayType { sql += ", @freq_subday_type = \(v)" }
         if let v = freqSubdayInterval { sql += ", @freq_subday_interval = \(v)" }
         if let v = freqRelativeInterval { sql += ", @freq_relative_interval = \(v)" }
         if let v = freqRecurrenceFactor { sql += ", @freq_recurrence_factor = \(v)" }
         sql += ";"
         return run(sql).map { _ in () }
+    }
+
+    /// Changes a schedule in place (`sp_update_schedule`); every job it is attached to follows.
+    /// Only the values given change.
+    @available(macOS 12.0, *)
+    public func updateSchedule(
+        name: String,
+        newName: String? = nil,
+        enabled: Bool? = nil,
+        freqType: Int? = nil,
+        freqInterval: Int? = nil,
+        activeStartDate: Int? = nil,
+        activeStartTime: Int? = nil,
+        activeEndDate: Int? = nil,
+        activeEndTime: Int? = nil,
+        freqSubdayType: Int? = nil,
+        freqSubdayInterval: Int? = nil,
+        freqRelativeInterval: Int? = nil,
+        freqRecurrenceFactor: Int? = nil
+    ) async throws {
+        _ = try await updateSchedule(
+            name: name, newName: newName, enabled: enabled, freqType: freqType, freqInterval: freqInterval,
+            activeStartDate: activeStartDate, activeStartTime: activeStartTime, activeEndDate: activeEndDate,
+            activeEndTime: activeEndTime, freqSubdayType: freqSubdayType, freqSubdayInterval: freqSubdayInterval,
+            freqRelativeInterval: freqRelativeInterval, freqRecurrenceFactor: freqRecurrenceFactor
+        ).get()
     }
 
     internal func listSchedules(forJob jobName: String? = nil) -> EventLoopFuture<[SQLServerAgentScheduleInfo]> {
