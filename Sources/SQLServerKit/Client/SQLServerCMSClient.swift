@@ -114,36 +114,46 @@ public final class SQLServerCMSClient: @unchecked Sendable {
 
     // MARK: - Add Group
 
-    /// Adds a new CMS server group.
+    /// Adds a CMS server group. Without a parent it goes under DatabaseEngineServerGroup (id 1), the
+    /// root of Database Engine groups.
     @available(macOS 12.0, *)
-    public func addGroup(name: String, parentId: Int = 0, description: String = "") async throws {
-        let escapedName = name.replacingOccurrences(of: "'", with: "''")
-        let escapedDesc = description.replacingOccurrences(of: "'", with: "''")
-        let sql = """
-        EXEC msdb.dbo.sp_sysmanagement_add_shared_server_group
-            @name = N'\(escapedName)',
-            @description = N'\(escapedDesc)',
-            @parent_id = \(parentId)
-        """
-        _ = try await client.execute(sql)
+    public func addGroup(name: String, parentId: Int? = nil, description: String = "") async throws {
+        _ = try await client.execute(Self.addGroupSQL(name: name, parentId: parentId ?? 1, description: description))
     }
 
     // MARK: - Add Server
 
-    /// Registers a server in CMS.
+    /// Registers a server in a CMS group.
     @available(macOS 12.0, *)
     public func addServer(serverName: String, groupId: Int, description: String = "") async throws {
+        _ = try await client.execute(Self.addServerSQL(serverName: serverName, groupId: groupId, description: description))
+    }
+
+    /// `@server_type` (0: Database Engine) and the OUTPUT id are required; there is no `@overwrite`.
+    internal static func addGroupSQL(name: String, parentId: Int, description: String) -> String {
+        """
+        DECLARE @server_group_id int;
+        EXEC msdb.dbo.sp_sysmanagement_add_shared_server_group
+            @name = N'\(name.replacingOccurrences(of: "'", with: "''"))',
+            @description = N'\(description.replacingOccurrences(of: "'", with: "''"))',
+            @parent_id = \(parentId),
+            @server_type = 0,
+            @server_group_id = @server_group_id OUTPUT
+        """
+    }
+
+    internal static func addServerSQL(serverName: String, groupId: Int, description: String) -> String {
         let escapedServer = serverName.replacingOccurrences(of: "'", with: "''")
-        let escapedDesc = description.replacingOccurrences(of: "'", with: "''")
-        let sql = """
+        return """
+        DECLARE @server_id int;
         EXEC msdb.dbo.sp_sysmanagement_add_shared_registered_server
             @name = N'\(escapedServer)',
-            @server_name = N'\(escapedServer)',
-            @description = N'\(escapedDesc)',
             @server_group_id = \(groupId),
-            @overwrite = 0
+            @server_name = N'\(escapedServer)',
+            @description = N'\(description.replacingOccurrences(of: "'", with: "''"))',
+            @server_type = 0,
+            @server_id = @server_id OUTPUT
         """
-        _ = try await client.execute(sql)
     }
 
     // MARK: - Remove Server

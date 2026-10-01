@@ -35,3 +35,12 @@ import Testing
         #expect(SQLServerAdministrationClient.renameServerSQL("replica'1").contains("sp_addserver N'replica''1', 'local'"))
     }
 }
+
+@Suite struct CentralManagementSQLTests {
+    @Test func groupsAndServersPassServerTypeAndOutput() {
+        let group = SQLServerCMSClient.addGroupSQL(name: "Prod's", parentId: 1, description: "")
+        #expect(group.contains("@server_type = 0") && group.contains("@server_group_id = @server_group_id OUTPUT") && group.contains("N'Prod''s'"))
+        let server = SQLServerCMSClient.addServerSQL(serverName: "sql01", groupId: 6, description: "Primary")
+        #expect(server.contains("@server_type = 0") && server.contains("@server_id = @server_id OUTPUT") && !server.contains("@overwrite"))
+    }
+}
