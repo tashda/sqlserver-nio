@@ -6,6 +6,13 @@ import XCTest
 
 /// Tests for the enhanced SQLServerAgentOperations APIs that provide comprehensive job management data
 final class AgentEnhancedAPITests: AgentTestBase, @unchecked Sendable {
+    /// A running Agent is not starting any more (job changes would fail while it is).
+    func testRunningAgentIsNotStarting() async throws {
+        let agent = SQLServerAgentOperations(client: self.client)
+        let starting = try await agent.isStarting()
+        XCTAssertFalse(starting)
+    }
+
 
     func testListJobsDetailedReturnsComprehensiveData() async throws {
         let agent = SQLServerAgentOperations(client: self.client)

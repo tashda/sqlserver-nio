@@ -31,6 +31,18 @@ extension SQLServerAgentOperations {
         try await getJobDetail(jobName: jobName).get()
     }
 
+    /// True while SQL Server Agent is still starting: it may already report itself running,
+    /// but starting or changing jobs fails ("SQLServerAgent is starting") until this is false.
+    @available(macOS 12.0, *)
+    public func isStarting() async throws -> Bool {
+        let rows = try await run("""
+            DECLARE @starting INT = 0;
+            EXEC master.dbo.xp_sqlagent_is_starting @starting OUTPUT;
+            SELECT @starting AS starting;
+            """).get()
+        return (rows.first?.column("starting")?.int ?? 0) != 0
+    }
+
     @available(macOS 12.0, *)
     public func startJob(named jobName: String) async throws {
         _ = try await startJob(named: jobName).get()
