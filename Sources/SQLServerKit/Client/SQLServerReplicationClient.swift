@@ -131,14 +131,17 @@ public final class SQLServerReplicationClient: @unchecked Sendable {
     /// Lists replication publications in the current database.
     @available(macOS 12.0, *)
     public func listPublications() async throws -> [SQLServerPublication] {
-        // Use syspublications which is available in the publisher database
+        // syspublications (transactional and snapshot: repl_freq 0 or 1) and, where merge
+        // replication was ever enabled, sysmergepublications; both live in the publisher database.
+        // The tables exist only once the database was enabled for publishing; a branch that does
+        // not run may name a missing table (deferred name resolution).
         let sql = """
-        SELECT name,
-               type AS publication_type,
-               status,
-               ISNULL(description, '') AS description
-        FROM syspublications
-        ORDER BY name
+        DECLARE @publications TABLE (name sysname, publication_type INT, status INT, description NVARCHAR(255));
+        IF OBJECT_ID(N'syspublications') IS NOT NULL
+            INSERT @publications SELECT name, repl_freq, status, ISNULL(description, '') FROM syspublications;
+        IF OBJECT_ID(N'sysmergepublications') IS NOT NULL
+            INSERT @publications SELECT name, 2, status, ISNULL(description, '') FROM sysmergepublications;
+        SELECT name, publication_type, status, description FROM @publications ORDER BY name;
         """
         let rows = try await client.query(sql)
         return rows.compactMap { row in
@@ -158,15 +161,14 @@ public final class SQLServerReplicationClient: @unchecked Sendable {
     /// Lists replication subscriptions in the current database.
     @available(macOS 12.0, *)
     public func listSubscriptions() async throws -> [SQLServerSubscription] {
+        // One row per article in syssubscriptions; `virtual` rows are the snapshot's own.
         let sql = """
-        SELECT srvname AS subscriber_server,
-               dest_db AS subscriber_db,
-               subscription_type,
-               status
-        FROM syssubscriptions sub
-        JOIN sysextendedarticlesview a ON sub.artid = a.artid
-        JOIN master.dbo.sysservers srv ON sub.srvid = srv.srvid
-        ORDER BY srvname, dest_db
+        DECLARE @subscriptions TABLE (subscriber_server sysname, subscriber_db sysname, subscription_type INT, status INT);
+        IF OBJECT_ID(N'syssubscriptions') IS NOT NULL
+            INSERT @subscriptions SELECT DISTINCT srvname, dest_db, subscription_type, status
+            FROM syssubscriptions WHERE dest_db <> N'virtual';
+        SELECT subscriber_server, subscriber_db, subscription_type, status FROM @subscriptions
+        ORDER BY subscriber_server, subscriber_db;
         """
         let rows = try await client.query(sql)
         return rows.compactMap { row in
