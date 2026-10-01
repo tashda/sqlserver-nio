@@ -135,6 +135,37 @@ final class FullTextSearchTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    /// A default, accent-insensitive catalog with a populated index (needs a user database and
+    /// full-text installed: echo-server-lab `mssql-2022-full-text-empty`).
+    func testDefaultCatalogWithPopulatedIndex() async throws {
+        let currentDB = try await client.query("SELECT DB_NAME() AS db").first?.column("db")?.string ?? "master"
+        if ["master", "tempdb", "model"].contains(currentDB.lowercased()) {
+            throw XCTSkip("Full-Text Search cannot be used in \(currentDB) database")
+        }
+        let suffix = UUID().uuidString.prefix(8)
+        let catalog = "ft_default_\(suffix)", table = "ft_docs_\(suffix)"
+        _ = try await client.execute("CREATE TABLE dbo.[\(table)] (Id INT NOT NULL, Body NVARCHAR(MAX)); CREATE UNIQUE INDEX [UX_\(table)] ON dbo.[\(table)] (Id); INSERT dbo.[\(table)] VALUES (1, N'café au lait'), (2, N'running dogs')")
+        do {
+            try await client.fullText.createCatalog(name: catalog, isDefault: true, accentSensitive: false)
+            try await client.fullText.createIndex(schema: "dbo", table: table, keyIndex: "UX_\(table)", catalogName: catalog, columns: ["Body"],
+                                                  changeTracking: .manual)
+            try await client.fullText.startPopulation(schema: "dbo", table: table)
+            let created = try await client.fullText.listCatalogs().first { $0.name == catalog }
+            XCTAssertEqual(created?.isDefault, true)
+            XCTAssertEqual(created?.isAccentSensitive, false)
+            let indexed = try await client.fullText.listIndexes().contains { $0.tableName == table }
+            XCTAssertTrue(indexed)
+            try await client.fullText.dropIndex(schema: "dbo", table: table)
+            try await client.fullText.dropCatalog(name: catalog)
+            _ = try await client.execute("DROP TABLE dbo.[\(table)]")
+        } catch {
+            try? await client.fullText.dropIndex(schema: "dbo", table: table)
+            try? await client.fullText.dropCatalog(name: catalog)
+            _ = try? await client.execute("DROP TABLE dbo.[\(table)]")
+            throw error
+        }
+    }
+
     // MARK: - PopulationType Enum
 
     func testPopulationTypeEnumCases() {

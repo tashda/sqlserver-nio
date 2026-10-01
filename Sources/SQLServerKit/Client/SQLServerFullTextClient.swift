@@ -112,9 +112,10 @@ public final class SQLServerFullTextClient: @unchecked Sendable {
     @available(macOS 12.0, *)
     public func createCatalog(name: String, isDefault: Bool = false, accentSensitive: Bool = true) async throws {
         let escaped = name.replacingOccurrences(of: "]", with: "]]")
-        var sql = "CREATE FULLTEXT CATALOG [\(escaped)]"
+        // WITH comes before AS DEFAULT.
+        var sql = "CREATE FULLTEXT CATALOG [\(escaped)] WITH ACCENT_SENSITIVITY = \(accentSensitive ? "ON" : "OFF")"
         if isDefault { sql += " AS DEFAULT" }
-        sql += " WITH ACCENT_SENSITIVITY = \(accentSensitive ? "ON" : "OFF");"
+        sql += ";"
         _ = try await client.execute(sql)
     }
 
