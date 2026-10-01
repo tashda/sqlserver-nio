@@ -12,6 +12,59 @@ public struct SQLServerColumnDescription: Sendable {
     /// The column's wire type, for formatting spooled cells with
     /// `SQLServerCellFormatter` (store `cellType.encoded`).
     public let cellType: SQLServerCellType
+    /// Always Encrypted: how the column is encrypted, on a connection with `columnEncryption`.
+    /// Its values are ciphertext (`varbinary`); the driver cannot decrypt them.
+    public var encryption: SQLServerColumnEncryption? = nil
+}
+
+/// An Always Encrypted column, as SQL Server describes it to a client that negotiated column
+/// encryption.
+public struct SQLServerColumnEncryption: Sendable, Hashable {
+    public enum Kind: String, Sendable {
+        /// The same plaintext always gives the same ciphertext (equality lookups, joins).
+        case deterministic
+        /// Different ciphertext each time.
+        case randomized
+    }
+
+    public let kind: Kind?
+    /// `AEAD_AES_256_CBC_HMAC_SHA_256` today.
+    public let algorithm: String
+    /// The plaintext type.
+    public let type: SQLServerDataType
+    /// The plaintext type as declared, for example `nvarchar(11)` or `decimal(10, 2)`.
+    public let typeName: String
+    /// Where the column master key lives (`MSSQL_CERTIFICATE_STORE`, `AZURE_KEY_VAULT`, …).
+    public let keyStoreName: String?
+    /// The column master key's path in that store.
+    public let keyPath: String?
+
+    init(_ encryption: TDSTokens.ColMetadataToken.ColumnData.ColumnEncryption) {
+        kind = encryption.kind.map { $0 == .deterministic ? .deterministic : .randomized }
+        algorithm = encryption.algorithm
+        let base = encryption.baseType
+        type = SQLServerDataType(base: base.dataType)
+        typeName = Self.declaredName(base)
+        keyStoreName = encryption.keyStoreName
+        keyPath = encryption.keyPath
+    }
+
+    static func declaredName(_ base: TDSTokens.ColMetadataToken.ColumnData.TypeInfo) -> String {
+        let name = SQLServerDataType(base: base.dataType).name
+        let isMax = base.length == 0xFFFF || base.length == -1
+        switch base.dataType {
+        case .char, .varchar, .binary, .varbinary, .charLegacy, .varcharLegacy, .binaryLegacy, .varbinaryLegacy:
+            return isMax ? "\(name)(max)" : "\(name)(\(base.length))"
+        case .nchar, .nvarchar:
+            return isMax ? "\(name)(max)" : "\(name)(\(base.length / 2))"
+        case .decimal, .numeric, .decimalLegacy, .numericLegacy:
+            return "\(name)(\(base.precision), \(base.scale))"
+        case .time, .datetime2, .datetimeOffset:
+            return "\(name)(\(base.scale))"
+        default:
+            return name
+        }
+    }
 }
 
 public struct SQLServerStreamDone: Sendable {

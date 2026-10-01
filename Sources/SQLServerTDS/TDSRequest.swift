@@ -321,6 +321,8 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
     /// Packet size for outgoing requests: 4096 until the login response's
     /// ENVCHANGE says what the server accepted.
     private var packetLength = TDSPacket.defaultPacketLength
+    /// Set when the server acknowledged COLUMNENCRYPTION; parsers made after a reset keep it.
+    private var columnEncryptionNegotiated = false
     /// Set while an ATTENTION has been sent and its acknowledgement is pending.
     private var attentionAckTimeout: Scheduled<Void>?
     private var attentionPending: Bool { attentionAckTimeout != nil }
@@ -664,6 +666,14 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
                 processEnvchangeToken(envToken)
             }
 
+        case .featureExtAck:
+            if let ack = token as? TDSTokens.FeatureExtAckToken,
+               let version = ack.features[TDSTokens.FeatureExtAckToken.columnEncryptionFeature]?.first, version >= 1 {
+                columnEncryptionNegotiated = true
+                tokenParser.columnEncryption = true
+                connection?.updateColumnEncryptionNegotiated(true)
+            }
+
         case .loginAck:
             if let ackToken = token as? TDSTokens.LoginAckToken {
                 self.serverMajorVersion = ackToken.majorVer
@@ -768,6 +778,7 @@ final class TDSRequestHandler: ChannelDuplexHandler, @unchecked Sendable {
         streamParser.buffer.clear()
         streamParser.position = streamParser.buffer.readerIndex
         tokenParser = TDSTokenOperations(streamParser: streamParser, logger: logger)
+        tokenParser.columnEncryption = columnEncryptionNegotiated
         reparseThreshold = 0
         atEndOfMessage = true
     }

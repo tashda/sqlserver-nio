@@ -93,7 +93,7 @@ extension TDSTokenOperations {
             scale = s
         }
 
-        let metadata = TDSTokens.ColMetadataToken.ColumnData(
+        var metadata = TDSTokens.ColMetadataToken.ColumnData(
             userType: userType,
             flags: flags,
             dataType: dataType,
@@ -104,6 +104,10 @@ extension TDSTokenOperations {
             precision: precision,
             scale: scale
         )
+        // An encrypted output parameter carries CryptoMetaData after its TYPE_INFO.
+        if columnEncryption, flags & TDSTokens.ColMetadataToken.ColumnData.encryptedFlag != 0 {
+            metadata.encryption = try Self.readCryptoMetadata(from: &buffer, cekTable: [])
+        }
 
         let value = try readTypedValue(from: &buffer, column: metadata, allocator: allocator)
         streamParser.position = buffer.readerIndex

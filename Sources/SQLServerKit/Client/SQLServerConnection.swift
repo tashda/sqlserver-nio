@@ -51,6 +51,11 @@ public final class SQLServerConnection: @unchecked Sendable {
         /// registered for (an IP address, a load balancer). `MSSQLSvc/<hostname>:<port>` when nil.
         /// A name without `@REALM` is in the login's realm.
         public var serverSPN: String?
+        /// Always Encrypted: ask SQL Server to describe encrypted columns, like ODBC's
+        /// `ColumnEncryption=Enabled` and JDBC's `columnEncryptionSetting`. The driver holds no column
+        /// master keys, so values stay encrypted: such columns report `encryption` (their plaintext
+        /// type, deterministic or randomized, the key path) and keep their ciphertext. Off by default.
+        public var columnEncryption: Bool = false
 
         public init(
             hostname: String,
@@ -114,6 +119,10 @@ public final class SQLServerConnection: @unchecked Sendable {
     /// The network packet size the server accepted at login (`packetSize` asks for one); requests
     /// are sent in packets of this size.
     public var negotiatedPacketSize: Int { base.negotiatedPacketLength }
+
+    /// Whether SQL Server agreed to describe Always Encrypted columns (`columnEncryption` was
+    /// asked for and the server supports it, SQL Server 2016 and later).
+    public var isColumnEncryptionEnabled: Bool { base.isColumnEncryptionNegotiated }
 
     /// Completes when the physical connection closes, for any reason. Use it
     /// to tell the user at once that a session was lost, rather than on the

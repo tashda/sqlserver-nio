@@ -13,7 +13,7 @@ extension TDSConnection {
             self.logger.debug("[login] Coalescing to existing in-flight/completed login future")
             return existing
         }
-        let payload: TDSMessages.Login7Message
+        var payload: TDSMessages.Login7Message
         var authenticator: (any TDSAuthenticator)?
 
         switch configuration.authentication {
@@ -72,6 +72,7 @@ extension TDSConnection {
                 packetSize: configuration.packetSize
             )
         }
+        payload.requestColumnEncryption = configuration.columnEncryption
         // Create a promise and publish immediately to prevent a second LoginRequest enqueuing.
         let promise: EventLoopPromise<Void> = self.eventLoop.makePromise()
         self._loginFuture = promise.futureResult

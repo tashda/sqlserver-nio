@@ -56,6 +56,8 @@ sqlserver://labuser%40LAB.TEST@10.0.0.5:1433/master?authentication=kerberos&serv
 - `trustServerCertificate=true` accepts any certificate. `caFile` validates the server's
   certificate against that CA. Neither means the system's trust store.
 - `hostNameInCertificate`: the name to check the certificate against, when it differs from the host.
+- `columnEncryption=true`: connections negotiate Always Encrypted metadata (ODBC's
+  `ColumnEncryption=Enabled`); run any suite with it to check that every result still parses.
 - `authentication=kerberos`: the user is the principal (`user@REALM`). With a password in the URL
   the driver gets the ticket itself; without one it uses the ticket in the cache (`kinit` first).
   The driver connects to the URL's host and asks for a ticket for `MSSQLSvc/<serviceHost>:<port>`;

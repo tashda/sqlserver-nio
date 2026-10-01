@@ -20,6 +20,8 @@ public struct TDSLoginConfiguration: Sendable {
     public var packetSize: Int
     /// The Kerberos service principal name to ask a ticket for, instead of `MSSQLSvc/<serverName>:<port>`.
     public var serverSPN: String?
+    /// Ask the server to describe Always Encrypted columns (COLUMNENCRYPTION).
+    public var columnEncryption: Bool
 
     public init(
         serverName: String,
@@ -29,7 +31,8 @@ public struct TDSLoginConfiguration: Sendable {
         readOnlyIntent: Bool = false,
         applicationName: String = TDSMessages.Login7Message.defaultApplicationName,
         packetSize: Int = TDSPacket.requestedPacketLength,
-        serverSPN: String? = nil
+        serverSPN: String? = nil,
+        columnEncryption: Bool = false
     ) {
         self.serverName = serverName
         self.port = port
@@ -39,5 +42,6 @@ public struct TDSLoginConfiguration: Sendable {
         self.applicationName = applicationName
         self.packetSize = packetSize
         self.serverSPN = serverSPN
+        self.columnEncryption = columnEncryption
     }
 }

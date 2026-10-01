@@ -7,6 +7,9 @@ public class TDSTokenOperations: @unchecked Sendable {
     private let logger: Logger
     internal var state: State = .expectingColMetadata
     internal var colMetadata: TDSTokens.ColMetadataToken?
+    /// Set once the server acknowledged COLUMNENCRYPTION: every COLMETADATA then carries a
+    /// CekTable, and encrypted columns and return values carry CryptoMetaData.
+    public var columnEncryption = false
     internal let allocator = ByteBufferAllocator()
     internal static let generalTokenTypes: Set<TDSTokens.TokenType> = [
         .envchange,
@@ -116,7 +119,7 @@ public class TDSTokenOperations: @unchecked Sendable {
             _ = streamParser.readUInt8()
             var bufferCopy = streamParser.buffer
             bufferCopy.moveReaderIndex(to: streamParser.position)
-            let colMetadataToken = try TDSTokenOperations.parseColMetadataToken(from: &bufferCopy)
+            let colMetadataToken = try TDSTokenOperations.parseColMetadataToken(from: &bufferCopy, columnEncryption: columnEncryption)
             self.colMetadata = colMetadataToken
             streamParser.position = bufferCopy.readerIndex
             state = .expectingRow
@@ -269,7 +272,8 @@ public class TDSTokenOperations: @unchecked Sendable {
                 break
             }
 
-            guard let ackLength = try? buffer.readUShort() else {
+            // FeatureAckDataLen is a DWORD (MS-TDS 2.2.7.11).
+            guard let ackLength: UInt32 = buffer.readInteger(endianness: .little) else {
                 throw TDSError.needMoreData
             }
 

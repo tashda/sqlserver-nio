@@ -55,6 +55,12 @@ public struct SQLServerBulkCopyOptions: Sendable {
     public var keepNulls: Bool
     /// Take a table lock for the duration of each batch (faster, blocks other writers).
     public var tableLock: Bool
+    /// Always Encrypted: copy ciphertext into encrypted columns as it is, without the key (bulk load
+    /// only), as SqlBulkCopy's AllowEncryptedValueModifications: for moving encrypted data between
+    /// tables or databases. Use a connection without `columnEncryption`, on which encrypted columns
+    /// read and write as `varbinary`; the database user needs ALLOW_ENCRYPTED_VALUE_MODIFICATIONS.
+    /// Values copied this way are not checked: wrong bytes cannot be decrypted later.
+    public var allowEncryptedValueModifications: Bool = false
 
     public init(
         table: String,

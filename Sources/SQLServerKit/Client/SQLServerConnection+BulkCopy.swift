@@ -43,7 +43,7 @@ extension SQLServerConnection {
             var copied = 0
             var batches = 0
             for chunk in rows.chunked(into: options.batchSize) {
-                var writer = TDSBulkLoadWriter(columns: wire.map(\.column))
+                var writer = TDSBulkLoadWriter(columns: wire.map(\.column), columnEncryption: base.isColumnEncryptionNegotiated)
                 for row in chunk {
                     try writer.appendRow(zip(destination.values(of: row), wire).map { try $1.encode($0) })
                 }
@@ -112,7 +112,10 @@ extension SQLServerConnection {
                 return "\(name) \(SQLServerConnection.bulkTypeName(wire.column)!) COLLATE \(WireColumn.textCollationName)"
             }
             var declaration = "\(name) \(SQLServerConnection.bulkTypeName(wire.column)!)"
-            if let collation = collations[wire.column.colName.lowercased()], collation.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) {
+            // Only character types take a collation: an Always Encrypted column keeps its plaintext
+            // collation in sys.columns but is varbinary ciphertext on the wire.
+            let isCharacter = [.char, .varchar, .nchar, .nvarchar, .charLegacy, .varcharLegacy].contains(wire.column.dataType)
+            if isCharacter, let collation = collations[wire.column.colName.lowercased()], collation.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) {
                 declaration += " COLLATE \(collation)"
             }
             return declaration
@@ -244,6 +247,7 @@ extension SQLServerConnection {
         if options.checkConstraints { hints.append("CHECK_CONSTRAINTS") }
         if options.fireTriggers { hints.append("FIRE_TRIGGERS") }
         if options.keepNulls { hints.append("KEEP_NULLS") }
+        if options.allowEncryptedValueModifications { hints.append("ALLOW_ENCRYPTED_VALUE_MODIFICATIONS") }
         let with = hints.isEmpty ? "" : " WITH (\(hints.joined(separator: ", ")))"
         return "INSERT BULK \(options.qualifiedTableName) (\(declarations.joined(separator: ", ")))\(with)"
     }

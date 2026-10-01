@@ -161,7 +161,8 @@ extension SQLServerConnection {
                         applicationName: cfg.applicationName,
                         packetSize: cfg.packetSize,
                         // A redirect names another server, whose SPN follows from its name.
-                        serverSPN: redirects == 0 ? cfg.serverSPN : nil
+                        serverSPN: redirects == 0 ? cfg.serverSPN : nil,
+                        columnEncryption: cfg.columnEncryption
                     )
                     return connection.login(configuration: login)
                         .flatMap { () -> EventLoopFuture<TDSConnection> in

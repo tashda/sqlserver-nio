@@ -82,6 +82,8 @@ import Testing
         #expect(try TestServer.parse("sqlserver://sa:p@h/?encrypt=false").encrypt == .optional)
         #expect(try TestServer.parse("sqlserver://sa:p@h/?Encrypt=True").encrypt == .mandatory)
         #expect(try TestServer.parse("sqlserver://sa:p@h/?hostNameInCertificate=sql.corp").hostNameInCertificate == "sql.corp")
+        #expect(try TestServer.parse("sqlserver://sa:p@h/?columnEncryption=Enabled").configuration.columnEncryption)
+        #expect(try !TestServer.parse("sqlserver://sa:p@h/").configuration.columnEncryption)
     }
 
     @Test(arguments: [

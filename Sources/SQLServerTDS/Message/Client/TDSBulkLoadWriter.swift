@@ -12,15 +12,19 @@ public struct TDSBulkLoadWriter {
     public private(set) var buffer: ByteBuffer
     public private(set) var rowCount = 0
 
-    public init(columns: [TDSColumnMetadata], allocator: ByteBufferAllocator = ByteBufferAllocator()) {
+    /// - Parameter columnEncryption: the connection negotiated COLUMNENCRYPTION, so COLMETADATA
+    ///   carries a CekTable (empty: the client sends no encrypted values).
+    public init(columns: [TDSColumnMetadata], columnEncryption: Bool = false, allocator: ByteBufferAllocator = ByteBufferAllocator()) {
         self.columns = columns
         self.buffer = allocator.buffer(capacity: 64 * 1024)
-        Self.writeColMetadata(columns, into: &buffer)
+        Self.writeColMetadata(columns, columnEncryption: columnEncryption, into: &buffer)
     }
 
     /// Whether the bulk load can carry this column type. Legacy LOBs need text pointers, and
     /// `sql_variant` and CLR types need values the client cannot produce from plain values.
     public static func supports(_ column: TDSColumnMetadata) -> Bool {
+        // An Always Encrypted column described as such needs values encrypted with its key.
+        guard column.encryption == nil else { return false }
         switch column.dataType {
         case .text, .nText, .image, .sqlVariant, .clrUdt, .null, .json, .vector:
             return false
@@ -52,12 +56,15 @@ public struct TDSBulkLoadWriter {
 
     // MARK: - COLMETADATA
 
-    static func writeColMetadata(_ columns: [TDSColumnMetadata], into buffer: inout ByteBuffer) {
+    static func writeColMetadata(_ columns: [TDSColumnMetadata], columnEncryption: Bool = false, into buffer: inout ByteBuffer) {
         buffer.writeInteger(TDSTokens.TokenType.colMetadata.rawValue)
         buffer.writeInteger(UInt16(columns.count), endianness: .little)
+        if columnEncryption {
+            buffer.writeInteger(UInt16(0), endianness: .little) // CekTable: no keys
+        }
         for column in columns {
             buffer.writeInteger(column.userType, endianness: .little)
-            buffer.writeInteger(column.flags, endianness: .little)
+            buffer.writeInteger(column.flags & ~TDSTokens.ColMetadataToken.ColumnData.encryptedFlag, endianness: .little)
             writeTypeInfo(column, into: &buffer)
             let name = Array(column.colName.utf16)
             buffer.writeInteger(UInt8(min(name.count, 128)))

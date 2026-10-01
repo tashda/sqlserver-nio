@@ -23,7 +23,8 @@ import SQLServerKit
 /// User and password are percent-encoded. The path names the database to connect to first
 /// (`master` when empty). Query keys: `encrypt` (`optional`, `mandatory`, `strict`; also
 /// `true`/`false`), `trustServerCertificate`, `caFile`, `hostNameInCertificate`,
-/// `authentication=kerberos`, `serviceHost` and `krb5Config`.
+/// `authentication=kerberos`, `serviceHost` and `krb5Config`, and `columnEncryption=true` (Always
+/// Encrypted metadata; ODBC's `ColumnEncryption=Enabled`).
 public struct TestServer: Sendable {
     public static let defaultVariable = "SQLSERVER_TEST_URL"
     public static let tlsVariable = "SQLSERVER_TEST_TLS_URL"
@@ -58,6 +59,8 @@ public struct TestServer: Sendable {
     public let hostNameInCertificate: String?
     /// Set for `authentication=kerberos`.
     public let kerberos: Kerberos?
+    /// `columnEncryption=true`: connections negotiate Always Encrypted metadata.
+    public let columnEncryption: Bool
 
     /// The server for the running test, set by the `.testServer` trait.
     @TaskLocal public static var current: TestServer?
@@ -163,6 +166,12 @@ public struct TestServer: Sendable {
         case let other?: throw invalid("authentication=\(other) is not kerberos")
         }
         if kerberos == nil, username.isEmpty { throw invalid("there is no user") }
+        let columnEncryption: Bool
+        switch query["columnencryption"]?.lowercased() {
+        case nil, "", "false", "disabled", "no": columnEncryption = false
+        case "true", "enabled", "yes": columnEncryption = true
+        case let other?: throw invalid("columnEncryption=\(other) is not true or false")
+        }
         let path = components.path.hasPrefix("/") ? String(components.path.dropFirst()) : components.path
         let database = path.removingPercentEncoding ?? path
 
@@ -177,7 +186,8 @@ public struct TestServer: Sendable {
             trustServerCertificate: trust,
             caFile: query["cafile"].flatMap { $0.isEmpty ? nil : $0 },
             hostNameInCertificate: query["hostnameincertificate"].flatMap { $0.isEmpty ? nil : $0 },
-            kerberos: kerberos
+            kerberos: kerberos,
+            columnEncryption: columnEncryption
         )
     }
 
@@ -208,6 +218,7 @@ public struct TestServer: Sendable {
             hostNameInCertificate: hostNameInCertificate
         )
         configuration.transparentNetworkIPResolution = false
+        configuration.columnEncryption = columnEncryption
         if let serviceHost = kerberos?.serviceHost {
             configuration.serverSPN = "MSSQLSvc/\(serviceHost):\(port)"
         }

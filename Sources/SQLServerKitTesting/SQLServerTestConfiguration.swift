@@ -67,6 +67,7 @@ public func makeSQLServerConnectionConfiguration(_ variable: String = TestServer
     )
     cfg.transparentNetworkIPResolution = false
     cfg.serverSPN = server?.configuration.serverSPN
+    cfg.columnEncryption = server?.columnEncryption ?? false
     return cfg
 }
 

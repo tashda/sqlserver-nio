@@ -277,7 +277,8 @@ extension SQLServerConnection {
                         precision: Int(column.precision),
                         scale: Int(column.scale),
                         flags: column.flags,
-                        cellType: SQLServerCellType(metadata: column)
+                        cellType: SQLServerCellType(metadata: column),
+                        encryption: column.encryption.map(SQLServerColumnEncryption.init)
                     )
                 }
                 batcher.yield(.metadata(columns))

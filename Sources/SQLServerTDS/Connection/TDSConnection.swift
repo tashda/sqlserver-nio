@@ -60,6 +60,7 @@ public final class TDSConnection {
     private var _currentDatabase: String?
     private var _routingTarget: TDSRoutingTarget?
     private var _negotiatedPacketLength = TDSPacket.defaultPacketLength
+    private var _columnEncryptionNegotiated = false
 
     // Stall detection support
     var lastStallSnapshot: String = ""
@@ -131,6 +132,15 @@ public final class TDSConnection {
 
     internal func updateNegotiatedPacketLength(_ length: Int) {
         sessionLock.withLock { _negotiatedPacketLength = length }
+    }
+
+    /// Whether the server acknowledged COLUMNENCRYPTION at login (Always Encrypted metadata).
+    public var isColumnEncryptionNegotiated: Bool {
+        sessionLock.withLock { _columnEncryptionNegotiated }
+    }
+
+    internal func updateColumnEncryptionNegotiated(_ negotiated: Bool) {
+        sessionLock.withLock { _columnEncryptionNegotiated = negotiated }
     }
 
     internal func updateCurrentDatabase(_ database: String) {
