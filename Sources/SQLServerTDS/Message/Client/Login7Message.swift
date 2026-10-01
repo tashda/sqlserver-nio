@@ -52,11 +52,11 @@ extension TDSMessages {
                 (Self.clientHostName, false),
                 (username, false),
                 (passwordField, true),
-                ("", false),
+                (String(applicationName.prefix(128)), false), // AppName: APP_NAME(), program_name
                 (serverName, false),
                 ("", false), // extension field (patched below for fedAuth)
-                (String(applicationName.prefix(128)), false),
-                ("", false),
+                ("sqlserver-nio", false), // CltIntName: client_interface_name
+                ("", false), // Language
                 (database, false)
             ]
 
