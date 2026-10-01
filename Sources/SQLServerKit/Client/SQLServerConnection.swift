@@ -46,6 +46,11 @@ public final class SQLServerConnection: @unchecked Sendable {
         /// round trips for big results, scripts and imports; the server may accept less (its
         /// `network packet size` option). Defaults to 8000, like Microsoft's current drivers.
         public var packetSize: Int = 8000
+        /// The Kerberos service principal name for Windows authentication, like ODBC's `ServerSPN`
+        /// and JDBC's `serverSpn`: for a server reached by another address than the name its SPN is
+        /// registered for (an IP address, a load balancer). `MSSQLSvc/<hostname>:<port>` when nil.
+        /// A name without `@REALM` is in the login's realm.
+        public var serverSPN: String?
 
         public init(
             hostname: String,

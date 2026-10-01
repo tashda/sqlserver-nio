@@ -159,7 +159,9 @@ extension SQLServerConnection {
                         authentication: cfg.login.authentication.tdsAuthentication,
                         readOnlyIntent: cfg.readOnlyIntent,
                         applicationName: cfg.applicationName,
-                        packetSize: cfg.packetSize
+                        packetSize: cfg.packetSize,
+                        // A redirect names another server, whose SPN follows from its name.
+                        serverSPN: redirects == 0 ? cfg.serverSPN : nil
                     )
                     return connection.login(configuration: login)
                         .flatMap { () -> EventLoopFuture<TDSConnection> in

@@ -53,12 +53,23 @@ final class KerberosAuthenticator: TDSAuthenticator, @unchecked Sendable {
     private var credentials: gss_cred_id_t?
     private let logger: Logger
 
-    init(username: String, password: String, domain: String?, server: String, port: Int, logger: Logger) throws {
+    init(
+        username: String,
+        password: String,
+        domain: String?,
+        server: String,
+        port: Int,
+        servicePrincipalName: String? = nil,
+        logger: Logger
+    ) throws {
         self.logger = logger
         // Microsoft's drivers ask for MSSQLSvc/<host>:<port> as a Kerberos principal name, in the
-        // login's realm when one is given (otherwise the default realm).
-        let spn = "MSSQLSvc/\(server):\(port)"
-        if let domain, !domain.isEmpty {
+        // login's realm when one is given (otherwise the default realm). A configured SPN (ODBC's
+        // ServerSPN) replaces the name, for a server reached by another address than its own.
+        let spn = servicePrincipalName ?? "MSSQLSvc/\(server):\(port)"
+        if spn.contains("@") {
+            self.servicePrincipalName = spn
+        } else if let domain, !domain.isEmpty {
             self.servicePrincipalName = "\(spn)@\(domain.uppercased())"
         } else {
             self.servicePrincipalName = spn
@@ -304,7 +315,15 @@ public enum KerberosError: Error, Sendable, CustomStringConvertible {
 }
 
 final class KerberosAuthenticator: TDSAuthenticator, @unchecked Sendable {
-    init(username: String, password: String, domain: String?, server: String, port: Int, logger: Logger) throws {
+    init(
+        username: String,
+        password: String,
+        domain: String?,
+        server: String,
+        port: Int,
+        servicePrincipalName: String? = nil,
+        logger: Logger
+    ) throws {
         throw KerberosError.unsupported
     }
 

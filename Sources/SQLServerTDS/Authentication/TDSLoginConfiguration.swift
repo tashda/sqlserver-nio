@@ -18,6 +18,8 @@ public struct TDSLoginConfiguration: Sendable {
     public var applicationName: String
     /// The network packet size to ask for at login (512...32767; the server may accept less).
     public var packetSize: Int
+    /// The Kerberos service principal name to ask a ticket for, instead of `MSSQLSvc/<serverName>:<port>`.
+    public var serverSPN: String?
 
     public init(
         serverName: String,
@@ -26,7 +28,8 @@ public struct TDSLoginConfiguration: Sendable {
         authentication: TDSAuthentication,
         readOnlyIntent: Bool = false,
         applicationName: String = TDSMessages.Login7Message.defaultApplicationName,
-        packetSize: Int = TDSPacket.requestedPacketLength
+        packetSize: Int = TDSPacket.requestedPacketLength,
+        serverSPN: String? = nil
     ) {
         self.serverName = serverName
         self.port = port
@@ -35,5 +38,6 @@ public struct TDSLoginConfiguration: Sendable {
         self.readOnlyIntent = readOnlyIntent
         self.applicationName = applicationName
         self.packetSize = packetSize
+        self.serverSPN = serverSPN
     }
 }

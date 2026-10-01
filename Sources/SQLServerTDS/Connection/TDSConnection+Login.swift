@@ -38,6 +38,7 @@ extension TDSConnection {
                     domain: domain,
                     server: configuration.serverName,
                     port: configuration.port,
+                    servicePrincipalName: configuration.serverSPN,
                     logger: logger
                 )
                 let loginUsername = domain.flatMap { "\($0)\\\(username)" } ?? username
@@ -121,12 +122,13 @@ extension TDSConnection {
         domain: String?,
         server: String,
         port: Int,
+        servicePrincipalName: String? = nil,
         logger: Logger
     ) throws -> (any TDSAuthenticator, Data) {
         do {
             let kerberos = try KerberosAuthenticator(
                 username: username, password: password, domain: domain,
-                server: server, port: port, logger: logger
+                server: server, port: port, servicePrincipalName: servicePrincipalName, logger: logger
             )
             let token = try kerberos.initialToken()
             logger.debug("[login] Windows authentication: Kerberos")
