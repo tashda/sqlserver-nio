@@ -65,7 +65,9 @@ extension SQLServerMetadataOperations {
                     includeComments: includeComments
                 )
             } else if isView || !useStoredProc {
-                baseSource = self.loadColumnsFromCatalog(database: resolvedDatabase, schema: schema, table: table, isView: isView, includeDefaultMetadata: false, includeComments: includeComments)
+                // Tables keep their defaults, identity seed and increment and computed definitions
+                // when comments are asked for too (the table designer asks for both).
+                baseSource = self.loadColumnsFromCatalog(database: resolvedDatabase, schema: schema, table: table, isView: isView, includeDefaultMetadata: !isView, includeComments: includeComments)
             } else {
                 baseSource = self.loadColumnsUsingStoredProcedure(database: resolvedDatabase, schema: schema, table: table).flatMap { cols in
                     guard includeComments else { return self.eventLoop.makeSucceededFuture(cols) }
@@ -104,7 +106,7 @@ extension SQLServerMetadataOperations {
                 fallbackSource = self.listColumnsForSchema(database: resolvedDatabase, schema: schema, includeComments: includeComments).map(filterTable)
             } else if self.configuration.preferStoredProcedureColumns {
                 fallbackSource = self.listColumnsForSchema(database: resolvedDatabase, schema: schema, includeComments: includeComments).map(filterTable).flatMapError { _ in
-                    self.loadColumnsFromCatalog(database: resolvedDatabase, schema: schema, table: table, isView: false, includeDefaultMetadata: false, includeComments: includeComments)
+                    self.loadColumnsFromCatalog(database: resolvedDatabase, schema: schema, table: table, isView: false, includeDefaultMetadata: true, includeComments: includeComments)
                 }
             } else {
                 fallbackSource = self.listColumnsForSchema(database: resolvedDatabase, schema: schema, includeComments: includeComments).map(filterTable).flatMapError { _ in
