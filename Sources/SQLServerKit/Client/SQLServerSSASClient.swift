@@ -3,7 +3,7 @@ import Foundation
 /// Placeholder client for SQL Server Analysis Services (SSAS).
 ///
 /// SSAS uses the XMLA protocol over HTTP/TCP, which is outside the scope of
-/// the native TDS protocol implemented by `sqlserver-nio`. Future implementations
+/// the native TDS protocol implemented by `echo-sqlserver`. Future implementations
 /// would require a dedicated XMLA client library.
 public final class SQLServerSSASClient: @unchecked Sendable {
     private let client: SQLServerClient

@@ -1,51 +1,19 @@
 #!/usr/bin/env python3
+"""Writes the release notes for one release of a package repository.
+
+The same file is used by every package repository (see .github/workflows/release.yml): commits are
+grouped by what they touch, taken from the paths themselves, so no repository needs a table of its
+own. Sources/<Target>/ gives one group per target; Tests, CI and packaging, and documentation get a
+group each.
+"""
 from __future__ import annotations
 
 import argparse
 import os
 import subprocess
-from collections import OrderedDict
-from dataclasses import dataclass
+from collections import Counter, OrderedDict
 
-
-@dataclass(frozen=True)
-class Category:
-    name: str
-    patterns: tuple[str, ...]
-
-
-REPO_CATEGORIES: dict[str, list[Category]] = {
-    "echo-sqlserver": [
-        Category("TDS Protocol", ("Sources/SQLServerTDS/", "Tests/TDSLayerTests/")),
-        Category("Client & Connections", ("Sources/SQLServerKit/Client/", "Sources/SQLServerKit/Connection/")),
-        Category("Metadata & Admin APIs", ("Sources/SQLServerKit/Metadata/", "Sources/SQLServerKit/Admin/", "Sources/SQLServerKit/Schema/")),
-        Category("Transactions & Queries", ("Sources/SQLServerKit/Transactions/", "Sources/SQLServerKit/Query", "Sources/SQLServerKit/Statement")),
-        Category("Testing & Fixtures", ("Sources/SQLServerKitTesting/", "Sources/SQLServerFixtureTool/", "Tests/")),
-        Category("CI & Release", (".github/", "Package.swift", "scripts/")),
-        Category("Documentation", ("README", "TEST_FIXTURES.md", "CHANGELOG", "docs/")),
-    ],
-    "postgres-wire": [
-        Category("Wire Protocol", ("Sources/PostgresWire/", "Tests/PostgresWireTests/")),
-        Category("Client APIs", ("Sources/PostgresKit/",)),
-        Category("Testing & Fixtures", ("Sources/PostgresKitTesting/", "Sources/PostgresFixtureTool/", "Tests/PostgresKitTests/")),
-        Category("CI & Release", (".github/", "Package.swift", "scripts/")),
-        Category("Documentation", ("README", "TEST_FIXTURES.md", "CHANGELOG", "docs/")),
-    ],
-    "echo": [
-        Category("Query Workspace", ("Echo/Sources/Features/QueryWorkspace/", "EchoTests/Integration/MSSQL", "EchoTests/Integration/Postgres", "EchoTests/Services/")),
-        Category("Connection & Database Engine", ("Echo/Sources/Core/DatabaseEngine/", "Echo/Sources/Features/ConnectionVault/")),
-        Category("App Host & Windowing", ("Echo/Sources/Features/AppHost/", "Echo/Sources/Shared/ActivityEngine/")),
-        Category("Design System & Shared UI", ("Echo/Sources/Shared/DesignSystem/", "Echo/Sources/UI/")),
-        Category("Operations & Tooling", ("Echo/Sources/Features/Maintenance/", "Echo/Sources/Features/Import/", "Echo/Sources/Features/BackupRestore/", "Echo/Sources/Features/ActivityMonitor/")),
-        Category("Testing & CI", (".github/", "EchoTests/", "*.xctestplan", "TEST_FIXTURES.md")),
-        Category("Documentation", ("AGENTS.md", "CLAUDE.md", "SSMS_FEATURE_GAP.md", "VISUAL_GUIDELINES.md")),
-    ],
-    "echosense": [
-        Category("Shared Database Models", ("Sources/",)),
-        Category("Testing & CI", ("Tests/", ".github/", "Package.swift", "scripts/")),
-        Category("Documentation", ("README", "CHANGELOG", "docs/")),
-    ],
-}
+DOCUMENTATION_SUFFIXES = (".md", ".docc", ".txt")
 
 
 def git(*args: str) -> str:
@@ -54,66 +22,66 @@ def git(*args: str) -> str:
 
 
 def git_lines(*args: str) -> list[str]:
-    output = git(*args)
-    return [line for line in output.splitlines() if line.strip()]
+    return [line for line in git(*args).splitlines() if line.strip()]
 
 
-def path_matches(path: str, pattern: str) -> bool:
-    if pattern.startswith("*."):
-        return path.endswith(pattern[1:])
-    return path.startswith(pattern) or path == pattern
+def category_of(path: str) -> str:
+    parts = path.split("/")
+    if parts[0] == "Sources" and len(parts) > 2:
+        return parts[1]
+    if parts[0] == "Sources":
+        return "Sources"
+    if parts[0] == "Tests" or parts[0].endswith("Tests"):
+        return "Tests"
+    if parts[0] in (".github", "scripts") or path in ("Package.swift", "Package.resolved"):
+        return "CI & Packaging"
+    if parts[0] == "docs" or ".docc" in path or path.endswith(DOCUMENTATION_SUFFIXES):
+        return "Documentation"
+    return "Other"
 
 
-def categorize(files: list[str], repo_key: str) -> str:
-    categories = REPO_CATEGORIES.get(repo_key, [])
-    best_name = "Other Changes"
-    best_score = -1
-    for category in categories:
-        score = sum(1 for path in files for pattern in category.patterns if path_matches(path, pattern))
-        if score > best_score:
-            best_name = category.name
-            best_score = score
-    return best_name
+def category_of_commit(files: list[str]) -> str:
+    counts = Counter(category_of(path) for path in files)
+    if not counts:
+        return "Other"
+    best = max(counts.values())
+    # First path wins a tie, so the order is stable.
+    for path in files:
+        name = category_of(path)
+        if counts[name] == best:
+            return name
+    return "Other"
 
 
 def short_paths(files: list[str], limit: int = 4) -> str:
-    if not files:
-        return ""
-    preview = files[:limit]
-    rendered = ", ".join(f"`{path}`" for path in preview)
-    remainder = len(files) - len(preview)
-    if remainder > 0:
-        rendered += f", and {remainder} more"
-    return rendered
+    preview = ", ".join(f"`{path}`" for path in files[:limit])
+    remainder = len(files) - limit
+    return f"{preview}, and {remainder} more" if remainder > 0 else preview
 
 
 def commit_range(previous_tag: str | None) -> str | None:
-    if previous_tag:
-        verified = subprocess.run(["git", "rev-parse", "--verify", "--quiet", previous_tag], capture_output=True, text=True)
-        if verified.returncode == 0:
-            return f"{previous_tag}..HEAD"
-    return None
+    if not previous_tag:
+        return None
+    verified = subprocess.run(["git", "rev-parse", "--verify", "--quiet", previous_tag], capture_output=True, text=True)
+    return f"{previous_tag}..HEAD" if verified.returncode == 0 else None
 
 
-def load_commits(range_spec: str | None, repo_key: str) -> OrderedDict[str, list[tuple[str, list[str]]]]:
+def load_commits(range_spec: str | None) -> OrderedDict[str, list[tuple[str, list[str]]]]:
     if range_spec:
         hashes = git_lines("rev-list", "--reverse", "--no-merges", range_spec)
     else:
         hashes = git_lines("rev-list", "--reverse", "--max-count=30", "--no-merges", "HEAD")
-
     grouped: OrderedDict[str, list[tuple[str, list[str]]]] = OrderedDict()
     for commit_hash in hashes:
         subject = git("show", "-s", "--format=%s", commit_hash)
         files = git_lines("show", "--format=", "--name-only", "--diff-filter=ACDMRTUXB", commit_hash)
-        category = categorize(files, repo_key)
-        grouped.setdefault(category, []).append((subject, files))
+        grouped.setdefault(category_of_commit(files), []).append((subject, files))
     return grouped
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--repo-key", required=True, choices=sorted(REPO_CATEGORIES.keys()))
-    parser.add_argument("--repo-name", required=True)
+    parser.add_argument("--repo-name", default=os.environ.get("GITHUB_REPOSITORY", "").split("/")[-1])
     parser.add_argument("--new-tag", required=True)
     parser.add_argument("--previous-tag", default="")
     parser.add_argument("--output", required=True)
@@ -123,38 +91,29 @@ def main() -> None:
     range_spec = commit_range(previous_tag)
     if range_spec is None:
         previous_tag = None
-    grouped = load_commits(range_spec, args.repo_key)
+    grouped = load_commits(range_spec)
     commit_count = sum(len(entries) for entries in grouped.values())
     repository = os.environ.get("GITHUB_REPOSITORY", "")
 
-    lines: list[str] = [
-        f"# {args.repo_name} {args.new_tag}",
-        "",
-        "## Summary",
-        "",
-    ]
-
+    lines = [f"# {args.repo_name} {args.new_tag}", "", "## Summary", ""]
     if previous_tag:
         lines.append(f"- Release range: `{previous_tag}` -> `{args.new_tag}`")
     else:
-        lines.append(f"- Release range: initial curated release snapshot for `{args.new_tag}`")
+        lines.append(f"- First release: the latest {commit_count} commits are listed")
     lines.append(f"- Commits included: {commit_count}")
     if repository and previous_tag:
         lines.append(f"- Compare: https://github.com/{repository}/compare/{previous_tag}...{args.new_tag}")
     lines.extend(["", "## Detailed Changes", ""])
 
     if not grouped:
-        lines.extend(["- No application changes were detected in the selected range.", ""])
+        lines.extend(["- No changes were detected in the selected range.", ""])
     else:
         for category, entries in grouped.items():
-            if not entries:
-                continue
             lines.extend([f"### {category}", ""])
             for subject, files in entries:
                 lines.append(f"- {subject}")
-                touched = short_paths(files)
-                if touched:
-                    lines.append(f"  - Touched: {touched}")
+                if files:
+                    lines.append(f"  - Touched: {short_paths(files)}")
             lines.append("")
 
     with open(args.output, "w", encoding="utf-8") as handle:

@@ -3,7 +3,7 @@ import Foundation
 /// Placeholder client for SQL Server Reporting Services (SSRS).
 ///
 /// SSRS uses a REST API (ReportServer web service / SSRS REST API v2.0),
-/// which is outside the scope of the native TDS protocol implemented by `sqlserver-nio`.
+/// which is outside the scope of the native TDS protocol implemented by `echo-sqlserver`.
 public final class SQLServerSSRSClient: @unchecked Sendable {
     private let client: SQLServerClient
     

@@ -135,7 +135,7 @@ These are skipped without their variable.
 
 ## CI
 
-`.github/workflows/test.yml` runs the unit tests on every push, then the integration tests against
+`.github/workflows/ci.yml` runs the unit tests on every push, then the integration tests against
 GitHub service containers for SQL Server 2017, 2019, 2022 and 2025 (with AdventureWorks restored),
 the parser with every packet split into 7-byte fragments (`TDS_DEBUG_FRAGMENT_SIZE=7`), TLS
 (Mandatory on 2022, Strict on 2025) and network faults through Toxiproxy, each with

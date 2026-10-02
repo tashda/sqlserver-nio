@@ -98,13 +98,13 @@ final class DatabaseMailConfigTests: DatabaseMailTestBase {
         try await mailClient.sendTestEmail(
             profileName: profileName,
             recipients: "test@test.local",
-            subject: "sqlserver-nio test",
+            subject: "echo-sqlserver test",
             body: "Automated test email from DatabaseMailConfigTests"
         )
 
         // Verify the email appeared in the queue
         let items = try await mailClient.mailQueue(limit: 10)
-        let testItem = items.first(where: { $0.subject == "sqlserver-nio test" })
+        let testItem = items.first(where: { $0.subject == "echo-sqlserver test" })
         XCTAssertNotNil(testItem, "Test email should appear in the mail queue")
         XCTAssertEqual(testItem?.recipients, "test@test.local")
     }

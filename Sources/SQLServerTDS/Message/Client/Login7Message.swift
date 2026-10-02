@@ -24,7 +24,7 @@ extension TDSMessages {
             return String(name.prefix(128))
         }()
 
-        public static let defaultApplicationName = "sqlserver-nio"
+        public static let defaultApplicationName = "echo-sqlserver"
 
         var username: String
         var password: String
@@ -57,7 +57,7 @@ extension TDSMessages {
                 (String(applicationName.prefix(128)), false), // AppName: APP_NAME(), program_name
                 (serverName, false),
                 ("", false), // extension field (patched below for fedAuth)
-                ("sqlserver-nio", false), // CltIntName: client_interface_name
+                ("echo-sqlserver", false), // CltIntName: client_interface_name
                 ("", false), // Language
                 (database, false)
             ]

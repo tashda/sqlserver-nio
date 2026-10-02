@@ -22,7 +22,7 @@ final class Login7FieldTests: XCTestCase {
         XCTAssertEqual(try field(1, of: buffer), "sa")
         XCTAssertEqual(try field(3, of: buffer), "Echo")          // AppName: APP_NAME(), program_name
         XCTAssertEqual(try field(4, of: buffer), "sql01")         // ServerName
-        XCTAssertEqual(try field(6, of: buffer), "sqlserver-nio") // CltIntName: client_interface_name
+        XCTAssertEqual(try field(6, of: buffer), "echo-sqlserver") // CltIntName: client_interface_name
         XCTAssertEqual(try field(7, of: buffer), "")              // Language
         XCTAssertEqual(try field(8, of: buffer), "Sales")         // Database
     }

@@ -1,4 +1,4 @@
-name: "Tests"
+name: CI
 
 # Tests find their servers through URL variables (TESTING.md). Here each server is a GitHub
 # service container; SQLSERVER_TEST_REQUIRED=1 makes a test whose variable is missing fail, so a
@@ -13,9 +13,9 @@ env:
 
 on:
   push:
-    branches-ignore: [stall-hunt]
+    branches: [dev, main]
   pull_request:
-    branches: [main, dev]
+    branches: [dev, main]
   workflow_dispatch:
 
 concurrency:

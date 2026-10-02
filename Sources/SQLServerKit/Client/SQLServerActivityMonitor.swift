@@ -9,7 +9,7 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
     private let client: SQLServerClient
     private let waitIgnoreList: Set<String>
     private let baselineLock = NIOLock()
-    private let logger = Logger(label: "dk.tippr.sqlserver-nio.activity-monitor")
+    private let logger = Logger(label: "tds.sqlserver.activity-monitor")
 
     // Baselines for delta computation across snapshots
     private var lastWaits: [String: SQLServerWaitStat] = [:]

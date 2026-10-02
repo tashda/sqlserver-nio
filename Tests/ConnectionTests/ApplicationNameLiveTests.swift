@@ -24,6 +24,6 @@ final class ApplicationNameLiveTests: XCTestCase, @unchecked Sendable {
         let row = try XCTUnwrap(rows.first)
         XCTAssertEqual(row.column("app")?.string, "Echo (tests)")
         XCTAssertEqual(row.column("program")?.string, "Echo (tests)")
-        XCTAssertEqual(row.column("interface")?.string, "sqlserver-nio")
+        XCTAssertEqual(row.column("interface")?.string, "echo-sqlserver")
     }
 }

@@ -63,7 +63,7 @@ fgL5G6TWr/kiYUGgg3otfbbQAg/JAfjfHGI=
     }
 
     private func unrelatedCAFile() throws -> String {
-        let path = FileManager.default.temporaryDirectory.appendingPathComponent("sqlserver-nio-unrelated-ca.pem").path
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent("echo-sqlserver-unrelated-ca.pem").path
         try Self.unrelatedCA.write(toFile: path, atomically: true, encoding: .utf8)
         return path
     }
@@ -93,9 +93,9 @@ fgL5G6TWr/kiYUGgg3otfbbQAg/JAfjfHGI=
 
     func testCertificateForAnotherHostIsRejectedAndNamed() async throws {
         let server = try server()
-        let failure = try await tlsFailure(configuration(server, certificateName: "other.sqlserver-nio.invalid"))
+        let failure = try await tlsFailure(configuration(server, certificateName: "other.echo-sqlserver.invalid"))
         XCTAssertEqual(failure.kind, .certificateNameMismatch, failure.message)
-        XCTAssertEqual(failure.expectedHost, "other.sqlserver-nio.invalid")
+        XCTAssertEqual(failure.expectedHost, "other.echo-sqlserver.invalid")
         XCTAssertFalse(failure.certificate?.names.isEmpty ?? true, "The failure lists the names the certificate has")
     }
 

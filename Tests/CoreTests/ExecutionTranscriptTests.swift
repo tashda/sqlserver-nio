@@ -14,10 +14,10 @@ final class ExecutionTranscriptTests: StandardTestBase, @unchecked Sendable {
 
     func testExecuteCapturesFullInfoMessageFields() async throws {
         let connection = try await client.connection()
-        let result = try await connection.execute("PRINT N'hello from sqlserver-nio'")
+        let result = try await connection.execute("PRINT N'hello from echo-sqlserver'")
 
         let message = try XCTUnwrap(result.messages.first(where: { $0.kind == .info }))
-        XCTAssertEqual(message.message, "hello from sqlserver-nio")
+        XCTAssertEqual(message.message, "hello from echo-sqlserver")
         XCTAssertEqual(message.procedureName, "")
         XCTAssertFalse(message.serverName.isEmpty)
     }
