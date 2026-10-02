@@ -5,34 +5,24 @@ import NIOPosix
 
 // MARK: - Connection Configuration
 
-public func makeSQLServerConnectionConfiguration() -> SQLServerConnection.Configuration {
-    if envFlagEnabled("USE_DOCKER") {
-        setenv("TDS_HOSTNAME", "127.0.0.1", 1)
-        setenv("TDS_PORT", env("TDS_DOCKER_PORT") ?? "14331", 1)
-        do {
-            _ = try ensureSQLServerTestFixture(requireAdventureWorks: envFlagEnabled("TDS_LOAD_ADVENTUREWORKS"))
-        } catch {
-            fatalError("Failed to start SQL Server Docker test environment: \(error)")
-        }
-    }
-
-    // Use centralized environment configuration
-    let config = TestEnvironmentManager.currentConfig
-
-    let hostname = env("TDS_HOSTNAME") ?? config.hostname
-    let port = env("TDS_PORT").flatMap(Int.init) ?? config.port
-    let username = env("TDS_USERNAME") ?? config.username
-    let password = env("TDS_PASSWORD") ?? config.password
-    let database = env("TDS_DATABASE") ?? config.database
-
+/// The connection configuration for the server in `SQLSERVER_TEST_URL`, with the settings the
+/// integration tests rely on (metadata options, retries on dropped connections).
+///
+/// Call `requireSQLServerTestServer()` (XCTest) or use the `.testServer` trait first: without the
+/// variable this returns a configuration for a host that cannot be resolved, so a test that forgot
+/// fails at once instead of reaching a real server.
+public func makeSQLServerConnectionConfiguration(_ variable: String = TestServer.defaultVariable) -> SQLServerConnection.Configuration {
+    let server = TestServer.url(variable)
     var cfg = SQLServerConnection.Configuration(
-        hostname: hostname,
-        port: port,
+        hostname: server?.configuration.hostname ?? "sqlserver-test-url-not-set.invalid",
+        port: server?.port ?? 1433,
         login: .init(
-            database: database,
-            authentication: .sqlPassword(username: username, password: password)
+            database: server?.database ?? "master",
+            authentication: server?.authentication ?? .sqlPassword(username: "", password: "")
         ),
-        tlsConfiguration: nil,
+        tlsConfiguration: server?.tlsConfiguration ?? .trustingServerCertificate,
+        encryptionMode: server?.encrypt ?? .mandatory,
+        hostNameInCertificate: server?.hostNameInCertificate,
         metadataConfiguration: SQLServerMetadataOperations.Configuration(
             includeSystemSchemas: false,
             enableColumnCache: true,
@@ -76,10 +66,12 @@ public func makeSQLServerConnectionConfiguration() -> SQLServerConnection.Config
         )
     )
     cfg.transparentNetworkIPResolution = false
+    cfg.serverSPN = server?.configuration.serverSPN
+    cfg.columnEncryption = server?.columnEncryption ?? false
     return cfg
 }
 
-public func makeSQLServerClientConfiguration() -> SQLServerClient.Configuration {
+public func makeSQLServerClientConfiguration(_ variable: String = TestServer.defaultVariable) -> SQLServerClient.Configuration {
     let pool = SQLServerConnectionPool.Configuration(
         maximumConcurrentConnections: 8,
         minimumIdleConnections: 0,
@@ -88,7 +80,7 @@ public func makeSQLServerClientConfiguration() -> SQLServerClient.Configuration 
     )
 
     return SQLServerClient.Configuration(
-        connection: makeSQLServerConnectionConfiguration(),
+        connection: makeSQLServerConnectionConfiguration(variable),
         poolConfiguration: pool
     )
 }

@@ -401,6 +401,40 @@ public final class SQLServerExtendedEventsClient: @unchecked Sendable {
         let escaped = sessionName.replacingOccurrences(of: "]", with: "]]")
         _ = try await client.execute("ALTER EVENT SESSION [\(escaped)] ON SERVER DROP EVENT sqlserver.\(eventName);")
     }
+
+    // MARK: - Alter Targets
+
+    /// Adds a target to an existing session. The session must be stopped first.
+    ///
+    /// Supported target types:
+    /// - `.ringBuffer(maxMemoryKB:)` → `package0.ring_buffer`
+    /// - `.eventFile(filename:maxFileSizeMB:)` → `package0.event_file`
+    @available(macOS 12.0, *)
+    public func addTarget(
+        sessionName: String,
+        target: SQLServerXESessionConfiguration.TargetType
+    ) async throws {
+        let escaped = sessionName.replacingOccurrences(of: "]", with: "]]")
+        let targetClause: String
+        switch target {
+        case .ringBuffer(let maxMemoryKB):
+            targetClause = "package0.ring_buffer(SET max_memory=(\(maxMemoryKB)))"
+        case .eventFile(let filename, let maxFileSizeMB):
+            let escapedFile = filename.replacingOccurrences(of: "'", with: "''")
+            targetClause = "package0.event_file(SET filename=N'\(escapedFile)', max_file_size=(\(maxFileSizeMB)))"
+        }
+        _ = try await client.execute("ALTER EVENT SESSION [\(escaped)] ON SERVER ADD TARGET \(targetClause);")
+    }
+
+    /// Removes a target from an existing session. The session must be stopped first.
+    ///
+    /// The `targetName` should be the unqualified target name (e.g. `"ring_buffer"` or `"event_file"`).
+    /// The `package0.` prefix is added automatically.
+    @available(macOS 12.0, *)
+    public func dropTarget(sessionName: String, targetName: String) async throws {
+        let escaped = sessionName.replacingOccurrences(of: "]", with: "]]")
+        _ = try await client.execute("ALTER EVENT SESSION [\(escaped)] ON SERVER DROP TARGET package0.\(targetName);")
+    }
 }
 
 // MARK: - Ring Buffer XML Parser

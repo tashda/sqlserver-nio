@@ -1,7 +1,8 @@
 import XCTest
 import Logging
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 /// Integration tests for stored procedure output parameters (RPC RETURNVALUE token path).
 ///
@@ -11,7 +12,7 @@ final class OutputParameterTests: XCTestCase, @unchecked Sendable {
     var client: SQLServerClient!
 
     override func setUp() async throws {
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
         _ = isLoggingConfigured
         client = try await SQLServerClient.connect(
             configuration: makeSQLServerClientConfiguration(),

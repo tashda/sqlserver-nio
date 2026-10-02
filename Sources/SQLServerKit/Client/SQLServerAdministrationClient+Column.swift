@@ -15,7 +15,7 @@ extension SQLServerAdministrationClient {
         database: String? = nil
     ) async throws {
         let fullTable = qualifiedName(table: table, schema: schema, database: database ?? self.database)
-        let escapedColumn = Self.escapeIdentifier(name)
+        let escapedColumn = SQLServerSQL.escapeIdentifier(name)
         let nullClause = isNullable ? "NULL" : "NOT NULL"
         var sql = "ALTER TABLE \(fullTable) ADD \(escapedColumn) \(dataType) \(nullClause)"
         if let defaultValue, !defaultValue.isEmpty {
@@ -34,7 +34,7 @@ extension SQLServerAdministrationClient {
         database: String? = nil
     ) async throws {
         let fullTable = qualifiedName(table: table, schema: schema, database: database ?? self.database)
-        let escapedColumn = Self.escapeIdentifier(name)
+        let escapedColumn = SQLServerSQL.escapeIdentifier(name)
         var sql = "ALTER TABLE \(fullTable) ADD \(escapedColumn) AS (\(expression))"
         if persisted {
             sql += " PERSISTED"
@@ -50,7 +50,7 @@ extension SQLServerAdministrationClient {
         database: String? = nil
     ) async throws {
         let fullTable = qualifiedName(table: table, schema: schema, database: database ?? self.database)
-        let escapedColumn = Self.escapeIdentifier(column)
+        let escapedColumn = SQLServerSQL.escapeIdentifier(column)
         _ = try await client.execute("ALTER TABLE \(fullTable) DROP COLUMN \(escapedColumn)")
     }
 
@@ -85,7 +85,7 @@ extension SQLServerAdministrationClient {
         database: String? = nil
     ) async throws {
         let fullTable = qualifiedName(table: table, schema: schema, database: database ?? self.database)
-        let escapedColumn = Self.escapeIdentifier(column)
+        let escapedColumn = SQLServerSQL.escapeIdentifier(column)
         let nullClause = isNullable ? "NULL" : "NOT NULL"
         _ = try await client.execute("ALTER TABLE \(fullTable) ALTER COLUMN \(escapedColumn) \(newType) \(nullClause)")
     }
@@ -100,7 +100,7 @@ extension SQLServerAdministrationClient {
         database: String? = nil
     ) async throws {
         let fullTable = qualifiedName(table: table, schema: schema, database: database ?? self.database)
-        let escapedColumn = Self.escapeIdentifier(column)
+        let escapedColumn = SQLServerSQL.escapeIdentifier(column)
         let nullClause = isNullable ? "NULL" : "NOT NULL"
         _ = try await client.execute("ALTER TABLE \(fullTable) ALTER COLUMN \(escapedColumn) \(currentType) \(nullClause)")
     }
@@ -114,17 +114,15 @@ extension SQLServerAdministrationClient {
         schema: String = "dbo",
         database: String? = nil
     ) async throws {
-        let escapedSchema = schema.replacingOccurrences(of: "'", with: "''")
-        let escapedTable = table.replacingOccurrences(of: "'", with: "''")
         let escapedColumn = column.replacingOccurrences(of: "'", with: "''")
 
         let sql = """
         DECLARE @constraint NVARCHAR(256);
         SELECT @constraint = d.name FROM sys.default_constraints d
         JOIN sys.columns c ON d.parent_column_id = c.column_id AND d.parent_object_id = c.object_id
-        WHERE d.parent_object_id = OBJECT_ID('\(escapedSchema).\(escapedTable)') AND c.name = '\(escapedColumn)';
+        WHERE d.parent_object_id = OBJECT_ID(N'\(SQLServerSQL.escapeLiteral(SQLServerSQL.escapeIdentifier(schema) + "." + SQLServerSQL.escapeIdentifier(table)))') AND c.name = '\(escapedColumn)';
         IF @constraint IS NOT NULL
-            EXEC('ALTER TABLE \(Self.escapeIdentifier(schema)).\(Self.escapeIdentifier(table)) DROP CONSTRAINT [' + @constraint + ']');
+            EXEC(N'ALTER TABLE \(SQLServerSQL.escapeLiteral(SQLServerSQL.escapeIdentifier(schema) + "." + SQLServerSQL.escapeIdentifier(table))) DROP CONSTRAINT ' + QUOTENAME(@constraint));
         """
 
         if let db = database ?? self.database {
@@ -140,8 +138,8 @@ extension SQLServerAdministrationClient {
 
     private func qualifiedName(table: String, schema: String, database: String?) -> String {
         if let database, !database.isEmpty {
-            return "\(Self.escapeIdentifier(database)).\(Self.escapeIdentifier(schema)).\(Self.escapeIdentifier(table))"
+            return "\(SQLServerSQL.escapeIdentifier(database)).\(SQLServerSQL.escapeIdentifier(schema)).\(SQLServerSQL.escapeIdentifier(table))"
         }
-        return "\(Self.escapeIdentifier(schema)).\(Self.escapeIdentifier(table))"
+        return "\(SQLServerSQL.escapeIdentifier(schema)).\(SQLServerSQL.escapeIdentifier(table))"
     }
 }

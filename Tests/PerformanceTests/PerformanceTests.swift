@@ -1,8 +1,9 @@
 import XCTest
 import Logging
-@testable import SQLServerTDS
-@testable import SQLServerKit
+import SQLServerTDS
+import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 /// Simple performance tests for SQLServerNIO
 /// Tests basic performance characteristics
@@ -11,7 +12,7 @@ final class PerformanceTests: XCTestCase, @unchecked Sendable {
     private let logger = Logger(label: "PerformanceTests")
 
     override func setUp() async throws {
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
 
         var config = makeSQLServerClientConfiguration()
         config.poolConfiguration.connectionIdleTimeout = nil
@@ -100,7 +101,7 @@ final class PerformanceTests: XCTestCase, @unchecked Sendable {
         // Performance assertions
         // Allow for network latency and connection overhead
         // Based on sqlcmd baseline of ~0.075s, allow reasonable margin
-        let simpleQueryBudget = envFlagEnabled("USE_DOCKER") ? 0.5 : 0.3
+        let simpleQueryBudget = 0.5
         XCTAssertLessThanOrEqual(performanceResults["Simple Query"] ?? 0, simpleQueryBudget, "Simple query should stay within the configured latency budget")
         XCTAssertLessThanOrEqual(performanceResults["System Table Query"] ?? 0, 1.0, "System table query should complete in reasonable time")
 

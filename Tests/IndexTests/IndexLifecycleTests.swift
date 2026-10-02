@@ -1,7 +1,8 @@
 import XCTest
 import Logging
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 final class SQLServerIndexTests: XCTestCase, @unchecked Sendable {
     private var baseClient: SQLServerClient!
@@ -12,7 +13,7 @@ final class SQLServerIndexTests: XCTestCase, @unchecked Sendable {
 
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
         self.baseClient = try await SQLServerClient.connect(
             configuration: makeSQLServerClientConfiguration(),
             numberOfThreads: 1
@@ -90,10 +91,8 @@ final class SQLServerIndexTests: XCTestCase, @unchecked Sendable {
         ]
 
         try await withTimeout(15) {
-            try await self.client.withConnection { connection in
-                for row in seedRows {
-                    try await connection.insertRow(into: name, values: row)
-                }
+            for row in seedRows {
+                _ = try await self.adminClient.insertRow(into: name, values: row)
             }
         }
     }
@@ -141,6 +140,18 @@ final class SQLServerIndexTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(columnNames.contains("age"), "Should contain age column")
     }
 
+    func testDisabledIndexIsReported() async throws {
+        let tableName = "test_disabled_index_table_\(UUID().uuidString.prefix(8))"
+        let indexName = "IX_\(tableName)_name"
+        try await self.createTestTable(name: tableName)
+        try await withTimeout(15) { try await self.indexClient.createIndex(name: indexName, table: tableName, columns: [IndexColumn(name: "name")]) }
+        var info = try await self.indexClient.getIndexInfo(name: indexName, table: tableName)
+        XCTAssertEqual(info?.isDisabled, false)
+        _ = try await self.indexClient.disableIndex(name: indexName, table: tableName)
+        info = try await self.indexClient.getIndexInfo(name: indexName, table: tableName)
+        XCTAssertEqual(info?.isDisabled, true)
+    }
+
     func testCreateIndexWithIncludedColumns() async throws {
         let tableName = "test_included_index_table_\(UUID().uuidString.prefix(8))"
         let indexName = "IX_\(tableName)_name_incl_email"
@@ -181,15 +192,13 @@ final class SQLServerIndexTests: XCTestCase, @unchecked Sendable {
         XCTAssertNotNil(indexInfo, "Should retrieve index info")
 
         do {
-            try await self.client.withConnection { connection in
-                try await connection.insertRow(into: tableName, values: [
-                    "id": .int(6),
-                    "name": .nString("Test User"),
-                    "email": .nString("john@example.com"),
-                    "age": .int(40),
-                    "created_date": .raw("'2023-01-06 15:00:00'")
-                ])
-            }
+            _ = try await self.adminClient.insertRow(into: tableName, values: [
+                "id": .int(6),
+                "name": .nString("Test User"),
+                "email": .nString("john@example.com"),
+                "age": .int(40),
+                "created_date": .raw("'2023-01-06 15:00:00'")
+            ])
             XCTFail("Inserting duplicate email should have failed due to unique index")
         } catch {
             XCTAssertTrue(error is SQLServerError)

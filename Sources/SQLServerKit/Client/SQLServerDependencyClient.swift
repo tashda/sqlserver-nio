@@ -80,8 +80,8 @@ public final class SQLServerDependencyClient: @unchecked Sendable {
         objectType: String
     ) async throws -> String? {
         let prefix = database.map { "[\($0)]." } ?? ""
-        let escapedSchema = SQLServerDependencyClient.escapeLiteral(schema)
-        let escapedName = SQLServerDependencyClient.escapeLiteral(name)
+        let escapedSchema = SQLServerSQL.escapeLiteral(schema)
+        let escapedName = SQLServerSQL.escapeLiteral(name)
 
         // For tables we generate CREATE TABLE from catalog metadata
         if objectType == "U" {
@@ -137,8 +137,8 @@ public final class SQLServerDependencyClient: @unchecked Sendable {
     @available(macOS 12.0, *)
     private func scriptTableDDL(database: String? = nil, schema: String, name: String) async throws -> String? {
         let prefix = database.map { "[\($0)]." } ?? ""
-        let escapedSchema = SQLServerDependencyClient.escapeLiteral(schema)
-        let escapedName = SQLServerDependencyClient.escapeLiteral(name)
+        let escapedSchema = SQLServerSQL.escapeLiteral(schema)
+        let escapedName = SQLServerSQL.escapeLiteral(name)
 
         // Fetch columns
         let columnSQL = """
@@ -185,7 +185,4 @@ public final class SQLServerDependencyClient: @unchecked Sendable {
 
     // MARK: - Helpers
 
-    internal static func escapeLiteral(_ value: String) -> String {
-        value.replacingOccurrences(of: "'", with: "''")
-    }
 }

@@ -31,6 +31,7 @@ extension SQLServerIndexClient {
             i.type_desc as index_type,
             i.is_unique,
             i.is_primary_key,
+            i.is_disabled,
             ic.key_ordinal,
             c.name as column_name,
             ic.is_descending_key,
@@ -85,7 +86,8 @@ extension SQLServerIndexClient {
             indexType: indexType,
             isUnique: isUnique,
             isPrimaryKey: isPrimaryKey,
-            columns: columns
+            columns: columns,
+            isDisabled: (firstRow.column("is_disabled")?.int ?? 0) != 0
         )
     }
     

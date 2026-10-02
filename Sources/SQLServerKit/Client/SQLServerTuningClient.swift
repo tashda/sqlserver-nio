@@ -88,6 +88,23 @@ public final class SQLServerTuningClient: @unchecked Sendable {
         public let userUpdates: Int64
         public let lastUserSeek: String?
         public let lastUserScan: String?
+
+        public init(
+            schemaName: String, tableName: String, indexName: String, indexType: String,
+            userSeeks: Int64, userScans: Int64, userLookups: Int64, userUpdates: Int64,
+            lastUserSeek: String?, lastUserScan: String?
+        ) {
+            self.schemaName = schemaName
+            self.tableName = tableName
+            self.indexName = indexName
+            self.indexType = indexType
+            self.userSeeks = userSeeks
+            self.userScans = userScans
+            self.userLookups = userLookups
+            self.userUpdates = userUpdates
+            self.lastUserSeek = lastUserSeek
+            self.lastUserScan = lastUserScan
+        }
     }
 
     /// Returns index usage statistics for the current database.

@@ -1,5 +1,6 @@
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 import XCTest
 import Logging
 
@@ -8,7 +9,7 @@ final class SQLServerNbcRowBitmapTests: XCTestCase, @unchecked Sendable {
 
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
+        try requireSQLServerTestServer(); // Load environment configuration
         client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
     }
 

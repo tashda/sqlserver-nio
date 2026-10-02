@@ -1,16 +1,9 @@
 import NIO
+import NIOConcurrencyHelpers
 import SQLServerTDS
 import Foundation
 
 // MARK: - Savepoint Types
-
-public struct SavepointOptions: Sendable {
-    public let name: String
-
-    public init(name: String) {
-        self.name = name
-    }
-}
 
 public struct SavepointInfo: Sendable {
     public let name: String
@@ -30,87 +23,138 @@ public struct SavepointInfo: Sendable {
 
 public final class SQLServerTransactionClient: @unchecked Sendable {
     private let client: SQLServerClient
-    private var activeSavepoints: [String] = []
+    private let savepointsByConnection = NIOLockedValueBox<[Swift.ObjectIdentifier: [String]]>([:])
+
+    private func updateSavepoints(_ connection: SQLServerConnection, _ update: (inout [String]) -> Void) {
+        savepointsByConnection.withLockedValue { all in
+            let id = Swift.ObjectIdentifier(connection)
+            var names = all[id] ?? []
+            update(&names)
+            if names.isEmpty { all.removeValue(forKey: id) }
+            else { all[id] = names }
+        }
+    }
+
+    private func savepoints(on connection: SQLServerConnection?) -> [String] {
+        guard let connection else { return [] }
+        return savepointsByConnection.withLockedValue { $0[Swift.ObjectIdentifier(connection)] ?? [] }
+    }
+
+    private func requireConnection() throws -> SQLServerConnection {
+        guard let connection = ClientScopedConnection.current else {
+            throw SQLServerError.invalidArgument("Savepoints require a pinned transaction connection")
+        }
+        return connection
+    }
 
     public init(client: SQLServerClient) {
         self.client = client
+    }
+
+    /// A server-reported COMMIT failure means the transaction did not commit.
+    /// Any other failure leaves the outcome unknown.
+    private static func commitError(_ error: Error) -> SQLServerError {
+        let normalized = SQLServerError.normalize(error)
+        if normalized.serverDetails != nil, !normalized.isConnectionLost {
+            return normalized
+        }
+        return .commitOutcomeUnknown(error)
     }
 
     // MARK: - Transaction Management
 
     /// Begins a new transaction
     internal func beginTransaction() -> EventLoopFuture<Void> {
-        return client.execute("BEGIN TRANSACTION").map { _ in () }
+        guard let connection = ClientScopedConnection.current else {
+            return client.eventLoopGroup.next().makeFailedFuture(SQLServerError.invalidArgument("A transaction requires a pinned connection; use executeInTransaction or SQLServerConnection.withTransaction"))
+        }
+        return connection.beginTransaction()
     }
 
     /// Begins a new transaction (async version)
     @available(macOS 12.0, *)
     public func beginTransaction() async throws {
-        _ = try await client.execute("BEGIN TRANSACTION")
+        guard let connection = ClientScopedConnection.current else {
+            throw SQLServerError.invalidArgument("A transaction requires a pinned connection; use executeInTransaction or SQLServerConnection.withTransaction")
+        }
+        try await connection.beginTransaction()
     }
 
     /// Commits the current transaction
     internal func commitTransaction() -> EventLoopFuture<Void> {
-        activeSavepoints.removeAll()
-        return client.execute("COMMIT").map { _ in () }
+        guard let connection = ClientScopedConnection.current else {
+            return client.eventLoopGroup.next().makeFailedFuture(SQLServerError.invalidArgument("No pinned transaction connection"))
+        }
+        return connection.commit().map {
+            self.updateSavepoints(connection) { $0.removeAll() }
+        }.flatMapErrorThrowing { error in
+            throw Self.commitError(error)
+        }
     }
 
     /// Commits the current transaction (async version)
     @available(macOS 12.0, *)
     public func commitTransaction() async throws {
-        activeSavepoints.removeAll()
-        _ = try await client.execute("COMMIT")
+        guard let connection = ClientScopedConnection.current else {
+            throw SQLServerError.invalidArgument("No pinned transaction connection")
+        }
+        do {
+            try await connection.commit()
+            updateSavepoints(connection) { $0.removeAll() }
+        } catch {
+            throw Self.commitError(error)
+        }
     }
 
     /// Rolls back the current transaction
     internal func rollbackTransaction() -> EventLoopFuture<Void> {
-        activeSavepoints.removeAll()
-        return client.execute("ROLLBACK").map { _ in () }
+        guard let connection = ClientScopedConnection.current else {
+            return client.eventLoopGroup.next().makeFailedFuture(SQLServerError.invalidArgument("No pinned transaction connection"))
+        }
+        return connection.rollback().map {
+            self.updateSavepoints(connection) { $0.removeAll() }
+        }
     }
 
     /// Rolls back the current transaction (async version)
     @available(macOS 12.0, *)
     public func rollbackTransaction() async throws {
-        activeSavepoints.removeAll()
-        _ = try await client.execute("ROLLBACK")
+        guard let connection = ClientScopedConnection.current else {
+            throw SQLServerError.invalidArgument("No pinned transaction connection")
+        }
+        try await connection.rollback()
+        updateSavepoints(connection) { $0.removeAll() }
     }
 
     // MARK: - Savepoint Management
 
     /// Creates a savepoint with the specified name
     internal func createSavepoint(name: String) -> EventLoopFuture<Void> {
-        let escapedName = escapeIdentifier(name)
-        return client.execute("SAVE TRANSACTION \(escapedName)").map { _ in
-            self.activeSavepoints.append(name)
+        guard let connection = try? requireConnection() else {
+            return client.eventLoopGroup.next().makeFailedFuture(SQLServerError.invalidArgument("Savepoints require a pinned transaction connection"))
+        }
+        return connection.createSavepoint(name).map {
+            self.updateSavepoints(connection) { $0.append(name) }
         }
     }
 
     /// Creates a savepoint with the specified name (async version)
     @available(macOS 12.0, *)
     public func createSavepoint(name: String) async throws {
-        let escapedName = escapeIdentifier(name)
-        _ = try await client.execute("SAVE TRANSACTION \(escapedName)")
-        activeSavepoints.append(name)
-    }
-
-    /// Creates a savepoint with options
-    internal func createSavepoint(_ options: SavepointOptions) -> EventLoopFuture<Void> {
-        return createSavepoint(name: options.name)
-    }
-
-    /// Creates a savepoint with options (async version)
-    @available(macOS 12.0, *)
-    public func createSavepoint(_ options: SavepointOptions) async throws {
-        try await createSavepoint(name: options.name).get()
+        let connection = try requireConnection()
+        try await connection.createSavepoint(name)
+        updateSavepoints(connection) { $0.append(name) }
     }
 
     /// Rolls back to the specified savepoint
     internal func rollbackToSavepoint(name: String) -> EventLoopFuture<Void> {
-        let escapedName = escapeIdentifier(name)
-        return client.execute("ROLLBACK TRANSACTION \(escapedName)").map { _ in
+        guard let connection = try? requireConnection() else {
+            return client.eventLoopGroup.next().makeFailedFuture(SQLServerError.invalidArgument("Savepoints require a pinned transaction connection"))
+        }
+        return connection.rollbackToSavepoint(name).map {
             // Remove this savepoint and any savepoints created after it
-            if let index = self.activeSavepoints.firstIndex(of: name) {
-                self.activeSavepoints.removeSubrange(index...)
+            self.updateSavepoints(connection) { names in
+                if let index = names.firstIndex(of: name) { names.removeSubrange(index...) }
             }
         }
     }
@@ -118,53 +162,33 @@ public final class SQLServerTransactionClient: @unchecked Sendable {
     /// Rolls back to the specified savepoint (async version)
     @available(macOS 12.0, *)
     public func rollbackToSavepoint(name: String) async throws {
-        let escapedName = escapeIdentifier(name)
-        _ = try await client.execute("ROLLBACK TRANSACTION \(escapedName)")
-        if let index = self.activeSavepoints.firstIndex(of: name) {
-            self.activeSavepoints.removeSubrange(index...)
+        let connection = try requireConnection()
+        try await connection.rollbackToSavepoint(name)
+        updateSavepoints(connection) { names in
+            if let index = names.firstIndex(of: name) { names.removeSubrange(index...) }
         }
-    }
-
-    /// Rolls back to the specified savepoint options
-    internal func rollbackToSavepoint(_ options: SavepointOptions) -> EventLoopFuture<Void> {
-        return rollbackToSavepoint(name: options.name)
-    }
-
-    /// Rolls back to the specified savepoint options (async version)
-    @available(macOS 12.0, *)
-    public func rollbackToSavepoint(_ options: SavepointOptions) async throws {
-        try await rollbackToSavepoint(name: options.name).get()
     }
 
     /// Releases the specified savepoint (SQL Server 2008+)
     internal func releaseSavepoint(name: String) -> EventLoopFuture<Void> {
         // SQL Server doesn't have an explicit RELEASE SAVEPOINT command like some other databases
         // We remove it from our tracking, but the savepoint still exists in the transaction
-        if let index = activeSavepoints.firstIndex(of: name) {
-            activeSavepoints.remove(at: index)
+        guard let connection = try? requireConnection() else {
+            return client.eventLoopGroup.next().makeFailedFuture(SQLServerError.invalidArgument("Savepoints require a pinned transaction connection"))
         }
-        return client.withConnection { connection in
-            connection.eventLoop.makeSucceededFuture(())
+        updateSavepoints(connection) { names in
+            if let index = names.firstIndex(of: name) { names.remove(at: index) }
         }
+        return connection.eventLoop.makeSucceededFuture(())
     }
 
     /// Releases the specified savepoint (async version)
     @available(macOS 12.0, *)
     public func releaseSavepoint(name: String) async throws {
-        if let index = activeSavepoints.firstIndex(of: name) {
-            activeSavepoints.remove(at: index)
+        let connection = try requireConnection()
+        updateSavepoints(connection) { names in
+            if let index = names.firstIndex(of: name) { names.remove(at: index) }
         }
-    }
-
-    /// Releases the specified savepoint options
-    internal func releaseSavepoint(_ options: SavepointOptions) -> EventLoopFuture<Void> {
-        return releaseSavepoint(name: options.name)
-    }
-
-    /// Releases the specified savepoint options (async version)
-    @available(macOS 12.0, *)
-    public func releaseSavepoint(_ options: SavepointOptions) async throws {
-        try await releaseSavepoint(name: options.name).get()
     }
 
     // MARK: - Transaction Information
@@ -282,14 +306,14 @@ public final class SQLServerTransactionClient: @unchecked Sendable {
 
     /// Gets a list of active savepoints
     public func getActiveSavepoints() -> [SavepointInfo] {
-        return activeSavepoints.map { name in
+        return savepoints(on: ClientScopedConnection.current).map { name in
             SavepointInfo(name: name, isActive: true)
         }
     }
 
     /// Checks if a savepoint with the given name is active
     public func isSavepointActive(name: String) -> Bool {
-        return activeSavepoints.contains(name)
+        return savepoints(on: ClientScopedConnection.current).contains(name)
     }
 
     /// Gets the current transaction isolation level
@@ -300,11 +324,12 @@ public final class SQLServerTransactionClient: @unchecked Sendable {
     private func currentIsolationLevelFuture() -> EventLoopFuture<String?> {
         let sql = """
         SELECT CASE transaction_isolation_level
-            WHEN 0 THEN 'READ UNCOMMITTED'
-            WHEN 1 THEN 'READ COMMITTED'
-            WHEN 2 THEN 'REPEATABLE READ'
-            WHEN 3 THEN 'SERIALIZABLE'
-            WHEN 4 THEN 'SNAPSHOT'
+            WHEN 0 THEN 'UNSPECIFIED'
+            WHEN 1 THEN 'READ UNCOMMITTED'
+            WHEN 2 THEN 'READ COMMITTED'
+            WHEN 3 THEN 'REPEATABLE READ'
+            WHEN 4 THEN 'SERIALIZABLE'
+            WHEN 5 THEN 'SNAPSHOT'
             ELSE 'UNKNOWN'
         END as isolation_level
         FROM sys.dm_exec_sessions
@@ -342,14 +367,13 @@ public final class SQLServerTransactionClient: @unchecked Sendable {
         return beginTransaction()
             .flatMap { _ in
                 operation()
-                    .flatMap { result in
-                        self.commitTransaction()
-                            .map { result }
-                    }
                     .flatMapError { error in
                         self.rollbackTransaction().flatMapThrowing { _ in
                             throw error
                         }
+                    }
+                    .flatMap { result in
+                        self.commitTransaction().map { result }
                     }
             }
     }
@@ -360,17 +384,11 @@ public final class SQLServerTransactionClient: @unchecked Sendable {
     public func executeInTransaction<T: Sendable>(_ operation: @Sendable @escaping () async throws -> T) async throws -> T {
         try await client.withConnection { connection in
             try await ClientScopedConnection.$current.withValue(connection) {
-                _ = try await self.client.execute("BEGIN TRANSACTION")
-                do {
-                    let result = try await operation()
-                    _ = try await self.client.execute("COMMIT")
-                    self.activeSavepoints.removeAll()
-                    return result
-                } catch {
-                    _ = try? await self.client.execute("ROLLBACK")
-                    self.activeSavepoints.removeAll()
-                    throw error
+                defer { self.updateSavepoints(connection) { $0.removeAll() } }
+                let result = try await connection.withTransaction { _ in
+                    try await operation()
                 }
+                return result
             }
         }
     }
@@ -412,15 +430,6 @@ public final class SQLServerTransactionClient: @unchecked Sendable {
         }
     }
 
-    // MARK: - Helper Methods
-
-    private func escapeIdentifier(_ identifier: String) -> String {
-        // Basic SQL identifier escaping
-        if identifier.contains(" ") || identifier.contains("-") || identifier.contains(".") {
-            return "[\(identifier.replacingOccurrences(of: "]", with: "]]"))]"
-        }
-        return identifier
-    }
 }
 
 // MARK: - Supporting Types

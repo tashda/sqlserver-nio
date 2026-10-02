@@ -1,13 +1,14 @@
 import XCTest
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 final class SQLServerServerSecurityVariantsTests: XCTestCase, @unchecked Sendable {
     private var client: SQLServerClient!
 
     override func setUp() async throws {
         try await super.setUp()
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
         client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
     }
 
@@ -21,14 +22,14 @@ final class SQLServerServerSecurityVariantsTests: XCTestCase, @unchecked Sendabl
         let serverSec = SQLServerServerSecurityClient(client: client)
         // This requires EXTERNAL PROVIDER support and elevated permissions; expect success only when enabled.
         do {
-            try await serverSec.createExternalLogin(name: "nio_ext_login_test").get()
+            try await serverSec.createExternalLogin(name: "nio_ext_login_test")
         } catch {
             // Expected to fail unless EXTERNAL PROVIDER is configured
             print("External login creation failed as expected: \(error)")
         }
 
         do {
-            try await serverSec.dropLogin(name: "nio_ext_login_test").get()
+            try await serverSec.dropLogin(name: "nio_ext_login_test")
         } catch {
             // Expected to fail unless login exists or EXTERNAL PROVIDER is configured
             print("External login drop failed as expected: \(error)")

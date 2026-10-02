@@ -13,7 +13,7 @@ extension TDSConnection {
             self.logger.debug("[login] Coalescing to existing in-flight/completed login future")
             return existing
         }
-        let payload: TDSMessages.Login7Message
+        var payload: TDSMessages.Login7Message
         var authenticator: (any TDSAuthenticator)?
 
         switch configuration.authentication {
@@ -25,34 +25,22 @@ extension TDSConnection {
                 database: configuration.database,
                 useIntegratedSecurity: false,
                 sspiData: nil,
-                readOnlyIntent: configuration.readOnlyIntent
+                readOnlyIntent: configuration.readOnlyIntent,
+                applicationName: configuration.applicationName,
+                packetSize: configuration.packetSize
             )
 
         case .windowsIntegrated(let username, let password, let domain):
             do {
-                // If explicit credentials are provided, use NTLMv2 (direct challenge-response,
-                // no KDC needed). If credentials are empty, fall back to Kerberos (GSS.framework).
-                let authenticatorInstance: any TDSAuthenticator
-                if !username.isEmpty && !password.isEmpty {
-                    authenticatorInstance = try NTLMv2Authenticator(
-                        username: username,
-                        password: password,
-                        domain: domain ?? "",
-                        server: configuration.serverName,
-                        port: configuration.port,
-                        logger: logger
-                    )
-                } else {
-                    authenticatorInstance = try KerberosAuthenticator(
-                        username: username,
-                        password: password,
-                        domain: domain,
-                        server: configuration.serverName,
-                        port: configuration.port,
-                        logger: logger
-                    )
-                }
-                let initialToken = try authenticatorInstance.initialToken()
+                let (authenticatorInstance, initialToken) = try Self.windowsAuthenticator(
+                    username: username,
+                    password: password,
+                    domain: domain,
+                    server: configuration.serverName,
+                    port: configuration.port,
+                    servicePrincipalName: configuration.serverSPN,
+                    logger: logger
+                )
                 let loginUsername = domain.flatMap { "\($0)\\\(username)" } ?? username
                 payload = TDSMessages.Login7Message(
                     username: loginUsername,
@@ -61,7 +49,9 @@ extension TDSConnection {
                     database: configuration.database,
                     useIntegratedSecurity: true,
                     sspiData: initialToken,
-                    readOnlyIntent: configuration.readOnlyIntent
+                    readOnlyIntent: configuration.readOnlyIntent,
+                    applicationName: configuration.applicationName,
+                packetSize: configuration.packetSize
                 )
                 authenticator = authenticatorInstance
             } catch {
@@ -77,9 +67,12 @@ extension TDSConnection {
                 useIntegratedSecurity: false,
                 sspiData: nil,
                 fedAuthAccessToken: token,
-                readOnlyIntent: configuration.readOnlyIntent
+                readOnlyIntent: configuration.readOnlyIntent,
+                applicationName: configuration.applicationName,
+                packetSize: configuration.packetSize
             )
         }
+        payload.requestColumnEncryption = configuration.columnEncryption
         // Create a promise and publish immediately to prevent a second LoginRequest enqueuing.
         let promise: EventLoopPromise<Void> = self.eventLoop.makePromise()
         self._loginFuture = promise.futureResult
@@ -92,9 +85,7 @@ extension TDSConnection {
         )
 
         self.logger.debug("[login] Sending LoginRequest to server \(configuration.serverName) database \(configuration.database)")
-        self.send(loginRequest, logger: self.logger).flatMap { _ in
-            return self.send(RawSqlRequest(sql: "SET FMTONLY OFF;"), logger: self.logger)
-        }.whenComplete { result in
+        self.send(loginRequest, logger: self.logger).whenComplete { result in
             switch result {
             case .success:
                 // Replace with succeeded future for subsequent calls.
@@ -118,5 +109,39 @@ extension TDSConnection {
             authentication: .sqlPassword(username: username, password: password)
         )
         return login(configuration: configuration)
+    }
+}
+
+extension TDSConnection {
+    /// Windows authentication chooses like SSPI's Negotiate package (what SqlClient uses): Kerberos
+    /// first, with a ticket from the given password or, without one, from the ticket cache; NTLMv2
+    /// when Kerberos is not available for this server (no KDC for the realm, no service principal,
+    /// no GSS on this platform). SQL Server on Linux accepts only Kerberos.
+    static func windowsAuthenticator(
+        username: String,
+        password: String,
+        domain: String?,
+        server: String,
+        port: Int,
+        servicePrincipalName: String? = nil,
+        logger: Logger
+    ) throws -> (any TDSAuthenticator, Data) {
+        do {
+            let kerberos = try KerberosAuthenticator(
+                username: username, password: password, domain: domain,
+                server: server, port: port, servicePrincipalName: servicePrincipalName, logger: logger
+            )
+            let token = try kerberos.initialToken()
+            logger.debug("[login] Windows authentication: Kerberos")
+            return (kerberos, token)
+        } catch {
+            guard !username.isEmpty, !password.isEmpty else { throw error }
+            logger.debug("[login] Kerberos unavailable (\(error)); Windows authentication: NTLMv2")
+            let ntlm = try NTLMv2Authenticator(
+                username: username, password: password, domain: domain ?? "",
+                server: server, port: port, logger: logger
+            )
+            return (ntlm, try ntlm.initialToken())
+        }
     }
 }

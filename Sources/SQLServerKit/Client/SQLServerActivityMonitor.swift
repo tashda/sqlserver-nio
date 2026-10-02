@@ -9,7 +9,7 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
     private let client: SQLServerClient
     private let waitIgnoreList: Set<String>
     private let baselineLock = NIOLock()
-    private let logger = Logger(label: "dk.tippr.sqlserver-nio.activity-monitor")
+    private let logger = Logger(label: "tds.sqlserver.activity-monitor")
 
     // Baselines for delta computation across snapshots
     private var lastWaits: [String: SQLServerWaitStat] = [:]
@@ -381,10 +381,15 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
             qs.max_elapsed_time,
             qs.last_execution_time,
             st.text AS sql_text,
-            CAST(qp.query_plan AS NVARCHAR(MAX)) AS plan_xml
+            CAST(qp.query_plan AS NVARCHAR(MAX)) AS plan_xml,
+            DB_NAME(CONVERT(INT, pa.value)) AS database_name
         FROM sys.dm_exec_query_stats AS qs
         OUTER APPLY sys.dm_exec_sql_text(qs.sql_handle) AS st
         OUTER APPLY sys.dm_exec_query_plan(qs.plan_handle) AS qp
+        OUTER APPLY (
+            SELECT TOP(1) value FROM sys.dm_exec_plan_attributes(qs.plan_handle)
+            WHERE attribute = 'dbid'
+        ) AS pa
         ORDER BY qs.total_worker_time DESC;
         """
 
@@ -404,7 +409,8 @@ public final class SQLServerActivityMonitor: @unchecked Sendable {
                     maxElapsedTime: Int64(row.column("max_elapsed_time")?.int64 ?? 0),
                     lastExecutionTime: row.column("last_execution_time")?.date,
                     sqlText: row.column("sql_text")?.string,
-                    planXml: row.column("plan_xml")?.string
+                    planXml: row.column("plan_xml")?.string,
+                    databaseName: row.column("database_name")?.string
                 )
             }
         }

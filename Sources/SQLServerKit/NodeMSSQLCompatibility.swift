@@ -85,7 +85,12 @@ public final class NodeMSSQLRequest: @unchecked Sendable {
             onDone: { [weak self] doneToken in
                 guard let self = self else { return }
                 print("🏁 node-mssql: Done token received")
-                self.onDone?(SQLServerStreamDone(status: doneToken.status, rowCount: doneToken.doneRowCount))
+                self.onDone?(SQLServerStreamDone(
+                    kind: .init(tokenType: doneToken.type),
+                    status: doneToken.status,
+                    curCmd: doneToken.curCmd,
+                    rowCount: doneToken.doneRowCount
+                ))
             }
         )
         tdsConnection.send(rawRequest, logger: tdsConnection.logger).whenComplete { [weak self] result in

@@ -1,6 +1,7 @@
 import XCTest
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 final class SynonymMetadataTests: XCTestCase, @unchecked Sendable {
     private var client: SQLServerClient!
@@ -11,7 +12,7 @@ final class SynonymMetadataTests: XCTestCase, @unchecked Sendable {
     override func setUp() async throws {
         try await super.setUp()
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
 
         let config = makeSQLServerClientConfiguration()
         self.client = try await SQLServerClient.connect(configuration: config, numberOfThreads: 1)
@@ -134,9 +135,7 @@ final class SynonymMetadataTests: XCTestCase, @unchecked Sendable {
         try await createTestTable(name: tableName)
         try await createSynonym(name: synonymName, forObject: tableName)
 
-        let structure = try await client.withConnection { connection in
-            try await connection.loadSchemaStructure(schema: "dbo")
-        }
+        let structure = try await client.metadata.loadSchemaStructure(schema: "dbo")
 
         let match = structure.synonyms.first { $0.name == synonymName }
         XCTAssertNotNil(match, "loadSchemaStructure should include the created synonym")
@@ -151,9 +150,7 @@ final class SynonymMetadataTests: XCTestCase, @unchecked Sendable {
         try await createTestTable(name: tableName)
         try await createSynonym(name: synonymName, forObject: tableName)
 
-        let dbStructure = try await client.withConnection { connection in
-            try await connection.loadDatabaseStructure()
-        }
+        let dbStructure = try await client.metadata.loadDatabaseStructure()
 
         let dboSchema = dbStructure.schemas.first { $0.name.caseInsensitiveCompare("dbo") == .orderedSame }
         XCTAssertNotNil(dboSchema, "dbo schema should exist in database structure")
@@ -193,12 +190,10 @@ final class SynonymMetadataTests: XCTestCase, @unchecked Sendable {
         try await createSynonym(name: synonymName, forObject: tableName)
 
         // Insert via the base table
-        _ = try await client.withConnection { connection in
-            try await connection.insertRow(into: tableName, values: [
-                "id": .int(1),
-                "name": .nString("via_table")
-            ])
-        }
+        _ = try await client.admin.insertRow(into: tableName, values: [
+            "id": .int(1),
+            "name": .nString("via_table")
+        ])
 
         // Query via the synonym
         let result = try await client.query("SELECT * FROM [dbo].[\(synonymName)]")

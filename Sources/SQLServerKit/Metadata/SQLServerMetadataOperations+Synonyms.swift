@@ -15,7 +15,7 @@ extension SQLServerMetadataOperations {
 
         var predicates: [String] = []
         if let schema {
-            predicates.append("s.name = N'\(Self.escapeLiteral(schema))'")
+            predicates.append("s.name = N'\(SQLServerSQL.escapeLiteral(schema))'")
         }
         let whereClause = predicates.isEmpty ? "" : "WHERE " + predicates.joined(separator: " AND ")
 

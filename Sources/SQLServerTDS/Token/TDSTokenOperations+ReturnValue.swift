@@ -33,33 +33,28 @@ extension TDSTokenOperations {
             guard let len = buffer.readInteger(endianness: .little, as: UInt32.self) else { throw TDSError.needMoreData }
             length = Int(len)
         case .xml:
-            if let schemaPresent = buffer.readInteger(as: UInt8.self), schemaPresent != 0 {
-                if let dbChars = buffer.readInteger(as: UInt8.self) {
-                    guard buffer.readBytes(length: Int(dbChars) * 2) != nil else { throw TDSError.needMoreData }
-                }
-                if let ownerChars = buffer.readInteger(as: UInt8.self) {
-                    guard buffer.readBytes(length: Int(ownerChars) * 2) != nil else { throw TDSError.needMoreData }
-                }
-                if let collectionChars = buffer.readInteger(endianness: .little, as: UInt16.self) {
-                    guard buffer.readBytes(length: Int(collectionChars) * 2) != nil else { throw TDSError.needMoreData }
-                }
+            guard let schemaPresent = buffer.readInteger(as: UInt8.self) else { throw TDSError.needMoreData }
+            if schemaPresent != 0 {
+                guard let dbChars = buffer.readInteger(as: UInt8.self),
+                      buffer.readBytes(length: Int(dbChars) * 2) != nil,
+                      let ownerChars = buffer.readInteger(as: UInt8.self),
+                      buffer.readBytes(length: Int(ownerChars) * 2) != nil,
+                      let collectionChars = buffer.readInteger(endianness: .little, as: UInt16.self),
+                      buffer.readBytes(length: Int(collectionChars) * 2) != nil
+                else { throw TDSError.needMoreData }
             }
             length = 0xFFFF
         case .clrUdt:
             guard let maxLen = buffer.readInteger(endianness: .little, as: UInt16.self) else { throw TDSError.needMoreData }
             length = Int(maxLen)
-            if let dbChars = buffer.readInteger(as: UInt8.self) {
-                guard buffer.readBytes(length: Int(dbChars) * 2) != nil else { throw TDSError.needMoreData }
-            }
-            if let ownerChars = buffer.readInteger(as: UInt8.self) {
-                guard buffer.readBytes(length: Int(ownerChars) * 2) != nil else { throw TDSError.needMoreData }
-            }
-            if let typeChars = buffer.readInteger(as: UInt8.self) {
-                guard buffer.readBytes(length: Int(typeChars) * 2) != nil else { throw TDSError.needMoreData }
-            }
-            if let assemblyChars = buffer.readInteger(endianness: .little, as: UInt16.self) {
-                guard buffer.readBytes(length: Int(assemblyChars) * 2) != nil else { throw TDSError.needMoreData }
-            }
+            guard let dbChars = buffer.readInteger(as: UInt8.self),
+                  buffer.readBytes(length: Int(dbChars) * 2) != nil else { throw TDSError.needMoreData }
+            guard let ownerChars = buffer.readInteger(as: UInt8.self),
+                  buffer.readBytes(length: Int(ownerChars) * 2) != nil else { throw TDSError.needMoreData }
+            guard let typeChars = buffer.readInteger(as: UInt8.self),
+                  buffer.readBytes(length: Int(typeChars) * 2) != nil else { throw TDSError.needMoreData }
+            guard let assemblyChars = buffer.readInteger(endianness: .little, as: UInt16.self),
+                  buffer.readBytes(length: Int(assemblyChars) * 2) != nil else { throw TDSError.needMoreData }
         case .char, .varchar, .nchar, .nvarchar, .binary, .varbinary:
             guard let len = buffer.readInteger(endianness: .little, as: UInt16.self) else { throw TDSError.needMoreData }
             length = Int(len)
@@ -98,7 +93,7 @@ extension TDSTokenOperations {
             scale = s
         }
 
-        let metadata = TDSTokens.ColMetadataToken.ColumnData(
+        var metadata = TDSTokens.ColMetadataToken.ColumnData(
             userType: userType,
             flags: flags,
             dataType: dataType,
@@ -109,6 +104,10 @@ extension TDSTokenOperations {
             precision: precision,
             scale: scale
         )
+        // An encrypted output parameter carries CryptoMetaData after its TYPE_INFO.
+        if columnEncryption, flags & TDSTokens.ColMetadataToken.ColumnData.encryptedFlag != 0 {
+            metadata.encryption = try Self.readCryptoMetadata(from: &buffer, cekTable: [])
+        }
 
         let value = try readTypedValue(from: &buffer, column: metadata, allocator: allocator)
         streamParser.position = buffer.readerIndex
@@ -215,13 +214,8 @@ extension TDSTokenOperations {
         case .xml:
             return try readPLPPayload()
         case .clrUdt:
-            let savedIndex = buffer.readerIndex
-            do {
-                return try readPLPPayload()
-            } catch TDSError.needMoreData {
-                buffer.moveReaderIndex(to: savedIndex)
-                return try readUShortLengthPayload()
-            }
+            // See parseColumnValue: UDT values are PLP on TDS 7.2+.
+            return column.length == 0 ? try readUShortLengthPayload() : try readPLPPayload()
         case .json, .vector:
             return column.length >= 0xFFFF ? try readPLPPayload() : try readUShortLengthPayload()
         case .sqlVariant:

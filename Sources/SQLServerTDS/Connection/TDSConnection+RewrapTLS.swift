@@ -20,7 +20,7 @@ import Logging
 /// by TDSRequestHandler and replaced with fresh decoder/encoder handlers that sit
 /// after the SSL handler (so all TDS traffic flows through TLS transparently).
 public final class PipelineOrganizationHandler: ChannelDuplexHandler, RemovableChannelHandler {
-    public typealias InboundIn = ByteBuffer
+    public typealias InboundIn = TDSPacketChunk
     public typealias InboundOut = ByteBuffer
     public typealias OutboundIn = ByteBuffer
     public typealias OutboundOut = TDSPacket
@@ -60,7 +60,7 @@ public final class PipelineOrganizationHandler: ChannelDuplexHandler, RemovableC
     private func _channelRead(context: ChannelHandlerContext, data: NIOAny) throws {
         switch self.state {
         case .sslHandshake(var sslHandshakeState):
-            let buffer = self.unwrapInboundIn(data)
+            let buffer = self.unwrapInboundIn(data).payload
             sslHandshakeState.addReceivedData(buffer)
             logger.debug("Forwarding \(buffer.readableBytes) bytes of TLS data from PRELOGIN response")
             self.state = .sslHandshake(sslHandshakeState)

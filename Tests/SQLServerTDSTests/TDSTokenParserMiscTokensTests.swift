@@ -6,9 +6,13 @@ final class TDSTokenOperationsMiscTokensTests: XCTestCase, @unchecked Sendable {
     func testParseFeatureExtAckAndFedAuthInfo() throws {
         var buffer = ByteBufferAllocator().buffer(capacity: 16)
         buffer.writeInteger(TDSTokens.TokenType.featureExtAck.rawValue)
+        // FeatureAckDataLen is a DWORD (MS-TDS 2.2.7.11).
         buffer.writeInteger(UInt8(0x01))
-        buffer.writeInteger(UInt16(4), endianness: .little)
+        buffer.writeInteger(UInt32(4), endianness: .little)
         buffer.writeBytes([0xDE, 0xAD, 0xBE, 0xEF])
+        buffer.writeInteger(UInt8(0x04)) // COLUMNENCRYPTION, version 1
+        buffer.writeInteger(UInt32(1), endianness: .little)
+        buffer.writeInteger(UInt8(0x01))
         buffer.writeInteger(UInt8(0xFF))
         buffer.writeInteger(TDSTokens.TokenType.fedAuthInfo.rawValue)
         buffer.writeInteger(UInt32(1), endianness: .little)
@@ -21,7 +25,8 @@ final class TDSTokenOperationsMiscTokensTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(tokens.count, 2)
 
         let feat = try XCTUnwrap(tokens[0] as? TDSTokens.FeatureExtAckToken)
-        XCTAssertEqual(feat.payload.readableBytes, 8)
+        XCTAssertEqual(feat.payload.readableBytes, 1 + 4 + 4 + 1 + 4 + 1 + 1)
+        XCTAssertEqual(feat.features, [0x01: [0xDE, 0xAD, 0xBE, 0xEF], 0x04: [0x01]])
 
         let fed = try XCTUnwrap(tokens[1] as? TDSTokens.FedAuthInfoToken)
         XCTAssertEqual(fed.payload.readableBytes, 1)

@@ -48,7 +48,7 @@ public struct SQLServerErrorLogEntry: Sendable, Identifiable {
 /// Usage:
 /// ```swift
 /// let archives = try await client.errorLog.listErrorLogs()
-/// let entries = try await client.errorLog.readErrorLog(archiveNumber: 0, filter1: "Login")
+/// let entries = try await client.errorLog.getErrorLogEntries(archiveNumber: 0, filter1: "Login")
 /// try await client.errorLog.cycleErrorLog()
 /// ```
 public final class SQLServerErrorLogClient: @unchecked Sendable {
@@ -86,7 +86,7 @@ public final class SQLServerErrorLogClient: @unchecked Sendable {
 
     // MARK: - Read Error Log
 
-    /// Reads entries from a specific error log archive with optional text filters.
+    /// Returns entries from a specific error log archive with optional text filters.
     ///
     /// - Parameters:
     ///   - archiveNumber: The archive number to read (0 = current log).
@@ -95,7 +95,7 @@ public final class SQLServerErrorLogClient: @unchecked Sendable {
     ///   - filter2: Optional second search string — further narrows results to entries also containing this text.
     /// - Returns: An array of error log entries matching the filters.
     @available(macOS 12.0, *)
-    public func readErrorLog(
+    public func getErrorLogEntries(
         archiveNumber: Int = 0,
         product: SQLServerErrorLogProduct = .sqlServer,
         filter1: String? = nil,
@@ -122,6 +122,17 @@ public final class SQLServerErrorLogClient: @unchecked Sendable {
                 text: row.column("Text")?.string ?? ""
             )
         }
+    }
+
+    @available(*, deprecated, renamed: "getErrorLogEntries(archiveNumber:product:filter1:filter2:)")
+    @available(macOS 12.0, *)
+    public func readErrorLog(
+        archiveNumber: Int = 0,
+        product: SQLServerErrorLogProduct = .sqlServer,
+        filter1: String? = nil,
+        filter2: String? = nil
+    ) async throws -> [SQLServerErrorLogEntry] {
+        try await getErrorLogEntries(archiveNumber: archiveNumber, product: product, filter1: filter1, filter2: filter2)
     }
 
     // MARK: - Cycle Error Log

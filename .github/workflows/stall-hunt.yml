@@ -1,0 +1,85 @@
+name: "Stall hunt"
+
+# Manually run: loops the full suite against SQL Server and, when a run stops printing for six
+# minutes, dumps every thread's backtrace (gdb) before stopping it. Used to find an intermittent
+# hang where a connection attempt never completed.
+
+on:
+  push:
+    branches: [stall-hunt]
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "Suite runs per job"
+        default: "6"
+      version:
+        description: "SQL Server version"
+        default: "2019"
+
+env:
+  SWIFT_VERSION: "6.2.4"
+  SA_PASSWORD: "Ci_sqlserver-nio_1"
+
+jobs:
+  hunt:
+    name: "Stall hunt ${{ matrix.job }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        job: [1, 2, 3]
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:${{ inputs.version || '2019' }}-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "Ci_sqlserver-nio_1"
+          MSSQL_AGENT_ENABLED: "true"
+        ports:
+          - 1433:1433
+    env:
+      SQLSERVER_TEST_URL: "sqlserver://sa:Ci_sqlserver-nio_1@localhost:1433/master?encrypt=mandatory&trustServerCertificate=true"
+      SQLSERVER_TEST_REQUIRED: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: swift-actions/setup-swift@v3
+        with:
+          swift-version: ${{ env.SWIFT_VERSION }}
+          skip-verify-signature: true
+      - name: Build
+        run: swift build --build-tests
+      - name: Install gdb
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq gdb
+      - name: Wait for SQL Server and restore AdventureWorks
+        run: .github/scripts/prepare-sqlserver.sh "${{ job.services.sqlserver.id }}" "$SA_PASSWORD" "${{ inputs.version || '2019' }}"
+      - name: Loop the suite until a run stalls
+        run: |
+          mkdir -p hunt
+          for i in $(seq 1 ${{ inputs.runs || '6' }}); do
+            log="hunt/run-$i.log"
+            swift test --skip-build --skip 'TLSCertificateTests|NetworkFaultTests|AvailabilityGroupRoutingTests|KerberosLoginTests' > "$log" 2>&1 &
+            pid=$!; last=0; still=0
+            while kill -0 $pid 2>/dev/null; do
+              sleep 15
+              size=$(wc -c < "$log")
+              if [ "$size" = "$last" ]; then still=$((still + 15)); else still=0; last=$size; fi
+              if [ $still -ge 360 ]; then
+                echo "::error::Run $i stalled; last line: $(tail -1 "$log" | cut -c1-300)"
+                for p in $(pgrep -f 'PackageTests.xctest'); do
+                  sudo gdb -p "$p" -batch -ex "set pagination off" -ex "thread apply all bt" > "hunt/stacks-$i-$p.txt" 2>&1 || true
+                done
+                tail -200 "$log" > "hunt/stall-tail-$i.log"
+                kill $pid 2>/dev/null; pkill -f 'PackageTests.xctest' || true
+                exit 1
+              fi
+            done
+            echo "run $i: $(grep -c 'passed (' "$log") passed, $(grep -c 'failed (' "$log") failed"
+          done
+      - name: Upload stacks and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stall-hunt-${{ matrix.job }}
+          path: hunt/
+          retention-days: 7

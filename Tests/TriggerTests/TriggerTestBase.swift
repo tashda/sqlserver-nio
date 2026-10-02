@@ -1,6 +1,7 @@
 import XCTest
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 class TriggerTestBase: XCTestCase, @unchecked Sendable {
     var client: SQLServerClient!
@@ -10,13 +11,9 @@ class TriggerTestBase: XCTestCase, @unchecked Sendable {
     var tablesToDrop: [String] = []
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
 
         // Ensure Docker is started if requested
-        if envFlagEnabled("USE_DOCKER") {
-            try SQLServerDockerManager.shared.startIfNeeded()
-        }
-
         let config = makeSQLServerClientConfiguration()
         self.client = try await SQLServerClient.connect(configuration: config, numberOfThreads: 1)
         self.triggerClient = SQLServerTriggerClient(client: client)
@@ -26,7 +23,7 @@ class TriggerTestBase: XCTestCase, @unchecked Sendable {
 
     override func tearDown() async throws {
         for trigger in triggersToDrop {
-            try? await triggerClient.dropTrigger(name: trigger.name, schema: trigger.schema).get()
+            try? await triggerClient.dropTrigger(name: trigger.name, schema: trigger.schema)
         }
         triggersToDrop.removeAll()
 

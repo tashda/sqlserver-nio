@@ -1,6 +1,7 @@
 import XCTest
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 class ConstraintTestBase: XCTestCase, @unchecked Sendable {
     var baseClient: SQLServerClient!
@@ -11,11 +12,7 @@ class ConstraintTestBase: XCTestCase, @unchecked Sendable {
 
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables()
-
-        if envFlagEnabled("USE_DOCKER") {
-            try SQLServerDockerManager.shared.startIfNeeded()
-        }
+        try requireSQLServerTestServer()
 
         self.baseClient = try await SQLServerClient.connect(
             configuration: makeSQLServerClientConfiguration(),
@@ -60,10 +57,8 @@ class ConstraintTestBase: XCTestCase, @unchecked Sendable {
         ]
 
         try await self.adminClient.createTable(name: name, columns: columns)
-        try await self.client.withConnection { connection in
-            try await connection.insertRow(into: name, values: ["id": .int(1), "category_name": .nString("Category A")])
-            try await connection.insertRow(into: name, values: ["id": .int(2), "category_name": .nString("Category B")])
-            try await connection.insertRow(into: name, values: ["id": .int(3), "category_name": .nString("Category C")])
-        }
+        _ = try await adminClient.insertRow(into: name, values: ["id": .int(1), "category_name": .nString("Category A")])
+        _ = try await adminClient.insertRow(into: name, values: ["id": .int(2), "category_name": .nString("Category B")])
+        _ = try await adminClient.insertRow(into: name, values: ["id": .int(3), "category_name": .nString("Category C")])
     }
 }

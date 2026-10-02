@@ -1,6 +1,7 @@
 import XCTest
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 @available(macOS 12.0, *)
 final class ExecutionPlanTests: XCTestCase, @unchecked Sendable {
@@ -10,11 +11,7 @@ final class ExecutionPlanTests: XCTestCase, @unchecked Sendable {
 
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables()
-
-        if envFlagEnabled("USE_DOCKER") {
-            try SQLServerDockerManager.shared.startIfNeeded()
-        }
+        try requireSQLServerTestServer()
 
         let config = makeSQLServerClientConfiguration()
         self.client = try await SQLServerClient.connect(configuration: config, numberOfThreads: 1)

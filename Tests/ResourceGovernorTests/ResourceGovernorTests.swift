@@ -1,6 +1,7 @@
 import XCTest
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 /// Integration tests for Resource Governor (`client.resourceGovernor`).
 ///
@@ -11,11 +12,7 @@ final class ResourceGovernorTests: XCTestCase, @unchecked Sendable {
     private var client: SQLServerClient!
 
     override func setUp() async throws {
-        TestEnvironmentManager.loadEnvironmentVariables()
-
-        if envFlagEnabled("USE_DOCKER") {
-            try SQLServerDockerManager.shared.startIfNeeded()
-        }
+        try requireSQLServerTestServer()
 
         let config = makeSQLServerClientConfiguration()
         self.client = try await SQLServerClient.connect(
@@ -109,9 +106,9 @@ final class ResourceGovernorTests: XCTestCase, @unchecked Sendable {
         }
 
         do {
-            // Disable Resource Governor
+            // Disable Resource Governor. RECONFIGURE would enable it again,
+            // so it is only issued when re-enabling.
             try await client.resourceGovernor.disable()
-            try await client.resourceGovernor.reconfigure()
 
             let disabledConfig = try await client.resourceGovernor.fetchConfiguration()
             XCTAssertFalse(disabledConfig.isEnabled, "Resource Governor should be disabled")

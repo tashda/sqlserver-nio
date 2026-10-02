@@ -1,5 +1,6 @@
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 import XCTest
 import Logging
 
@@ -8,7 +9,7 @@ final class SQLServerServiceBrokerClientTests: XCTestCase, @unchecked Sendable {
 
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
         client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
         do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1") } } catch { throw error }
     }
@@ -34,6 +35,43 @@ final class SQLServerServiceBrokerClientTests: XCTestCase, @unchecked Sendable {
         } catch let e as SQLServerError {
             if case .connectionClosed = e { throw XCTSkip("Connection closed during Service Broker test") }
             throw e
+        }
+    }
+
+    // MARK: - Messages
+
+    @available(macOS 12.0, *)
+    func testSendLeavesAMessageInTheTargetQueue() async throws {
+        try await withTemporaryDatabase(client: self.client, prefix: "tmp_sbsend") { db in
+            _ = try await self.client.admin.alterDatabaseOption(name: db, option: .brokerEnabled(true))
+            let broker = self.client.serviceBroker
+            try await broker.createMessageType(database: db, name: "OrderMessage", validation: .wellFormedXML)
+            try await broker.createContract(database: db, name: "OrderContract", messageUsages: [("OrderMessage", .initiator)])
+            try await broker.createQueue(database: db, name: "SenderQueue")
+            try await broker.createQueue(database: db, name: "OrderQueue")
+            try await broker.createService(database: db, name: "SenderService", queue: "SenderQueue")
+            try await broker.createService(database: db, name: "OrderService", queue: "OrderQueue", contracts: ["OrderContract"])
+
+            let handle = try await broker.send(database: db, fromService: "SenderService", toService: "OrderService",
+                                               contract: "OrderContract", messageType: "OrderMessage", body: "<order id=\"1\"/>")
+            XCTAssertEqual(handle.count, 36)
+            let waiting = try await broker.messageCount(database: db, queue: "OrderQueue")
+            XCTAssertEqual(waiting, 1)
+        }
+    }
+
+    @available(macOS 12.0, *)
+    func testActivationProcedureInAnotherSchema() async throws {
+        try await withTemporaryDatabase(client: self.client, prefix: "tmp_sbact") { db in
+            _ = try await self.client.admin.alterDatabaseOption(name: db, option: .brokerEnabled(true))
+            try await self.client.withDatabase(db) { connection in
+                _ = try await connection.execute("CREATE SCHEMA ops")
+                _ = try await connection.execute("CREATE PROCEDURE ops.usp_Drain AS RETURN 0")
+            }
+            try await self.client.serviceBroker.createQueue(database: db, name: "DrainQueue", options: .init(
+                activationEnabled: true, activationProcedure: "usp_Drain", executeAs: "OWNER", activationProcedureSchema: "ops"))
+            let queue = try await self.client.serviceBroker.listQueues(database: db).first { $0.name == "DrainQueue" }
+            XCTAssertNotNil(queue)
         }
     }
 

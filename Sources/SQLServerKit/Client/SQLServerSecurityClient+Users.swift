@@ -53,27 +53,27 @@ extension SQLServerSecurityClient {
         type: DatabaseUserType,
         options: UserOptions = UserOptions()
     ) async throws {
-        let escapedUserName = Self.escapeIdentifier(name)
+        let escapedUserName = SQLServerSQL.escapeIdentifier(name)
         var sql = "CREATE USER \(escapedUserName)"
 
         switch type {
         case .mappedToLogin(let login), .windowsUser(let login):
-            sql += " FOR LOGIN \(Self.escapeIdentifier(login))"
+            sql += " FOR LOGIN \(SQLServerSQL.escapeIdentifier(login))"
         case .withPassword(let password):
             let escapedPassword = password.replacingOccurrences(of: "'", with: "''")
             sql += " WITH PASSWORD = N'\(escapedPassword)'"
         case .withoutLogin:
             sql += " WITHOUT LOGIN"
         case .mappedToCertificate(let certName):
-            sql += " FOR CERTIFICATE \(Self.escapeIdentifier(certName))"
+            sql += " FOR CERTIFICATE \(SQLServerSQL.escapeIdentifier(certName))"
         case .mappedToAsymmetricKey(let keyName):
-            sql += " FOR ASYMMETRIC KEY \(Self.escapeIdentifier(keyName))"
+            sql += " FOR ASYMMETRIC KEY \(SQLServerSQL.escapeIdentifier(keyName))"
         }
 
         var withClauses: [String] = []
 
         if let defaultSchema = options.defaultSchema {
-            withClauses.append("DEFAULT_SCHEMA = \(Self.escapeIdentifier(defaultSchema))")
+            withClauses.append("DEFAULT_SCHEMA = \(SQLServerSQL.escapeIdentifier(defaultSchema))")
         }
 
         if let defaultLanguage = options.defaultLanguage {
@@ -112,7 +112,7 @@ extension SQLServerSecurityClient {
     
     @available(macOS 12.0, *)
     public func dropUser(name: String) async throws {
-        let escapedUserName = Self.escapeIdentifier(name)
+        let escapedUserName = SQLServerSQL.escapeIdentifier(name)
         let sql = "DROP USER \(escapedUserName)"
         _ = try await exec(sql)
     }
@@ -142,23 +142,23 @@ extension SQLServerSecurityClient {
         defaultSchema: String? = nil,
         login: String? = nil
     ) async throws {
-        let escapedUserName = Self.escapeIdentifier(name)
+        let escapedUserName = SQLServerSQL.escapeIdentifier(name)
         var sql = "ALTER USER \(escapedUserName)"
         
         var withClauses: [String] = []
         
         if let newName = newName {
-            let escapedNewName = Self.escapeIdentifier(newName)
+            let escapedNewName = SQLServerSQL.escapeIdentifier(newName)
             sql += " WITH NAME = \(escapedNewName)"
         }
         
         if let defaultSchema = defaultSchema {
-            let escapedSchema = Self.escapeIdentifier(defaultSchema)
+            let escapedSchema = SQLServerSQL.escapeIdentifier(defaultSchema)
             withClauses.append("DEFAULT_SCHEMA = \(escapedSchema)")
         }
         
         if let login = login {
-            let escapedLogin = Self.escapeIdentifier(login)
+            let escapedLogin = SQLServerSQL.escapeIdentifier(login)
             withClauses.append("LOGIN = \(escapedLogin)")
         }
         

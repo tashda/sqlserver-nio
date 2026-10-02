@@ -1,18 +1,15 @@
 import XCTest
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 final class ServerConfigurationTests: XCTestCase, @unchecked Sendable {
     var client: SQLServerClient!
 
     override func setUp() async throws {
         continueAfterFailure = false
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
         _ = isLoggingConfigured
-
-        if envFlagEnabled("USE_DOCKER") {
-            try SQLServerDockerManager.shared.startIfNeeded()
-        }
 
         self.client = try await SQLServerClient.connect(
             configuration: makeSQLServerClientConfiguration(),

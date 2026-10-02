@@ -17,10 +17,6 @@ public final class SQLServerPolyBaseClient: @unchecked Sendable {
         self.client = client
     }
 
-    private static func escapeIdentifier(_ identifier: String) -> String {
-        "[\(identifier.replacingOccurrences(of: "]", with: "]]"))]"
-    }
-
     /// Checks whether PolyBase is installed on this SQL Server instance.
     @available(macOS 12.0, *)
     public func isPolyBaseInstalled() async throws -> Bool {
@@ -34,7 +30,7 @@ public final class SQLServerPolyBaseClient: @unchecked Sendable {
     /// Lists all external data sources in the database.
     @available(macOS 12.0, *)
     public func listExternalDataSources(database: String) async throws -> [ExternalDataSource] {
-        let db = Self.escapeIdentifier(database)
+        let db = SQLServerSQL.escapeIdentifier(database)
         let sql = """
         SELECT
             eds.name,
@@ -64,8 +60,8 @@ public final class SQLServerPolyBaseClient: @unchecked Sendable {
     /// Drops an external data source.
     @available(macOS 12.0, *)
     public func dropExternalDataSource(database: String, name: String) async throws {
-        let db = Self.escapeIdentifier(database)
-        let escaped = Self.escapeIdentifier(name)
+        let db = SQLServerSQL.escapeIdentifier(database)
+        let escaped = SQLServerSQL.escapeIdentifier(name)
         _ = try await client.execute("USE \(db); DROP EXTERNAL DATA SOURCE \(escaped)")
     }
 
@@ -74,7 +70,7 @@ public final class SQLServerPolyBaseClient: @unchecked Sendable {
     /// Lists all external tables in the database.
     @available(macOS 12.0, *)
     public func listExternalTables(database: String) async throws -> [ExternalTable] {
-        let db = Self.escapeIdentifier(database)
+        let db = SQLServerSQL.escapeIdentifier(database)
         let sql = """
         SELECT
             s.name AS schema_name,
@@ -107,8 +103,8 @@ public final class SQLServerPolyBaseClient: @unchecked Sendable {
     /// Drops an external table.
     @available(macOS 12.0, *)
     public func dropExternalTable(database: String, schema: String, name: String) async throws {
-        let db = Self.escapeIdentifier(database)
-        let qualified = "\(Self.escapeIdentifier(schema)).\(Self.escapeIdentifier(name))"
+        let db = SQLServerSQL.escapeIdentifier(database)
+        let qualified = "\(SQLServerSQL.escapeIdentifier(schema)).\(SQLServerSQL.escapeIdentifier(name))"
         _ = try await client.execute("USE \(db); DROP EXTERNAL TABLE \(qualified)")
     }
 
@@ -117,7 +113,7 @@ public final class SQLServerPolyBaseClient: @unchecked Sendable {
     /// Lists all external file formats in the database.
     @available(macOS 12.0, *)
     public func listExternalFileFormats(database: String) async throws -> [ExternalFileFormat] {
-        let db = Self.escapeIdentifier(database)
+        let db = SQLServerSQL.escapeIdentifier(database)
         let sql = """
         SELECT
             name,
@@ -142,8 +138,8 @@ public final class SQLServerPolyBaseClient: @unchecked Sendable {
     /// Drops an external file format.
     @available(macOS 12.0, *)
     public func dropExternalFileFormat(database: String, name: String) async throws {
-        let db = Self.escapeIdentifier(database)
-        let escaped = Self.escapeIdentifier(name)
+        let db = SQLServerSQL.escapeIdentifier(database)
+        let escaped = SQLServerSQL.escapeIdentifier(name)
         _ = try await client.execute("USE \(db); DROP EXTERNAL FILE FORMAT \(escaped)")
     }
 
@@ -159,12 +155,12 @@ public final class SQLServerPolyBaseClient: @unchecked Sendable {
         credential: String? = nil,
         resourceManagerLocation: String? = nil
     ) async throws {
-        let db = Self.escapeIdentifier(database)
-        var withParts = ["LOCATION = N'\(Self.escapeLiteral(location))'"]
+        let db = SQLServerSQL.escapeIdentifier(database)
+        var withParts = ["LOCATION = N'\(SQLServerSQL.escapeLiteral(location))'"]
         if let type, type != .unknown { withParts.append("TYPE = \(type.rawValue)") }
-        if let cred = credential { withParts.append("CREDENTIAL = \(Self.escapeIdentifier(cred))") }
-        if let rml = resourceManagerLocation { withParts.append("RESOURCE_MANAGER_LOCATION = N'\(Self.escapeLiteral(rml))'") }
-        let sql = "USE \(db); CREATE EXTERNAL DATA SOURCE \(Self.escapeIdentifier(name)) WITH (\(withParts.joined(separator: ", ")))"
+        if let cred = credential { withParts.append("CREDENTIAL = \(SQLServerSQL.escapeIdentifier(cred))") }
+        if let rml = resourceManagerLocation { withParts.append("RESOURCE_MANAGER_LOCATION = N'\(SQLServerSQL.escapeLiteral(rml))'") }
+        let sql = "USE \(db); CREATE EXTERNAL DATA SOURCE \(SQLServerSQL.escapeIdentifier(name)) WITH (\(withParts.joined(separator: ", ")))"
         _ = try await client.execute(sql)
     }
 
@@ -180,14 +176,14 @@ public final class SQLServerPolyBaseClient: @unchecked Sendable {
         dateFormat: String? = nil,
         useTypeDefault: Bool? = nil
     ) async throws {
-        let db = Self.escapeIdentifier(database)
+        let db = SQLServerSQL.escapeIdentifier(database)
         var withParts = ["FORMAT_TYPE = \(formatType.rawValue)"]
-        if let ft = fieldTerminator { withParts.append("FIELD_TERMINATOR = N'\(Self.escapeLiteral(ft))'") }
-        if let sd = stringDelimiter { withParts.append("STRING_DELIMITER = N'\(Self.escapeLiteral(sd))'") }
+        if let ft = fieldTerminator { withParts.append("FIELD_TERMINATOR = N'\(SQLServerSQL.escapeLiteral(ft))'") }
+        if let sd = stringDelimiter { withParts.append("STRING_DELIMITER = N'\(SQLServerSQL.escapeLiteral(sd))'") }
         if let fr = firstRow { withParts.append("FIRST_ROW = \(fr)") }
-        if let df = dateFormat { withParts.append("DATE_FORMAT = N'\(Self.escapeLiteral(df))'") }
+        if let df = dateFormat { withParts.append("DATE_FORMAT = N'\(SQLServerSQL.escapeLiteral(df))'") }
         if let utd = useTypeDefault { withParts.append("USE_TYPE_DEFAULT = \(utd ? "TRUE" : "FALSE")") }
-        let sql = "USE \(db); CREATE EXTERNAL FILE FORMAT \(Self.escapeIdentifier(name)) WITH (\(withParts.joined(separator: ", ")))"
+        let sql = "USE \(db); CREATE EXTERNAL FILE FORMAT \(SQLServerSQL.escapeIdentifier(name)) WITH (\(withParts.joined(separator: ", ")))"
         _ = try await client.execute(sql)
     }
 
@@ -207,21 +203,17 @@ public final class SQLServerPolyBaseClient: @unchecked Sendable {
         guard !columns.isEmpty else {
             throw SQLServerError.invalidArgument("At least one column is required")
         }
-        let db = Self.escapeIdentifier(database)
-        let qualified = "\(Self.escapeIdentifier(schema)).\(Self.escapeIdentifier(name))"
-        let colDefs = columns.map { "\(Self.escapeIdentifier($0.name)) \($0.dataType)" }.joined(separator: ",\n    ")
+        let db = SQLServerSQL.escapeIdentifier(database)
+        let qualified = "\(SQLServerSQL.escapeIdentifier(schema)).\(SQLServerSQL.escapeIdentifier(name))"
+        let colDefs = columns.map { "\(SQLServerSQL.escapeIdentifier($0.name)) \($0.dataType)" }.joined(separator: ",\n    ")
         var withParts = [
-            "LOCATION = N'\(Self.escapeLiteral(location))'",
-            "DATA_SOURCE = \(Self.escapeIdentifier(dataSource))"
+            "LOCATION = N'\(SQLServerSQL.escapeLiteral(location))'",
+            "DATA_SOURCE = \(SQLServerSQL.escapeIdentifier(dataSource))"
         ]
-        if let ff = fileFormat { withParts.append("FILE_FORMAT = \(Self.escapeIdentifier(ff))") }
+        if let ff = fileFormat { withParts.append("FILE_FORMAT = \(SQLServerSQL.escapeIdentifier(ff))") }
         if let rt = rejectType { withParts.append("REJECT_TYPE = \(rt)") }
         if let rv = rejectValue { withParts.append("REJECT_VALUE = \(rv)") }
         let sql = "USE \(db); CREATE EXTERNAL TABLE \(qualified) (\n    \(colDefs)\n) WITH (\(withParts.joined(separator: ", ")))"
         _ = try await client.execute(sql)
-    }
-
-    private static func escapeLiteral(_ literal: String) -> String {
-        literal.replacingOccurrences(of: "'", with: "''")
     }
 }

@@ -26,10 +26,31 @@ public struct ServerLoginInfo: Sendable {
     public let name: String
     public let type: ServerLoginType
     public let isDisabled: Bool
+    public let isLocked: Bool?
     public let defaultDatabase: String?
     public let defaultLanguage: String?
     public let isPolicyChecked: Bool?
     public let isExpirationChecked: Bool?
+
+    public init(
+        name: String,
+        type: ServerLoginType,
+        isDisabled: Bool,
+        isLocked: Bool? = nil,
+        defaultDatabase: String? = nil,
+        defaultLanguage: String? = nil,
+        isPolicyChecked: Bool? = nil,
+        isExpirationChecked: Bool? = nil
+    ) {
+        self.name = name
+        self.type = type
+        self.isDisabled = isDisabled
+        self.isLocked = isLocked
+        self.defaultDatabase = defaultDatabase
+        self.defaultLanguage = defaultLanguage
+        self.isPolicyChecked = isPolicyChecked
+        self.isExpirationChecked = isExpirationChecked
+    }
 }
 
 public enum DatabasePrincipalType: String, Sendable {
@@ -246,7 +267,47 @@ public struct LoginDatabaseMapping: Sendable {
     }
 }
 
-// MARK: - Effective Permissions
+// MARK: - Login Editor Data
+
+public enum ConnectSQLPermissionState: String, Sendable, Codable {
+    case granted
+    case denied
+    case unspecified
+}
+
+public struct ServerLoginEditorData: Sendable {
+    public let serverName: String?
+    public let loginInfo: ServerLoginInfo?
+    public let permissionConnectToEngine: ConnectSQLPermissionState
+    public let allServerRoles: [ServerRoleInfo]
+    public let memberOfRoles: [String]
+    public let allServerPermissions: [String]
+    public let loginPermissions: [SQLServerServerSecurityClient.ServerPermissionInfo]
+    public let databaseMappings: [LoginDatabaseMapping]
+    public let availableDatabases: [String]
+
+    public init(
+        serverName: String?,
+        loginInfo: ServerLoginInfo?,
+        permissionConnectToEngine: ConnectSQLPermissionState,
+        allServerRoles: [ServerRoleInfo],
+        memberOfRoles: [String],
+        allServerPermissions: [String],
+        loginPermissions: [SQLServerServerSecurityClient.ServerPermissionInfo],
+        databaseMappings: [LoginDatabaseMapping],
+        availableDatabases: [String]
+    ) {
+        self.serverName = serverName
+        self.loginInfo = loginInfo
+        self.permissionConnectToEngine = permissionConnectToEngine
+        self.allServerRoles = allServerRoles
+        self.memberOfRoles = memberOfRoles
+        self.allServerPermissions = allServerPermissions
+        self.loginPermissions = loginPermissions
+        self.databaseMappings = databaseMappings
+        self.availableDatabases = availableDatabases
+    }
+}
 
 /// A single effective permission entry returned by `fn_my_permissions()`.
 public struct EffectivePermissionInfo: Sendable, Hashable {

@@ -1,4 +1,4 @@
-@testable import SQLServerKit
+import SQLServerKit
 import XCTest
 import Foundation
 import SQLServerTDS

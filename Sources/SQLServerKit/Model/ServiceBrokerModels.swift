@@ -142,6 +142,8 @@ public struct QueueCreationOptions: Sendable {
     public var retention: Bool
     public var activationEnabled: Bool
     public var activationProcedure: String?
+    /// The activation procedure's schema; nil leaves the name unqualified (the queue's schema rules).
+    public var activationProcedureSchema: String?
     public var maxQueueReaders: Int
     public var executeAs: String?
     public var poisonMessageHandling: Bool
@@ -153,7 +155,8 @@ public struct QueueCreationOptions: Sendable {
         activationProcedure: String? = nil,
         maxQueueReaders: Int = 1,
         executeAs: String? = nil,
-        poisonMessageHandling: Bool = true
+        poisonMessageHandling: Bool = true,
+        activationProcedureSchema: String? = nil
     ) {
         self.status = status
         self.retention = retention
@@ -162,6 +165,7 @@ public struct QueueCreationOptions: Sendable {
         self.maxQueueReaders = maxQueueReaders
         self.executeAs = executeAs
         self.poisonMessageHandling = poisonMessageHandling
+        self.activationProcedureSchema = activationProcedureSchema
     }
 
     public static let defaults = QueueCreationOptions()

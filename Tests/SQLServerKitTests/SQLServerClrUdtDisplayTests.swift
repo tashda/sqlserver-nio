@@ -68,6 +68,22 @@ final class SQLServerClrUdtDisplayTests: XCTestCase, @unchecked Sendable {
 
         XCTAssertEqual(value.description, "0x7C2B78")
     }
+
+    /// One 0x before the bytes, as SSMS shows them: `description` and `string` are what callers that
+    /// do not use `toStringArray()` display.
+    func testBinaryValuesReadAsOneHexLiteral() {
+        for dataType in [TDSDataType.varbinary, .binary, .varbinaryLegacy, .binaryLegacy, .image] {
+            var buffer = ByteBufferAllocator().buffer(capacity: 3)
+            buffer.writeBytes([0x01, 0xAB, 0x00])
+            let metadata = TDSTokens.ColMetadataToken.ColumnData(
+                userType: 0, flags: 0, dataType: dataType, length: 16, precision: 0, scale: 0,
+                collation: [], colName: "b"
+            )
+            let value = SQLServerValue(base: TDSData(metadata: metadata, value: buffer))
+            XCTAssertEqual(value.string, "0x01AB00", "\(dataType)")
+            XCTAssertEqual(value.description, "0x01AB00", "\(dataType)")
+        }
+    }
 }
 
 private let hierarchyIDMetadata = TDSTokens.ColMetadataToken.ColumnData(

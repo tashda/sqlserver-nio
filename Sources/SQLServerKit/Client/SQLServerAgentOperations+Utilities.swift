@@ -13,10 +13,10 @@ extension SQLServerAgentOperations {
     }
 
     internal func lookupJobId(jobName: String) -> EventLoopFuture<String> {
-        let sql = "SELECT CONVERT(nvarchar(36), job_id) AS job_id FROM msdb.dbo.sysjobs WHERE name = N'\(Self.escapeLiteral(jobName))'"
+        let sql = "SELECT CONVERT(nvarchar(36), job_id) AS job_id FROM msdb.dbo.sysjobs WHERE name = N'\(SQLServerSQL.escapeLiteral(jobName))'"
         return run(sql).flatMapThrowing { rows in
             guard let id = rows.first?.column("job_id")?.string, !id.isEmpty else {
-                throw NSError(domain: "SQLServerAgentOperations", code: 2, userInfo: [NSLocalizedDescriptionKey: "Agent job not found: \(jobName)"])
+                throw SQLServerError.invalidArgument("Agent job not found: \(jobName)")
             }
             return id
         }
@@ -27,11 +27,11 @@ extension SQLServerAgentOperations {
         SELECT s.step_id
         FROM msdb.dbo.sysjobsteps AS s
         INNER JOIN msdb.dbo.sysjobs AS j ON s.job_id = j.job_id
-        WHERE j.name = N'\(Self.escapeLiteral(jobName))' AND s.step_name = N'\(Self.escapeLiteral(stepName))';
+        WHERE j.name = N'\(SQLServerSQL.escapeLiteral(jobName))' AND s.step_name = N'\(SQLServerSQL.escapeLiteral(stepName))';
         """
         return run(sql).flatMapThrowing { rows in
             guard let id = rows.first?.column("step_id")?.int else {
-                throw NSError(domain: "SQLServerAgentOperations", code: 3, userInfo: [NSLocalizedDescriptionKey: "Agent job step not found: \(jobName).\(stepName)"])
+                throw SQLServerError.invalidArgument("Agent job step not found: \(jobName).\(stepName)")
             }
             return id
         }

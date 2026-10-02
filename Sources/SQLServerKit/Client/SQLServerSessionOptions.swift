@@ -90,7 +90,7 @@ extension SQLServerConnection {
                 statements.append("SET FMTONLY OFF;")
             }
             if let language {
-                statements.append("SET LANGUAGE N'\(Self.escapeLiteral(language))';")
+                statements.append("SET LANGUAGE N'\(SQLServerSQL.escapeLiteral(language))';")
             }
             if let dateFormat {
                 statements.append("SET DATEFORMAT \(dateFormat);")
@@ -101,8 +101,5 @@ extension SQLServerConnection {
             return statements
         }
 
-        private static func escapeLiteral(_ value: String) -> String {
-            value.replacingOccurrences(of: "'", with: "''")
-        }
     }
 }

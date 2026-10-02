@@ -30,3 +30,28 @@ final class TDSPacketDecoderTests: XCTestCase, @unchecked Sendable {
     }
 }
 
+
+final class TDSPacketDecoderFramingTests: XCTestCase, @unchecked Sendable {
+    func testInvalidPacketLengthFailsInsteadOfStalling() throws {
+        let channel = EmbeddedChannel()
+        try channel.pipeline.syncOperations.addHandler(ByteToMessageHandler(TDSPacketDecoder(logger: Logger(label: "t"))))
+        var buffer = ByteBufferAllocator().buffer(capacity: 8)
+        buffer.writeBytes([0x04, 0x01, 0x00, 0x03, 0x00, 0x00, 0x01, 0x00]) // length 3 < header
+        XCTAssertThrowsError(try channel.writeInbound(buffer))
+    }
+
+    func testEachPacketIsDeliveredWithoutWaitingForEndOfMessage() throws {
+        let channel = EmbeddedChannel()
+        try channel.pipeline.syncOperations.addHandler(ByteToMessageHandler(TDSPacketDecoder(logger: Logger(label: "t"))))
+        var buffer = ByteBufferAllocator().buffer(capacity: 32)
+        buffer.writeBytes([0x04, 0x00, 0x00, 0x0A, 0x00, 0x00, 0x01, 0x00, 0xAA, 0xBB]) // not EOM
+        buffer.writeBytes([0x04, 0x01, 0x00, 0x09, 0x00, 0x00, 0x02, 0x00, 0xCC])       // EOM
+        try channel.writeInbound(buffer)
+        let first = try XCTUnwrap(channel.readInbound(as: TDSPacketChunk.self))
+        XCTAssertEqual(first.payload.readableBytes, 2)
+        XCTAssertFalse(first.isEndOfMessage)
+        let second = try XCTUnwrap(channel.readInbound(as: TDSPacketChunk.self))
+        XCTAssertEqual(second.payload.readableBytes, 1)
+        XCTAssertTrue(second.isEndOfMessage)
+    }
+}

@@ -139,6 +139,60 @@ public enum TDSTokens {
             public var colName: String
             public var udtInfo: UDTInfo?
             public var isView: Bool = false
+            /// Always Encrypted: how the column is encrypted, when the connection negotiated
+            /// COLUMNENCRYPTION and the column is encrypted (`flags` has fEncrypted, 0x0800).
+            /// The values stay ciphertext in the column's own type (`varbinary`).
+            public var encryption: ColumnEncryption?
+
+            public static let encryptedFlag: UInt16 = 0x0800
+
+            /// A column's TYPE_INFO.
+            public struct TypeInfo: Sendable, Hashable {
+                public var dataType: TDSDataType
+                public var length: Int32
+                public var precision: UInt8
+                public var scale: UInt8
+                public var collation: [UInt8]
+
+                public init(dataType: TDSDataType, length: Int32, precision: UInt8 = 0, scale: UInt8 = 0, collation: [UInt8] = []) {
+                    self.dataType = dataType
+                    self.length = length
+                    self.precision = precision
+                    self.scale = scale
+                    self.collation = collation
+                }
+            }
+
+            /// CryptoMetaData of an encrypted column (MS-TDS 2.2.7.4), with the column encryption
+            /// key's metadata from the CekTable.
+            public struct ColumnEncryption: Sendable, Hashable {
+                public enum Kind: UInt8, Sendable {
+                    case deterministic = 1
+                    case randomized = 2
+                }
+                /// The plaintext type.
+                public var baseType: TypeInfo
+                public var baseUserType: UInt32
+                /// `AEAD_AES_256_CBC_HMAC_SHA_256`, or the custom algorithm's name.
+                public var algorithm: String
+                public var kind: Kind?
+                public var normalizationVersion: UInt8
+                /// The column master key's store and path (`MSSQL_CERTIFICATE_STORE`,
+                /// `CurrentUser/My/<thumbprint>`), from the CekTable entry.
+                public var keyStoreName: String?
+                public var keyPath: String?
+
+                public init(baseType: TypeInfo, baseUserType: UInt32 = 0, algorithm: String, kind: Kind?,
+                            normalizationVersion: UInt8 = 1, keyStoreName: String? = nil, keyPath: String? = nil) {
+                    self.baseType = baseType
+                    self.baseUserType = baseUserType
+                    self.algorithm = algorithm
+                    self.kind = kind
+                    self.normalizationVersion = normalizationVersion
+                    self.keyStoreName = keyStoreName
+                    self.keyPath = keyPath
+                }
+            }
             
             public init(
                 userType: UInt32,
@@ -321,6 +375,20 @@ public enum TDSTokens {
         public var type: TokenType = .featureExtAck
         public var payload: ByteBuffer
         public init(payload: ByteBuffer) { self.payload = payload }
+
+        /// The acknowledged features: FeatureId to FeatureAckData (DWORD-length data, MS-TDS 2.2.7.11).
+        public var features: [UInt8: [UInt8]] {
+            var buffer = payload
+            var features: [UInt8: [UInt8]] = [:]
+            while let id: UInt8 = buffer.readInteger(), id != 0xFF {
+                guard let length: UInt32 = buffer.readInteger(endianness: .little),
+                      let data = buffer.readBytes(length: Int(length)) else { break }
+                features[id] = data
+            }
+            return features
+        }
+
+        public static let columnEncryptionFeature: UInt8 = 0x04
     }
 
     public struct FedAuthInfoToken: TDSToken {

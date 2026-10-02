@@ -45,19 +45,18 @@ struct AdaptiveRowBuffer: NIOAsyncSequenceProducerBackPressureStrategy, Sendable
 
 // MARK: - Delegate
 
-/// Bridges NIO back-pressure demand signals to TDSConnection's read control.
-/// When the consumer needs more data, `produceMore()` triggers a channel read.
-/// When the stream terminates early (consumer cancelled), sends ATTENTION to
-/// cancel the server-side query and restores auto-read.
+/// Bridges consumer demand to socket reads for one streaming request.
+/// `produceMore()` resumes reading; the row batcher pauses reading when the
+/// buffer is full. If the consumer stops before the request completes, the
+/// request is cancelled on the server.
 final class SQLServerStreamDelegate: NIOAsyncSequenceProducerDelegate, @unchecked Sendable {
-    private let connection: TDSConnection
-    /// Set to true when `source.finish()` is called (normal completion).
-    /// If still false when `didTerminate()` fires, the consumer cancelled early.
-    private let finished: NIOLockedValueBox<Bool>
+    private let handle: NIOLockedValueBox<TDSRequestHandle?>
+    /// Set once the request has completed. If still false when
+    /// `didTerminate()` fires, the consumer stopped early.
+    private let finished = NIOLockedValueBox(false)
 
-    init(connection: TDSConnection) {
-        self.connection = connection
-        self.finished = NIOLockedValueBox(false)
+    init(handle: NIOLockedValueBox<TDSRequestHandle?>) {
+        self.handle = handle
     }
 
     func markFinished() {
@@ -65,21 +64,12 @@ final class SQLServerStreamDelegate: NIOAsyncSequenceProducerDelegate, @unchecke
     }
 
     func produceMore() {
-        connection.eventLoop.execute {
-            self.connection.requestRead()
-        }
+        handle.withLockedValue { $0 }?.resumeReading()
     }
 
     func didTerminate() {
-        let wasFinished = finished.withLockedValue { $0 }
-        if !wasFinished {
-            // Consumer cancelled before the query completed — send ATTENTION
-            // to abort the server-side operation.
-            connection.sendAttention()
-        }
-        connection.eventLoop.execute {
-            self.connection.resumeAutoRead()
-        }
+        guard !finished.withLockedValue({ $0 }) else { return }
+        handle.withLockedValue { $0 }?.cancel()
     }
 }
 
@@ -88,17 +78,19 @@ final class SQLServerStreamDelegate: NIOAsyncSequenceProducerDelegate, @unchecke
 /// Accumulates row events and yields them in batches to reduce async sequence
 /// overhead. All methods are called from the NIO event loop (single-threaded).
 final class StreamRowBatcher: @unchecked Sendable {
-    private let source: NIOThrowingAsyncSequenceProducer<
+    typealias Source = NIOThrowingAsyncSequenceProducer<
         SQLServerStreamEvent, any Error, AdaptiveRowBuffer, SQLServerStreamDelegate
     >.Source
+
+    private let source: Source
     private let capacity: Int
+    private let onYield: (Source.YieldResult) -> Void
     private var buffer: [SQLServerStreamEvent]
 
-    init(source: NIOThrowingAsyncSequenceProducer<
-        SQLServerStreamEvent, any Error, AdaptiveRowBuffer, SQLServerStreamDelegate
-    >.Source, capacity: Int) {
+    init(source: Source, capacity: Int, onYield: @escaping (Source.YieldResult) -> Void) {
         self.source = source
         self.capacity = capacity
+        self.onYield = onYield
         self.buffer = []
         self.buffer.reserveCapacity(capacity)
     }
@@ -110,10 +102,15 @@ final class StreamRowBatcher: @unchecked Sendable {
         }
     }
 
+    func yield(_ event: SQLServerStreamEvent) {
+        onYield(source.yield(event))
+    }
+
     func flush() {
         guard !buffer.isEmpty else { return }
-        _ = source.yield(contentsOf: buffer)
+        let result = source.yield(contentsOf: buffer)
         buffer.removeAll(keepingCapacity: true)
+        onYield(result)
     }
 }
 

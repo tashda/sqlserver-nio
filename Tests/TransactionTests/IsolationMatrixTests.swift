@@ -1,5 +1,6 @@
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 import XCTest
 import Logging
 
@@ -7,7 +8,7 @@ final class SQLServerTransactionIsolationMatrixTests: XCTestCase, @unchecked Sen
     var client: SQLServerClient!
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
+        try requireSQLServerTestServer(); // Load environment configuration
         client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
         do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1") } } catch { throw error }
     }
@@ -42,17 +43,21 @@ final class SQLServerTransactionIsolationMatrixTests: XCTestCase, @unchecked Sen
                 async let w2 = dbClient.withConnection { conn in try await conn.query("SELECT 1") }
                 _ = try await (w1, w2)
 
+                // The holder signals once its SERIALIZABLE range lock exists;
+                // a fixed sleep raced with a slow server.
+                let (locked, lockedContinuation) = AsyncStream<Void>.makeStream()
                 let holder = Task {
                     try await dbClient.withConnection { conn in
                         try await conn.setIsolationLevel(.serializable)
                         try await conn.beginTransaction()
-                        _ = try await conn.query("SELECT COUNT(*) FROM [dbo].[\(tableName)] WHERE category = N'A'").get()
+                        _ = try await conn.query("SELECT COUNT(*) FROM [dbo].[\(tableName)] WHERE category = N'A'")
+                        lockedContinuation.yield()
                         try await Task.sleep(nanoseconds: 600_000_000)
                         try await conn.commit()
                     }
                 }
 
-                try await Task.sleep(nanoseconds: 150_000_000)
+                for await _ in locked { break }
                 let elapsed = try await dbClient.withConnection { conn in
                     let start = DispatchTime.now()
                     try await conn.insertRow(into: tableName, values: ["id": .int(3), "category": .nString("A")])
@@ -88,20 +93,25 @@ final class SQLServerTransactionIsolationMatrixTests: XCTestCase, @unchecked Sen
                 async let w2 = dbClient.withConnection { conn in try await conn.query("SELECT 1") }
                 _ = try await (w1, w2)
 
+                // The reader starts once the writer holds the row lock, not after a guessed delay:
+                // on a slow runner the writer's UPDATE could land after the reader had finished.
+                let (locked, lockedContinuation) = AsyncStream<Void>.makeStream()
                 let writer = Task {
+                    defer { lockedContinuation.finish() } // never leave the reader waiting
                     try await dbClient.withConnection { conn in
                         try await conn.beginTransaction()
                         try await conn.updateRows(in: tableName, set: ["value": .nString("Updated")], where: "id = 1")
+                        lockedContinuation.yield()
                         try await Task.sleep(nanoseconds: 600_000_000)
                         try await conn.rollback()
                     }
                 }
 
-                try await Task.sleep(nanoseconds: 100_000_000)
+                for await _ in locked { break }
                 // Under READ COMMITTED (default), the reader is blocked until writer commits/rolls back
                 let elapsed = try await dbClient.withConnection { conn in
                     let start = DispatchTime.now()
-                    _ = try await conn.query("SELECT value FROM [dbo].[\(tableName)] WHERE id = 1").get()
+                    _ = try await conn.query("SELECT value FROM [dbo].[\(tableName)] WHERE id = 1")
                     return DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds
                 }
                 _ = try? await withTimeout(5) { try await writer.value }

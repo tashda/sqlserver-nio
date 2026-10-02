@@ -1,6 +1,7 @@
 import XCTest
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 class SecurityTestBase: XCTestCase, @unchecked Sendable {
     var client: SQLServerClient!
@@ -12,13 +13,9 @@ class SecurityTestBase: XCTestCase, @unchecked Sendable {
 
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
 
         // Ensure Docker is started if requested
-        if envFlagEnabled("USE_DOCKER") {
-            try SQLServerDockerManager.shared.startIfNeeded()
-        }
-
         let config = makeSQLServerClientConfiguration()
         self.client = try await SQLServerClient.connect(configuration: config, numberOfThreads: 1)
         self.securityClient = SQLServerSecurityClient(client: client)
@@ -29,17 +26,17 @@ class SecurityTestBase: XCTestCase, @unchecked Sendable {
         // Remove users from roles first
         for user in usersToDrop {
             for role in rolesToDrop {
-                try? await securityClient.removeUserFromRole(user: user, role: role).get()
+                try? await securityClient.removeUserFromRole(user: user, role: role)
             }
         }
 
         for user in usersToDrop {
-            try? await securityClient.dropUser(name: user).get()
+            try? await securityClient.dropUser(name: user)
         }
         usersToDrop.removeAll()
 
         for role in rolesToDrop {
-            try? await securityClient.dropRole(name: role).get()
+            try? await securityClient.dropRole(name: role)
         }
         rolesToDrop.removeAll()
 

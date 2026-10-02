@@ -17,21 +17,13 @@ public final class SQLServerServiceBrokerClient: @unchecked Sendable {
         self.client = client
     }
 
-    private static func escapeIdentifier(_ identifier: String) -> String {
-        "[\(identifier.replacingOccurrences(of: "]", with: "]]"))]"
-    }
-
-    private static func escapeLiteral(_ literal: String) -> String {
-        literal.replacingOccurrences(of: "'", with: "''")
-    }
-
     // MARK: - Message Types
 
     /// Lists all message types in the database.
     @available(macOS 12.0, *)
     public func listMessageTypes(database: String) async throws -> [ServiceBrokerMessageType] {
-        let db = Self.escapeIdentifier(database)
-        var sql = """
+        let db = SQLServerSQL.escapeIdentifier(database)
+        let sql = """
         SELECT name, validation_desc
         FROM \(db).sys.service_message_types
         ORDER BY name
@@ -52,8 +44,8 @@ public final class SQLServerServiceBrokerClient: @unchecked Sendable {
     /// Lists all contracts in the database.
     @available(macOS 12.0, *)
     public func listContracts(database: String) async throws -> [ServiceBrokerContract] {
-        let db = Self.escapeIdentifier(database)
-        var sql = """
+        let db = SQLServerSQL.escapeIdentifier(database)
+        let sql = """
         SELECT name
         FROM \(db).sys.service_contracts
         ORDER BY name
@@ -73,8 +65,8 @@ public final class SQLServerServiceBrokerClient: @unchecked Sendable {
     /// Lists all queues in the database.
     @available(macOS 12.0, *)
     public func listQueues(database: String) async throws -> [ServiceBrokerQueue] {
-        let db = Self.escapeIdentifier(database)
-        var sql = """
+        let db = SQLServerSQL.escapeIdentifier(database)
+        let sql = """
         SELECT
             s.name AS schema_name,
             q.name,
@@ -110,7 +102,7 @@ public final class SQLServerServiceBrokerClient: @unchecked Sendable {
     /// Enables a queue for receiving messages.
     @available(macOS 12.0, *)
     public func enableQueue(database: String, schema: String, queue: String) async throws {
-        let qualified = "\(Self.escapeIdentifier(schema)).\(Self.escapeIdentifier(queue))"
+        let qualified = "\(SQLServerSQL.escapeIdentifier(schema)).\(SQLServerSQL.escapeIdentifier(queue))"
         try await client.withDatabase(database) { connection in
             _ = try await connection.execute("ALTER QUEUE \(qualified) WITH STATUS = ON")
         }
@@ -119,7 +111,7 @@ public final class SQLServerServiceBrokerClient: @unchecked Sendable {
     /// Disables a queue from receiving messages.
     @available(macOS 12.0, *)
     public func disableQueue(database: String, schema: String, queue: String) async throws {
-        let qualified = "\(Self.escapeIdentifier(schema)).\(Self.escapeIdentifier(queue))"
+        let qualified = "\(SQLServerSQL.escapeIdentifier(schema)).\(SQLServerSQL.escapeIdentifier(queue))"
         try await client.withDatabase(database) { connection in
             _ = try await connection.execute("ALTER QUEUE \(qualified) WITH STATUS = OFF")
         }
@@ -130,8 +122,8 @@ public final class SQLServerServiceBrokerClient: @unchecked Sendable {
     /// Lists all services in the database.
     @available(macOS 12.0, *)
     public func listServices(database: String) async throws -> [ServiceBrokerService] {
-        let db = Self.escapeIdentifier(database)
-        var sql = """
+        let db = SQLServerSQL.escapeIdentifier(database)
+        let sql = """
         SELECT
             sv.name,
             q.name AS queue_name
@@ -155,8 +147,8 @@ public final class SQLServerServiceBrokerClient: @unchecked Sendable {
     /// Lists all routes in the database.
     @available(macOS 12.0, *)
     public func listRoutes(database: String) async throws -> [ServiceBrokerRoute] {
-        let db = Self.escapeIdentifier(database)
-        var sql = """
+        let db = SQLServerSQL.escapeIdentifier(database)
+        let sql = """
         SELECT name, address, broker_instance, lifetime, mirror_address
         FROM \(db).sys.routes
         ORDER BY name
@@ -179,8 +171,8 @@ public final class SQLServerServiceBrokerClient: @unchecked Sendable {
     /// Lists all remote service bindings in the database.
     @available(macOS 12.0, *)
     public func listRemoteServiceBindings(database: String) async throws -> [ServiceBrokerRemoteBinding] {
-        let db = Self.escapeIdentifier(database)
-        var sql = """
+        let db = SQLServerSQL.escapeIdentifier(database)
+        let sql = """
         SELECT
             r.name,
             r.remote_service_name,
@@ -211,10 +203,9 @@ public final class SQLServerServiceBrokerClient: @unchecked Sendable {
         name: String,
         validation: MessageTypeValidation = .none
     ) async throws {
-        var sql = "CREATE MESSAGE TYPE \(Self.escapeIdentifier(name)) VALIDATION = \(validation.sqlClause)"
-        let finalSql = sql
+        let sql = "CREATE MESSAGE TYPE \(SQLServerSQL.escapeIdentifier(name)) VALIDATION = \(validation.sqlClause)"
         try await client.withDatabase(database) { connection in
-            _ = try await connection.execute(finalSql)
+            _ = try await connection.execute(sql)
         }
     }
 
@@ -222,7 +213,7 @@ public final class SQLServerServiceBrokerClient: @unchecked Sendable {
     @available(macOS 12.0, *)
     public func dropMessageType(database: String, name: String) async throws {
         try await client.withDatabase(database) { connection in
-            _ = try await connection.execute("DROP MESSAGE TYPE \(Self.escapeIdentifier(name))")
+            _ = try await connection.execute("DROP MESSAGE TYPE \(SQLServerSQL.escapeIdentifier(name))")
         }
     }
 
@@ -237,12 +228,11 @@ public final class SQLServerServiceBrokerClient: @unchecked Sendable {
             throw SQLServerError.invalidArgument("At least one message type usage is required")
         }
         let usages = messageUsages.map { usage in
-            "\(Self.escapeIdentifier(usage.messageType)) SENT BY \(usage.sentBy.rawValue)"
+            "\(SQLServerSQL.escapeIdentifier(usage.messageType)) SENT BY \(usage.sentBy.rawValue)"
         }.joined(separator: ",\n    ")
-        var sql = "CREATE CONTRACT \(Self.escapeIdentifier(name)) (\n    \(usages)\n)"
-        let finalSql = sql
+        let sql = "CREATE CONTRACT \(SQLServerSQL.escapeIdentifier(name)) (\n    \(usages)\n)"
         try await client.withDatabase(database) { connection in
-            _ = try await connection.execute(finalSql)
+            _ = try await connection.execute(sql)
         }
     }
 
@@ -250,7 +240,7 @@ public final class SQLServerServiceBrokerClient: @unchecked Sendable {
     @available(macOS 12.0, *)
     public func dropContract(database: String, name: String) async throws {
         try await client.withDatabase(database) { connection in
-            _ = try await connection.execute("DROP CONTRACT \(Self.escapeIdentifier(name))")
+            _ = try await connection.execute("DROP CONTRACT \(SQLServerSQL.escapeIdentifier(name))")
         }
     }
 
@@ -262,15 +252,19 @@ public final class SQLServerServiceBrokerClient: @unchecked Sendable {
         name: String,
         options: QueueCreationOptions = .defaults
     ) async throws {
-        let qualified = "\(Self.escapeIdentifier(schema)).\(Self.escapeIdentifier(name))"
+        let qualified = "\(SQLServerSQL.escapeIdentifier(schema)).\(SQLServerSQL.escapeIdentifier(name))"
         var withParts: [String] = []
         withParts.append("STATUS = \(options.status ? "ON" : "OFF")")
         withParts.append("RETENTION = \(options.retention ? "ON" : "OFF")")
         if options.activationEnabled, let proc = options.activationProcedure, !proc.isEmpty {
-            var activation = "ACTIVATION (STATUS = ON, PROCEDURE_NAME = \(Self.escapeIdentifier(proc))"
+            let procedure = (options.activationProcedureSchema.map { SQLServerSQL.escapeIdentifier($0) + "." } ?? "")
+                + SQLServerSQL.escapeIdentifier(proc)
+            var activation = "ACTIVATION (STATUS = ON, PROCEDURE_NAME = \(procedure)"
             activation += ", MAX_QUEUE_READERS = \(options.maxQueueReaders)"
             if let ea = options.executeAs {
-                activation += ", EXECUTE AS '\(Self.escapeLiteral(ea))'"
+                // SELF and OWNER are keywords; anything else names a user.
+                let keyword = ["SELF", "OWNER"].contains(ea.uppercased())
+                activation += keyword ? ", EXECUTE AS \(ea.uppercased())" : ", EXECUTE AS '\(SQLServerSQL.escapeLiteral(ea))'"
             } else {
                 activation += ", EXECUTE AS SELF"
             }
@@ -278,17 +272,16 @@ public final class SQLServerServiceBrokerClient: @unchecked Sendable {
             withParts.append(activation)
         }
         withParts.append("POISON_MESSAGE_HANDLING (STATUS = \(options.poisonMessageHandling ? "ON" : "OFF"))")
-        var sql = "CREATE QUEUE \(qualified) WITH \(withParts.joined(separator: ", "))"
-        let finalSql = sql
+        let sql = "CREATE QUEUE \(qualified) WITH \(withParts.joined(separator: ", "))"
         try await client.withDatabase(database) { connection in
-            _ = try await connection.execute(finalSql)
+            _ = try await connection.execute(sql)
         }
     }
 
     /// Drops a queue.
     @available(macOS 12.0, *)
     public func dropQueue(database: String, schema: String = "dbo", name: String) async throws {
-        let qualified = "\(Self.escapeIdentifier(schema)).\(Self.escapeIdentifier(name))"
+        let qualified = "\(SQLServerSQL.escapeIdentifier(schema)).\(SQLServerSQL.escapeIdentifier(name))"
         try await client.withDatabase(database) { connection in
             _ = try await connection.execute("DROP QUEUE \(qualified)")
         }
@@ -302,23 +295,62 @@ public final class SQLServerServiceBrokerClient: @unchecked Sendable {
         queue: String,
         contracts: [String] = []
     ) async throws {
-        var query = "CREATE SERVICE \(Self.escapeIdentifier(name)) ON QUEUE \(Self.escapeIdentifier(queue))"
+        var query = "CREATE SERVICE \(SQLServerSQL.escapeIdentifier(name)) ON QUEUE \(SQLServerSQL.escapeIdentifier(queue))"
         if !contracts.isEmpty {
-            let contractList = contracts.map { Self.escapeIdentifier($0) }.joined(separator: ", ")
+            let contractList = contracts.map { SQLServerSQL.escapeIdentifier($0) }.joined(separator: ", ")
             query += " (\(contractList))"
         }
-        var sql = query
-        let finalSql = sql
+        let sql = query
         try await client.withDatabase(database) { connection in
-            _ = try await connection.execute(finalSql)
+            _ = try await connection.execute(sql)
         }
+    }
+
+    /// Opens a dialog from one service to another and sends one message on it; returns the
+    /// conversation handle. The conversation stays open (no END CONVERSATION), so the message
+    /// waits in the target queue until something receives it.
+    @available(macOS 12.0, *)
+    @discardableResult
+    public func send(
+        database: String,
+        fromService: String,
+        toService: String,
+        contract: String,
+        messageType: String,
+        body: String,
+        encryption: Bool = false
+    ) async throws -> String {
+        let sql = """
+        DECLARE @handle UNIQUEIDENTIFIER;
+        BEGIN DIALOG CONVERSATION @handle
+            FROM SERVICE \(SQLServerSQL.escapeIdentifier(fromService))
+            TO SERVICE N'\(SQLServerSQL.escapeLiteral(toService))'
+            ON CONTRACT \(SQLServerSQL.escapeIdentifier(contract))
+            WITH ENCRYPTION = \(encryption ? "ON" : "OFF");
+        SEND ON CONVERSATION @handle MESSAGE TYPE \(SQLServerSQL.escapeIdentifier(messageType)) (N'\(SQLServerSQL.escapeLiteral(body))');
+        SELECT CONVERT(NVARCHAR(36), @handle) AS handle;
+        """
+        let rows = try await client.withDatabase(database) { connection in
+            try await connection.query(sql)
+        }
+        guard let handle = rows.first?.column("handle")?.string else {
+            throw SQLServerError.invalidArgument("SEND returned no conversation handle")
+        }
+        return handle
+    }
+
+    /// How many messages wait in a queue.
+    @available(macOS 12.0, *)
+    public func messageCount(database: String, schema: String = "dbo", queue: String) async throws -> Int {
+        let sql = "SELECT COUNT(*) AS waiting FROM \(SQLServerSQL.escapeIdentifier(database)).\(SQLServerSQL.escapeIdentifier(schema)).\(SQLServerSQL.escapeIdentifier(queue))"
+        return try await client.query(sql).first?.column("waiting")?.int ?? 0
     }
 
     /// Drops a service.
     @available(macOS 12.0, *)
     public func dropService(database: String, name: String) async throws {
         try await client.withDatabase(database) { connection in
-            _ = try await connection.execute("DROP SERVICE \(Self.escapeIdentifier(name))")
+            _ = try await connection.execute("DROP SERVICE \(SQLServerSQL.escapeIdentifier(name))")
         }
     }
 
@@ -334,15 +366,14 @@ public final class SQLServerServiceBrokerClient: @unchecked Sendable {
         mirrorAddress: String? = nil
     ) async throws {
         var withParts: [String] = []
-        if let sn = serviceName { withParts.append("SERVICE_NAME = N'\(Self.escapeLiteral(sn))'") }
-        if let bi = brokerInstance { withParts.append("BROKER_INSTANCE = N'\(Self.escapeLiteral(bi))'") }
+        if let sn = serviceName { withParts.append("SERVICE_NAME = N'\(SQLServerSQL.escapeLiteral(sn))'") }
+        if let bi = brokerInstance { withParts.append("BROKER_INSTANCE = N'\(SQLServerSQL.escapeLiteral(bi))'") }
         if let lt = lifetime { withParts.append("LIFETIME = \(lt)") }
-        withParts.append("ADDRESS = N'\(Self.escapeLiteral(address))'")
-        if let ma = mirrorAddress { withParts.append("MIRROR_ADDRESS = N'\(Self.escapeLiteral(ma))'") }
-        var sql = "CREATE ROUTE \(Self.escapeIdentifier(name)) WITH \(withParts.joined(separator: ", "))"
-        let finalSql = sql
+        withParts.append("ADDRESS = N'\(SQLServerSQL.escapeLiteral(address))'")
+        if let ma = mirrorAddress { withParts.append("MIRROR_ADDRESS = N'\(SQLServerSQL.escapeLiteral(ma))'") }
+        let sql = "CREATE ROUTE \(SQLServerSQL.escapeIdentifier(name)) WITH \(withParts.joined(separator: ", "))"
         try await client.withDatabase(database) { connection in
-            _ = try await connection.execute(finalSql)
+            _ = try await connection.execute(sql)
         }
     }
 
@@ -350,7 +381,7 @@ public final class SQLServerServiceBrokerClient: @unchecked Sendable {
     @available(macOS 12.0, *)
     public func dropRoute(database: String, name: String) async throws {
         try await client.withDatabase(database) { connection in
-            _ = try await connection.execute("DROP ROUTE \(Self.escapeIdentifier(name))")
+            _ = try await connection.execute("DROP ROUTE \(SQLServerSQL.escapeIdentifier(name))")
         }
     }
 }

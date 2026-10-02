@@ -1,5 +1,5 @@
 import XCTest
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 
 /// Tests for large result sets to verify the token parser handles

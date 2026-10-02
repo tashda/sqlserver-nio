@@ -3,9 +3,10 @@ import SQLServerTDS
 
 extension SQLServerIndexClient {
     // MARK: - Index Management
-    
-    internal func dropIndex(name: String, table: String, schema: String = "dbo") -> EventLoopFuture<Void> {
-        let promise = client.eventLoopGroup.next().makePromise(of: Void.self)
+
+    @discardableResult
+    internal func dropIndex(name: String, table: String, schema: String = "dbo") -> EventLoopFuture<[SQLServerStreamMessage]> {
+        let promise = client.eventLoopGroup.next().makePromise(of: [SQLServerStreamMessage].self)
         if #available(macOS 12.0, *) {
             promise.completeWithTask {
                 try await self.dropIndex(name: name, table: table, schema: schema)
@@ -15,20 +16,28 @@ extension SQLServerIndexClient {
         }
         return promise.futureResult
     }
-    
+
     @available(macOS 12.0, *)
-    public func dropIndex(name: String, table: String, schema: String = "dbo") async throws {
-        let escapedIndexName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
-        let fullTableName = "\(schemaPrefix)\(escapedTableName)"
-        
+    @discardableResult
+    public func dropIndex(name: String, table: String, schema: String = "dbo", database: String? = nil) async throws -> [SQLServerStreamMessage] {
+        let escapedIndexName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
+        let fullTableName: String
+        if let database {
+            fullTableName = "\(SQLServerSQL.escapeIdentifier(database)).\(schemaPrefix)\(escapedTableName)"
+        } else {
+            fullTableName = "\(schemaPrefix)\(escapedTableName)"
+        }
+
         let sql = "DROP INDEX \(escapedIndexName) ON \(fullTableName)"
-        _ = try await client.execute(sql)
+        let result = try await client.execute(sql)
+        return result.messages
     }
-    
-    internal func rebuildIndex(name: String, table: String, schema: String = "dbo", options: IndexOptions? = nil) -> EventLoopFuture<Void> {
-        let promise = client.eventLoopGroup.next().makePromise(of: Void.self)
+
+    @discardableResult
+    internal func rebuildIndex(name: String, table: String, schema: String = "dbo", options: IndexOptions? = nil) -> EventLoopFuture<[SQLServerStreamMessage]> {
+        let promise = client.eventLoopGroup.next().makePromise(of: [SQLServerStreamMessage].self)
         if #available(macOS 12.0, *) {
             promise.completeWithTask {
                 try await self.rebuildIndex(name: name, table: table, schema: schema, options: options)
@@ -38,25 +47,26 @@ extension SQLServerIndexClient {
         }
         return promise.futureResult
     }
-    
+
     @available(macOS 12.0, *)
-    public func rebuildIndex(name: String, table: String, schema: String = "dbo", database: String? = nil, options: IndexOptions? = nil) async throws {
-        let escapedIndexName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+    @discardableResult
+    public func rebuildIndex(name: String, table: String, schema: String = "dbo", database: String? = nil, options: IndexOptions? = nil) async throws -> [SQLServerStreamMessage] {
+        let escapedIndexName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName: String
         if let database {
-            fullTableName = "\(Self.escapeIdentifier(database)).\(schemaPrefix)\(escapedTableName)"
+            fullTableName = "\(SQLServerSQL.escapeIdentifier(database)).\(schemaPrefix)\(escapedTableName)"
         } else {
             fullTableName = "\(schemaPrefix)\(escapedTableName)"
         }
-        
+
         var sql = "ALTER INDEX \(escapedIndexName) ON \(fullTableName) REBUILD"
-        
+
         // Add rebuild options
         if let options = options {
             var optionParts: [String] = []
-            
+
             if let fillFactor = options.fillFactor {
                 optionParts.append("FILLFACTOR = \(fillFactor)")
             }
@@ -81,17 +91,19 @@ extension SQLServerIndexClient {
             if let compression = options.dataCompression {
                 optionParts.append("DATA_COMPRESSION = \(compression.rawValue)")
             }
-            
+
             if !optionParts.isEmpty {
                 sql += " WITH (\(optionParts.joined(separator: ", ")))"
             }
         }
-        
-        _ = try await client.execute(sql)
+
+        let result = try await client.execute(sql)
+        return result.messages
     }
-    
-    internal func reorganizeIndex(name: String, table: String, schema: String = "dbo") -> EventLoopFuture<Void> {
-        let promise = client.eventLoopGroup.next().makePromise(of: Void.self)
+
+    @discardableResult
+    internal func reorganizeIndex(name: String, table: String, schema: String = "dbo") -> EventLoopFuture<[SQLServerStreamMessage]> {
+        let promise = client.eventLoopGroup.next().makePromise(of: [SQLServerStreamMessage].self)
         if #available(macOS 12.0, *) {
             promise.completeWithTask {
                 try await self.reorganizeIndex(name: name, table: table, schema: schema)
@@ -101,74 +113,94 @@ extension SQLServerIndexClient {
         }
         return promise.futureResult
     }
-    
+
     @available(macOS 12.0, *)
-    public func reorganizeIndex(name: String, table: String, schema: String = "dbo", database: String? = nil) async throws {
-        let escapedIndexName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+    @discardableResult
+    public func reorganizeIndex(name: String, table: String, schema: String = "dbo", database: String? = nil) async throws -> [SQLServerStreamMessage] {
+        let escapedIndexName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName: String
         if let database {
-            fullTableName = "\(Self.escapeIdentifier(database)).\(schemaPrefix)\(escapedTableName)"
+            fullTableName = "\(SQLServerSQL.escapeIdentifier(database)).\(schemaPrefix)\(escapedTableName)"
         } else {
             fullTableName = "\(schemaPrefix)\(escapedTableName)"
         }
 
         let sql = "ALTER INDEX \(escapedIndexName) ON \(fullTableName) REORGANIZE"
-        _ = try await client.execute(sql)
+        let result = try await client.execute(sql)
+        return result.messages
     }
 
     @available(macOS 12.0, *)
-    public func disableIndex(name: String, table: String, schema: String = "dbo", database: String? = nil) async throws {
-        let escapedIndexName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+    @discardableResult
+    public func disableIndex(name: String, table: String, schema: String = "dbo", database: String? = nil) async throws -> [SQLServerStreamMessage] {
+        let escapedIndexName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName: String
         if let database {
-            fullTableName = "\(Self.escapeIdentifier(database)).\(schemaPrefix)\(escapedTableName)"
+            fullTableName = "\(SQLServerSQL.escapeIdentifier(database)).\(schemaPrefix)\(escapedTableName)"
         } else {
             fullTableName = "\(schemaPrefix)\(escapedTableName)"
         }
 
         let sql = "ALTER INDEX \(escapedIndexName) ON \(fullTableName) DISABLE"
-        _ = try await client.execute(sql)
+        let result = try await client.execute(sql)
+        return result.messages
     }
 
     @available(macOS 12.0, *)
-    public func rebuildAllIndexes(table: String, schema: String = "dbo") async throws {
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
-        let fullTableName = "\(schemaPrefix)\(escapedTableName)"
+    @discardableResult
+    public func rebuildAllIndexes(table: String, schema: String = "dbo", database: String? = nil) async throws -> [SQLServerStreamMessage] {
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
+        let fullTableName: String
+        if let database {
+            fullTableName = "\(SQLServerSQL.escapeIdentifier(database)).\(schemaPrefix)\(escapedTableName)"
+        } else {
+            fullTableName = "\(schemaPrefix)\(escapedTableName)"
+        }
 
         let sql = "ALTER INDEX ALL ON \(fullTableName) REBUILD"
-        _ = try await client.execute(sql)
+        let result = try await client.execute(sql)
+        return result.messages
     }
 
     @available(macOS 12.0, *)
-    public func reorganizeAllIndexes(table: String, schema: String = "dbo") async throws {
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
-        let fullTableName = "\(schemaPrefix)\(escapedTableName)"
+    @discardableResult
+    public func reorganizeAllIndexes(table: String, schema: String = "dbo", database: String? = nil) async throws -> [SQLServerStreamMessage] {
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
+        let fullTableName: String
+        if let database {
+            fullTableName = "\(SQLServerSQL.escapeIdentifier(database)).\(schemaPrefix)\(escapedTableName)"
+        } else {
+            fullTableName = "\(schemaPrefix)\(escapedTableName)"
+        }
 
         let sql = "ALTER INDEX ALL ON \(fullTableName) REORGANIZE"
-        _ = try await client.execute(sql)
+        let result = try await client.execute(sql)
+        return result.messages
     }
 
     /// Re-enables a disabled index by rebuilding it.
     @available(macOS 12.0, *)
-    public func enableIndex(name: String, table: String, schema: String = "dbo", database: String? = nil) async throws {
-        let escapedIndexName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+    @discardableResult
+    public func enableIndex(name: String, table: String, schema: String = "dbo", database: String? = nil) async throws -> [SQLServerStreamMessage] {
+        let escapedIndexName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName: String
         if let database {
-            fullTableName = "\(Self.escapeIdentifier(database)).\(schemaPrefix)\(escapedTableName)"
+            fullTableName = "\(SQLServerSQL.escapeIdentifier(database)).\(schemaPrefix)\(escapedTableName)"
         } else {
             fullTableName = "\(schemaPrefix)\(escapedTableName)"
         }
 
         let sql = "ALTER INDEX \(escapedIndexName) ON \(fullTableName) REBUILD"
-        _ = try await client.execute(sql)
+        let result = try await client.execute(sql)
+        return result.messages
     }
 
     /// Returns physical stats for a specific index (fragmentation, page count, fill factor, etc.).

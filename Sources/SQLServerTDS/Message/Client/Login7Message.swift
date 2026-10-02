@@ -12,6 +12,20 @@ extension TDSMessages {
 
         static let clientPID = UInt32(ProcessInfo.processInfo.processIdentifier)
 
+        /// The workstation name reported to the server (sys.dm_exec_sessions
+        /// host_name). Read once with gethostname(): Foundation's
+        /// Host.current() performs reverse DNS lookups that can block the
+        /// event loop for seconds.
+        static let clientHostName: String = {
+            var buffer = [CChar](repeating: 0, count: 256)
+            guard gethostname(&buffer, buffer.count) == 0 else { return "" }
+            let name = String(cString: buffer)
+            // HostName is limited to 128 characters.
+            return String(name.prefix(128))
+        }()
+
+        public static let defaultApplicationName = "echo-sqlserver"
+
         var username: String
         var password: String
         var serverName: String
@@ -22,23 +36,29 @@ extension TDSMessages {
         var fedAuthAccessToken: String?
         /// When true, signals read-only intent to enable AG secondary routing.
         var readOnlyIntent: Bool = false
+        /// Reported as APP_NAME() and sys.dm_exec_sessions program_name.
+        var applicationName: String = Login7Message.defaultApplicationName
+        /// The network packet size to ask for (the server may accept less).
+        var packetSize: Int = TDSPacket.requestedPacketLength
+        /// Ask for COLUMNENCRYPTION (Always Encrypted metadata) in FeatureExt.
+        var requestColumnEncryption: Bool = false
 
         public func serialize(into buffer: inout ByteBuffer) throws {
             let passwordField = useIntegratedSecurity ? "" : password
             let optionFlags2: UInt8 = useIntegratedSecurity ? 0x83 : 0x03
-            let hasFedAuth = fedAuthAccessToken != nil
-            let optionFlags3: UInt8 = hasFedAuth ? 0x10 : 0x00 // fExtension = bit 4
+            let hasExtension = fedAuthAccessToken != nil || requestColumnEncryption
+            let optionFlags3: UInt8 = hasExtension ? 0x10 : 0x00 // fExtension = bit 4
 
             // Each basic field needs to serialize the length & offset
             let basicFields = [
-                (Host.current().name ?? "", false),
+                (Self.clientHostName, false),
                 (username, false),
                 (passwordField, true),
-                ("", false),
+                (String(applicationName.prefix(128)), false), // AppName: APP_NAME(), program_name
                 (serverName, false),
                 ("", false), // extension field (patched below for fedAuth)
-                ("swift-tds", false),
-                ("", false),
+                ("echo-sqlserver", false), // CltIntName: client_interface_name
+                ("", false), // Language
                 (database, false)
             ]
 
@@ -51,7 +71,11 @@ extension TDSMessages {
 
             buffer.writeBytes([
                 0x04, 0x00, 0x00, 0x74, // TDS version 7.4 (SQL Server 2012+, required for SQL Server 2025)
-                0x00, 0x10, 0x00, 0x00, // Packet length negotiation
+            ])
+            // PacketSize: what the client asks for; the server answers with an ENVCHANGE.
+            let requested = min(max(packetSize, TDSPacket.packetLengthRange.lowerBound), TDSPacket.packetLengthRange.upperBound)
+            buffer.writeInteger(UInt32(requested), endianness: .little)
+            buffer.writeBytes([
                 0x00, 0x00, 0x00, 0x01, // Client version, 0x07 in example
             ])
 
@@ -143,35 +167,35 @@ extension TDSMessages {
                 buffer.setInteger(UInt32(0), at: sspiLongPosition, endianness: .little)
             }
 
-            // FEDAUTH FeatureExt — appended after all other variable data
-            if hasFedAuth, let tokenString = fedAuthAccessToken {
+            // FeatureExt — appended after all other variable data.
+            if hasExtension {
                 // The extension field (ibExtension/cbExtension) points to a 4-byte DWORD
                 // that contains the offset to the actual FeatureExt block.
                 let extensionPointerOffset = UInt16(buffer.writerIndex - login7HeaderPosition)
                 buffer.setInteger(extensionPointerOffset, at: extensionOffsetPosition, endianness: .little)
                 buffer.setInteger(UInt16(4), at: extensionOffsetPosition + 2, endianness: .little)
 
-                // Write the 4-byte offset pointer to FeatureExt block
-                // The FeatureExt starts right after this DWORD
+                // The FeatureExt block starts right after this DWORD.
                 let featureExtOffset = UInt32(buffer.writerIndex - login7HeaderPosition + 4)
                 buffer.writeInteger(featureExtOffset, endianness: .little)
 
-                // Write FeatureExt block
-                // FEDAUTH feature (ID 0x02)
-                let tokenBytes = Array(tokenString.utf8)
-                // bOptions: (SECURITY_TOKEN << 1) | fFedAuthEcho
-                // SECURITY_TOKEN = 0x02, no echo = 0
-                let bOptions: UInt8 = 0x02 << 1 // = 0x04
-                let featureDataLen = UInt32(1 + 4 + tokenBytes.count) // bOptions + tokenLen + token
-
-                buffer.writeInteger(UInt8(0x02)) // FeatureId = FEDAUTH
-                buffer.writeInteger(featureDataLen, endianness: .little)
-                buffer.writeInteger(bOptions)
-                buffer.writeInteger(UInt32(tokenBytes.count), endianness: .little)
-                buffer.writeBytes(tokenBytes)
-
-                // FeatureExt terminator
-                buffer.writeInteger(UInt8(0xFF))
+                if let tokenString = fedAuthAccessToken {
+                    // FEDAUTH (0x02). bOptions: (SECURITY_TOKEN << 1) | fFedAuthEcho, no echo.
+                    let tokenBytes = Array(tokenString.utf8)
+                    let bOptions: UInt8 = 0x02 << 1 // = 0x04
+                    buffer.writeInteger(UInt8(0x02))
+                    buffer.writeInteger(UInt32(1 + 4 + tokenBytes.count), endianness: .little)
+                    buffer.writeInteger(bOptions)
+                    buffer.writeInteger(UInt32(tokenBytes.count), endianness: .little)
+                    buffer.writeBytes(tokenBytes)
+                }
+                if requestColumnEncryption {
+                    // COLUMNENCRYPTION (0x04), version 1: Always Encrypted without enclaves.
+                    buffer.writeInteger(UInt8(0x04))
+                    buffer.writeInteger(UInt32(1), endianness: .little)
+                    buffer.writeInteger(UInt8(0x01))
+                }
+                buffer.writeInteger(UInt8(0xFF)) // terminator
             }
 
             buffer.setInteger(UInt32(buffer.writerIndex - login7HeaderPosition), at: login7HeaderPosition, endianness: .little)

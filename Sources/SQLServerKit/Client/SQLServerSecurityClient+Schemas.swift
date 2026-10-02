@@ -18,14 +18,14 @@ extension SQLServerSecurityClient {
     }
 
     internal func createSchema(name: String, authorization: String? = nil) -> EventLoopFuture<Void> {
-        var sql = "CREATE SCHEMA \(Self.escapeIdentifier(name))"
-        if let auth = authorization { sql += " AUTHORIZATION \(Self.escapeIdentifier(auth))" }
+        var sql = "CREATE SCHEMA \(SQLServerSQL.escapeIdentifier(name))"
+        if let auth = authorization { sql += " AUTHORIZATION \(SQLServerSQL.escapeIdentifier(auth))" }
         sql += ";"
         return run(sql).map { _ in () }
     }
 
     internal func dropSchema(name: String) -> EventLoopFuture<Void> {
-        let sql = "DROP SCHEMA \(Self.escapeIdentifier(name));"
+        let sql = "DROP SCHEMA \(SQLServerSQL.escapeIdentifier(name));"
         return run(sql).map { _ in () }
     }
 
@@ -106,12 +106,12 @@ extension SQLServerSecurityClient {
     }
 
     internal func alterAuthorizationOnSchema(schema: String, principal: String) -> EventLoopFuture<Void> {
-        let sql = "ALTER AUTHORIZATION ON SCHEMA::\(Self.escapeIdentifier(schema)) TO \(Self.escapeIdentifier(principal));"
+        let sql = "ALTER AUTHORIZATION ON SCHEMA::\(SQLServerSQL.escapeIdentifier(schema)) TO \(SQLServerSQL.escapeIdentifier(principal));"
         return run(sql).map { _ in () }
     }
 
     internal func transferObjectToSchema(objectSchema: String, objectName: String, newSchema: String) -> EventLoopFuture<Void> {
-        let sql = "ALTER SCHEMA \(Self.escapeIdentifier(newSchema)) TRANSFER OBJECT::\(Self.escapeIdentifier(objectSchema)).\(Self.escapeIdentifier(objectName));"
+        let sql = "ALTER SCHEMA \(SQLServerSQL.escapeIdentifier(newSchema)) TRANSFER OBJECT::\(SQLServerSQL.escapeIdentifier(objectSchema)).\(SQLServerSQL.escapeIdentifier(objectName));"
         return run(sql).map { _ in () }
     }
 

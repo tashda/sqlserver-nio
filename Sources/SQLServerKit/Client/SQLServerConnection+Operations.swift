@@ -11,7 +11,7 @@ extension SQLServerConnection {
         name: String,
         kind: SQLServerMetadataObjectIdentifier.Kind
     ) async throws -> ObjectDefinition? {
-        try await fetchObjectDefinition(database: database, schema: schema, name: name, kind: kind).get()
+        try await getObjectDefinition(database: database, schema: schema, name: name, kind: kind).get()
     }
 
     internal func listDatabases() -> EventLoopFuture<[DatabaseMetadata]> {
@@ -95,6 +95,11 @@ extension SQLServerConnection {
     }
 
     @available(macOS 12.0, *)
+    public func listReferencingForeignKeys(database: String? = nil, schema: String, table: String) async throws -> [ForeignKeyMetadata] {
+        try await listReferencingForeignKeys(database: database, schema: schema, table: table).get()
+    }
+
+    @available(macOS 12.0, *)
     public func listDependencies(database: String? = nil, schema: String, object: String) async throws -> [DependencyMetadata] {
         try await listDependencies(database: database, schema: schema, object: object).get()
     }
@@ -135,8 +140,44 @@ extension SQLServerConnection {
     }
 
     @available(macOS 12.0, *)
+    public func listSequences(database: String? = nil, schema: String? = nil, includeComments: Bool = false) async throws -> [SequenceMetadata] {
+        try await listSequences(database: database, schema: schema, includeComments: includeComments).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func sequenceDetails(database: String? = nil, schema: String, name: String) async throws -> SequenceMetadata? {
+        try await sequenceDetails(database: database, schema: schema, name: name).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func listUserTypes(database: String? = nil, schema: String? = nil, includeComments: Bool = false) async throws -> [UserTypeMetadata] {
+        try await listUserTypes(database: database, schema: schema, includeComments: includeComments).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func userTypeDetails(database: String? = nil, schema: String, name: String) async throws -> UserTypeMetadata? {
+        try await userTypeDetails(database: database, schema: schema, name: name).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func objectComment(database: String? = nil, schema: String, name: String) async throws -> String? {
+        try await objectComment(database: database, schema: schema, name: name).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func triggerDetails(database: String? = nil, schema: String, table: String, name: String) async throws -> TriggerDetails? {
+        try await triggerDetails(database: database, schema: schema, table: table, name: name).get()
+    }
+
+    @available(macOS 12.0, *)
+    public func listObjectDefinitions(_ identifiers: [SQLServerMetadataObjectIdentifier]) async throws -> [ObjectDefinition] {
+        try await listObjectDefinitions(identifiers).get()
+    }
+
+    @available(*, deprecated, renamed: "listObjectDefinitions(_:)")
+    @available(macOS 12.0, *)
     public func fetchObjectDefinitions(_ identifiers: [SQLServerMetadataObjectIdentifier]) async throws -> [ObjectDefinition] {
-        try await fetchObjectDefinitions(identifiers).get()
+        try await listObjectDefinitions(identifiers)
     }
 
     @available(macOS 12.0, *)
@@ -198,6 +239,10 @@ extension SQLServerConnection {
         metadataClient.listForeignKeys(database: database, schema: schema, table: table)
     }
 
+    internal func listReferencingForeignKeys(database: String? = nil, schema: String, table: String) -> EventLoopFuture<[ForeignKeyMetadata]> {
+        metadataClient.listReferencingForeignKeys(database: database, schema: schema, table: table)
+    }
+
     internal func listDependencies(database: String? = nil, schema: String, object: String) -> EventLoopFuture<[DependencyMetadata]> {
         metadataClient.listDependencies(database: database, schema: schema, object: object)
     }
@@ -230,11 +275,35 @@ extension SQLServerConnection {
         metadataClient.listSynonyms(database: database, schema: schema, includeComments: includeComments)
     }
 
-    internal func fetchObjectDefinitions(_ identifiers: [SQLServerMetadataObjectIdentifier]) -> EventLoopFuture<[ObjectDefinition]> {
+    internal func listSequences(database: String? = nil, schema: String? = nil, includeComments: Bool = false) -> EventLoopFuture<[SequenceMetadata]> {
+        metadataClient.listSequences(database: database, schema: schema, includeComments: includeComments)
+    }
+
+    internal func sequenceDetails(database: String? = nil, schema: String, name: String) -> EventLoopFuture<SequenceMetadata?> {
+        metadataClient.sequenceDetails(database: database, schema: schema, name: name)
+    }
+
+    internal func objectComment(database: String? = nil, schema: String, name: String) -> EventLoopFuture<String?> {
+        metadataClient.objectComment(database: database, schema: schema, name: name)
+    }
+
+    internal func triggerDetails(database: String? = nil, schema: String, table: String, name: String) -> EventLoopFuture<TriggerDetails?> {
+        metadataClient.triggerDetails(database: database, schema: schema, table: table, name: name)
+    }
+
+    internal func listUserTypes(database: String? = nil, schema: String? = nil, includeComments: Bool = false) -> EventLoopFuture<[UserTypeMetadata]> {
+        metadataClient.listUserTypes(database: database, schema: schema, includeComments: includeComments)
+    }
+
+    internal func userTypeDetails(database: String? = nil, schema: String, name: String) -> EventLoopFuture<UserTypeMetadata?> {
+        metadataClient.userTypeDetails(database: database, schema: schema, name: name)
+    }
+
+    internal func listObjectDefinitions(_ identifiers: [SQLServerMetadataObjectIdentifier]) -> EventLoopFuture<[ObjectDefinition]> {
         metadataClient.fetchObjectDefinitions(identifiers)
     }
 
-    internal func fetchObjectDefinition(database: String? = nil, schema: String, name: String, kind: SQLServerMetadataObjectIdentifier.Kind) -> EventLoopFuture<ObjectDefinition?> {
+    internal func getObjectDefinition(database: String? = nil, schema: String, name: String, kind: SQLServerMetadataObjectIdentifier.Kind) -> EventLoopFuture<ObjectDefinition?> {
         let identifier = SQLServerMetadataObjectIdentifier(database: database, schema: schema, name: name, kind: kind)
         return metadataClient.fetchObjectDefinitions([identifier]).map { $0.first }
     }

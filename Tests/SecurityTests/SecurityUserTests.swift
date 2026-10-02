@@ -1,6 +1,6 @@
 import XCTest
 import NIO
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 
 final class SecurityUserTests: SecurityTestBase, @unchecked Sendable {

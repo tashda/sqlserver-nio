@@ -1,6 +1,6 @@
 import XCTest
 import NIO
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 
 /// Basic lifecycle tests for SQL Server security.

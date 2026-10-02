@@ -1,5 +1,6 @@
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 import XCTest
 
 final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
@@ -8,7 +9,7 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
         continueAfterFailure = false
 
         // Load environment configuration
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
 
         // Configure logging
         _ = isLoggingConfigured
@@ -56,12 +57,10 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
                 .init(name: "value", definition: .standard(.init(dataType: .nvarchar(length: .length(50)))))
             ]
         )
-        try await client.withConnection { connection in
-            try await connection.insertRow(into: tableName, values: [
-                "id": .int(1),
-                "value": .nString("Original")
-            ])
-        }
+        _ = try await client.admin.insertRow(into: tableName, values: [
+            "id": .int(1),
+            "value": .nString("Original")
+        ])
 
         // Test that withConnection provides proper isolation
         let result1 = try await client.withConnection { connection in
@@ -69,7 +68,7 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
             try await connection.updateRows(in: tableName, set: ["value": .nString("Modified")], where: "id = 1")
 
             // Query within the same connection should see the change
-            let rows = try await connection.query("SELECT value FROM [\(tableName)] WHERE id = 1").get()
+            let rows = try await connection.query("SELECT value FROM [\(tableName)] WHERE id = 1")
             let value = rows.first?.column("value")?.string
 
             // Rollback the transaction
@@ -81,7 +80,7 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(result1, "Modified", "Should see modified value within the same connection")
 
         // Query outside the connection should see original value
-        let result2 = try await client.query("SELECT value FROM [\(tableName)] WHERE id = 1").get()
+        let result2 = try await client.query("SELECT value FROM [\(tableName)] WHERE id = 1")
         XCTAssertEqual(result2.first?.column("value")?.string, "Original", "Should see original value after rollback")
 
         // Cleanup
@@ -112,7 +111,7 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
                                 "id": .int(i),
                                 "value": .nString("Value\(i)")
                             ])
-                            let rows = try await connection.query("SELECT value FROM [\(tableName)] WHERE id = \(i)").get()
+                            let rows = try await connection.query("SELECT value FROM [\(tableName)] WHERE id = \(i)")
                             return rows.first?.column("value")?.string
                         }
                     } catch {
@@ -134,37 +133,27 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(results.allSatisfy { $0 != nil }, "All results should be non-nil")
 
         // Verify all data was inserted
-        let countResult = try await client.query("SELECT COUNT(*) as count FROM [\(tableName)]").get()
+        let countResult = try await client.query("SELECT COUNT(*) as count FROM [\(tableName)]")
         XCTAssertEqual(countResult.first?.column("count")?.int, 5)
 
         // Cleanup
         try await adminClient.dropTable(name: tableName)
     }
 
-    func testConnectionReuse() async throws {
-        // Test that connections are properly reused from the pool
-        var connectionIds: Set<String> = []
-
-        for _ in 1...10 {
-            let connectionId = try await client.withConnection { connection in
-                let rows = try await connection.query("SELECT @@SPID as connection_id").get()
-                return rows.first?.column("connection_id")?.string ?? ""
-            }
-            connectionIds.insert(connectionId)
+    func testPooledSessionDoesNotLeakState() async throws {
+        try await client.withConnection { connection in
+            _ = try await connection.execute("EXEC sys.sp_set_session_context @key=N'pool_isolation', @value=N'private';")
         }
 
-        // With a small pool, we should see connection reuse (fewer unique IDs than operations)
-        XCTAssertLessThan(connectionIds.count, 10, "Should reuse connections from the pool")
-        XCTAssertGreaterThan(connectionIds.count, 0, "Should have at least one connection")
+        let rows = try await client.query("SELECT CAST(SESSION_CONTEXT(N'pool_isolation') AS nvarchar(50)) AS isolated_value;")
+        XCTAssertNil(rows.first?.column("isolated_value")?.string)
     }
 
     func testConnectionErrorHandling() async throws {
         // Test that connection errors are properly handled
         do {
-            _ = try await client.withConnection { connection in
-                // Execute invalid SQL to trigger an error
-                _ = try await connection.execute("SELECT * FROM non_existent_table_12345")
-            }
+            // Execute invalid SQL to trigger an error
+            _ = try await client.execute("SELECT * FROM non_existent_table_12345")
             XCTFail("Should have thrown an error for invalid SQL")
         } catch {
             // Expected to fail
@@ -173,7 +162,7 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
         }
 
         // Verify that the client is still functional after the error
-        let result = try await client.query("SELECT 1 as test").get()
+        let result = try await client.query("SELECT 1 as test")
         XCTAssertEqual(result.first?.column("test")?.int, 1)
     }
 
@@ -181,11 +170,9 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
         // Test connection behavior with timeouts
         let startTime = Date()
 
-        let result = try await client.withConnection { connection in
-            // Execute a query that should complete quickly
-            let result = try await connection.execute("SELECT GETDATE() as [current_time]")
-            return result.rows.first?.column("current_time")?.date
-        }
+        // Execute a query that should complete quickly
+        let execResult = try await client.execute("SELECT GETDATE() as [current_time]")
+        let result = execResult.rows.first?.column("current_time")?.date
 
         let endTime = Date()
         let duration = endTime.timeIntervalSince(startTime)
@@ -264,15 +251,11 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
     }
 
     func testAdventureWorksEmployeeStreamDoesNotPoisonDedicatedConnection() async throws {
-        guard ProcessInfo.processInfo.environment["TDS_AW_DATABASE"] != nil else {
-            throw XCTSkip("AdventureWorks database not configured")
-        }
-
-        let targetDatabase = ProcessInfo.processInfo.environment["TDS_AW_DATABASE"] ?? "AdventureWorks"
-        let availableDatabases = try await client.query("SELECT name FROM sys.databases")
-            .compactMap { $0.column("name")?.string?.lowercased() }
-        guard availableDatabases.contains(targetDatabase.lowercased()) else {
-            throw XCTSkip("AdventureWorks database is not available on this server")
+        let targetDatabase: String
+        do {
+            targetDatabase = try await requireAdventureWorks(using: client)
+        } catch let error as SQLServerFixtureUnavailable {
+            throw XCTSkip(error.message)
         }
 
         var configuration = client.configuration.connection
@@ -311,15 +294,11 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
     }
 
     func testAdventureWorksHierarchyIDRendersCanonicalPaths() async throws {
-        guard ProcessInfo.processInfo.environment["TDS_AW_DATABASE"] != nil else {
-            throw XCTSkip("AdventureWorks database not configured")
-        }
-
-        let targetDatabase = ProcessInfo.processInfo.environment["TDS_AW_DATABASE"] ?? "AdventureWorks"
-        let availableDatabases = try await client.query("SELECT name FROM sys.databases")
-            .compactMap { $0.column("name")?.string?.lowercased() }
-        guard availableDatabases.contains(targetDatabase.lowercased()) else {
-            throw XCTSkip("AdventureWorks database is not available on this server")
+        let targetDatabase: String
+        do {
+            targetDatabase = try await requireAdventureWorks(using: client)
+        } catch let error as SQLServerFixtureUnavailable {
+            throw XCTSkip(error.message)
         }
 
         var configuration = client.configuration.connection
@@ -358,7 +337,7 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
                         _ = try await self.client.withConnection { connection in
                             // Hold the connection briefly
                             try await Task.sleep(nanoseconds: 100_000_000) // 100ms
-                            let rows = try await connection.query("SELECT \(i) as task_id").get()
+                            let rows = try await connection.query("SELECT \(i) as task_id")
                             return rows.first?.column("task_id")?.int
                         }
                     } catch {
@@ -370,23 +349,20 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
         }
 
         // Verify the client is still functional after pool stress
-        let result = try await client.query("SELECT 1 as recovery_test").get()
+        let result = try await client.query("SELECT 1 as recovery_test")
         XCTAssertEqual(result.first?.column("recovery_test")?.int, 1)
     }
 
     func testConnectionMetadata() async throws {
-        let metadata = try await client.withConnection { connection in
-            let rows = try await connection.query("""
+        let rows = try await client.query("""
             SELECT
                 @@VERSION as server_version,
                 @@SERVERNAME as server_name,
                 DB_NAME() as database_name,
                 USER_NAME() as user_name,
                 @@SPID as connection_id
-            """).get()
-
-            return rows.first
-        }
+            """)
+        let metadata = rows.first
 
         XCTAssertNotNil(metadata, "Should get connection metadata")
         XCTAssertNotNil(metadata?.column("server_version")?.string, "Should have server version")
@@ -411,7 +387,7 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
         // Test that connection state is consistent within a withConnection block
         try await client.withConnection { connection in
             // Set a session variable
-            _ = try await connection.execute("DECLARE @test_var INT = 42").get()
+            _ = try await connection.execute("DECLARE @test_var INT = 42")
 
             // Insert data
             try await connection.insertRow(into: tableName, values: [
@@ -420,8 +396,8 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
             ])
 
             // Verify we can access both the session variable and the data
-            let varResult = try await connection.query("SELECT 42 as test_var").get() // Can't access DECLARE vars across batches
-            let dataResult = try await connection.query("SELECT value FROM [\(tableName)] WHERE id = 1").get()
+            let varResult = try await connection.query("SELECT 42 as test_var") // Can't access DECLARE vars across batches
+            let dataResult = try await connection.query("SELECT value FROM [\(tableName)] WHERE id = 1")
 
             XCTAssertEqual(varResult.first?.column("test_var")?.int, 42)
             XCTAssertEqual(dataResult.first?.column("value")?.string, "Test")
@@ -462,10 +438,8 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
         }
 
         // Verify the connection pool can still be used
-        let result = try await client.withConnection { connection in
-            let rows = try await connection.query("SELECT COUNT(*) as count FROM [\(tableName)]").get()
-            return rows.first?.column("count")?.int
-        }
+        let rows = try await client.query("SELECT COUNT(*) as count FROM [\(tableName)]")
+        let result = rows.first?.column("count")?.int
 
         XCTAssertEqual(result, 1, "Should have one valid record")
 
@@ -481,7 +455,7 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
         XCTAssertGreaterThanOrEqual(status.active + status.idle, 0, "Should have connections available")
 
         // Execute a simple query to ensure warmup worked
-        let result = try await client.query("SELECT 1 as warmup_test").get()
+        let result = try await client.query("SELECT 1 as warmup_test")
         XCTAssertEqual(result.first?.column("warmup_test")?.int, 1)
     }
 
@@ -492,7 +466,7 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
 
         // Use a connection
         _ = try await client.withConnection { connection in
-            let rows = try await connection.query("SELECT @@SPID as spid").get()
+            let rows = try await connection.query("SELECT @@SPID as spid")
             return rows.first?.column("spid")?.int
         }
 
@@ -506,7 +480,7 @@ final class SQLServerConnectionTests: XCTestCase, @unchecked Sendable {
     func testStreamQueryWithOptionsCompiles() async throws {
         guard #available(macOS 12.0, *) else { return }
         // Ensure environment is loaded for connection details
-        TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
+        try requireSQLServerTestServer(); // Load environment configuration
 
         try await client.withConnection { connection in
             let options = SqlServerExecutionOptions(mode: .auto, rowsetFetchSize: nil, progressThrottleMs: 100)

@@ -6,9 +6,9 @@ import SQLServerTDS
 @available(macOS 12.0, *)
 extension SQLServerAdministrationClient {
 
-    /// Fetches FILESTREAM options for a database from sys.database_filestream_options.
-    public func fetchFilestreamOptions(database: String) async throws -> SQLServerFilestreamOptions {
-        let escapedDb = Self.escapeIdentifier(database)
+    /// Gets FILESTREAM options for a database from sys.database_filestream_options.
+    public func getFilestreamOptions(database: String) async throws -> SQLServerFilestreamOptions {
+        let escapedDb = SQLServerSQL.escapeIdentifier(database)
         let sql = """
         USE \(escapedDb);
         SELECT
@@ -40,7 +40,7 @@ extension SQLServerAdministrationClient {
         database: String,
         directoryName: String
     ) async throws -> [SQLServerStreamMessage] {
-        let escapedDb = Self.escapeIdentifier(database)
+        let escapedDb = SQLServerSQL.escapeIdentifier(database)
         let escapedDir = directoryName.replacingOccurrences(of: "'", with: "''")
         let sql = "ALTER DATABASE \(escapedDb) SET FILESTREAM (DIRECTORY_NAME = N'\(escapedDir)')"
         let result = try await client.execute(sql)
@@ -53,15 +53,15 @@ extension SQLServerAdministrationClient {
         database: String,
         access: SQLServerFilestreamAccessLevel
     ) async throws -> [SQLServerStreamMessage] {
-        let escapedDb = Self.escapeIdentifier(database)
+        let escapedDb = SQLServerSQL.escapeIdentifier(database)
         let sql = "ALTER DATABASE \(escapedDb) SET FILESTREAM (NON_TRANSACTED_ACCESS = \(access.rawValue))"
         let result = try await client.execute(sql)
         return result.messages
     }
 
-    /// Fetches containment-specific properties for a database.
+    /// Gets containment-specific properties for a database.
     /// Returns nil if the database is not a contained database.
-    public func fetchContainmentProperties(database: String) async throws -> SQLServerContainmentProperties? {
+    public func getContainmentProperties(database: String) async throws -> SQLServerContainmentProperties? {
         let escapedName = database.replacingOccurrences(of: "'", with: "''")
         let sql = """
         SELECT
@@ -96,8 +96,8 @@ extension SQLServerAdministrationClient {
         )
     }
 
-    /// Fetches the cursor default scope for a database.
-    public func fetchCursorDefaults(database: String) async throws -> SQLServerCursorDefaults {
+    /// Gets the cursor default scope for a database.
+    public func getCursorDefaults(database: String) async throws -> SQLServerCursorDefaults {
         let escapedName = database.replacingOccurrences(of: "'", with: "''")
         let sql = """
         SELECT
@@ -118,8 +118,8 @@ extension SQLServerAdministrationClient {
         )
     }
 
-    /// Fetches Service Broker properties for a database.
-    public func fetchServiceBrokerProperties(database: String) async throws -> SQLServerServiceBrokerProperties {
+    /// Gets Service Broker properties for a database.
+    public func getServiceBrokerProperties(database: String) async throws -> SQLServerServiceBrokerProperties {
         let escapedName = database.replacingOccurrences(of: "'", with: "''")
         let sql = """
         SELECT
@@ -144,5 +144,27 @@ extension SQLServerAdministrationClient {
             isHonorBrokerPriorityOn: (row.column("is_honor_broker_priority_on")?.int ?? 0) != 0,
             serviceBrokerGUID: row.column("service_broker_guid")?.string ?? ""
         )
+    }
+
+    // MARK: - Deprecated Forwarding
+
+    @available(*, deprecated, renamed: "getFilestreamOptions(database:)")
+    public func fetchFilestreamOptions(database: String) async throws -> SQLServerFilestreamOptions {
+        try await getFilestreamOptions(database: database)
+    }
+
+    @available(*, deprecated, renamed: "getContainmentProperties(database:)")
+    public func fetchContainmentProperties(database: String) async throws -> SQLServerContainmentProperties? {
+        try await getContainmentProperties(database: database)
+    }
+
+    @available(*, deprecated, renamed: "getCursorDefaults(database:)")
+    public func fetchCursorDefaults(database: String) async throws -> SQLServerCursorDefaults {
+        try await getCursorDefaults(database: database)
+    }
+
+    @available(*, deprecated, renamed: "getServiceBrokerProperties(database:)")
+    public func fetchServiceBrokerProperties(database: String) async throws -> SQLServerServiceBrokerProperties {
+        try await getServiceBrokerProperties(database: database)
     }
 }

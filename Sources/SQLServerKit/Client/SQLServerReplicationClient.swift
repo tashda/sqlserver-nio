@@ -106,7 +106,7 @@ public struct SQLServerReplicationArticle: Sendable, Equatable, Identifiable {
 /// let pubs = try await client.replication.listPublications()
 /// ```
 public final class SQLServerReplicationClient: @unchecked Sendable {
-    private let client: SQLServerClient
+    internal let client: SQLServerClient
 
     internal init(client: SQLServerClient) {
         self.client = client
@@ -131,14 +131,17 @@ public final class SQLServerReplicationClient: @unchecked Sendable {
     /// Lists replication publications in the current database.
     @available(macOS 12.0, *)
     public func listPublications() async throws -> [SQLServerPublication] {
-        // Use syspublications which is available in the publisher database
+        // syspublications (transactional and snapshot: repl_freq 0 or 1) and, where merge
+        // replication was ever enabled, sysmergepublications; both live in the publisher database.
+        // The tables exist only once the database was enabled for publishing; a branch that does
+        // not run may name a missing table (deferred name resolution).
         let sql = """
-        SELECT name,
-               type AS publication_type,
-               status,
-               ISNULL(description, '') AS description
-        FROM syspublications
-        ORDER BY name
+        DECLARE @publications TABLE (name sysname, publication_type INT, status INT, description NVARCHAR(255));
+        IF OBJECT_ID(N'syspublications') IS NOT NULL
+            INSERT @publications SELECT name, repl_freq, status, ISNULL(description, '') FROM syspublications;
+        IF OBJECT_ID(N'sysmergepublications') IS NOT NULL
+            INSERT @publications SELECT name, 2, status, ISNULL(description, '') FROM sysmergepublications;
+        SELECT name, publication_type, status, description FROM @publications ORDER BY name;
         """
         let rows = try await client.query(sql)
         return rows.compactMap { row in
@@ -158,15 +161,14 @@ public final class SQLServerReplicationClient: @unchecked Sendable {
     /// Lists replication subscriptions in the current database.
     @available(macOS 12.0, *)
     public func listSubscriptions() async throws -> [SQLServerSubscription] {
+        // One row per article in syssubscriptions; `virtual` rows are the snapshot's own.
         let sql = """
-        SELECT srvname AS subscriber_server,
-               dest_db AS subscriber_db,
-               subscription_type,
-               status
-        FROM syssubscriptions sub
-        JOIN sysextendedarticlesview a ON sub.artid = a.artid
-        JOIN master.dbo.sysservers srv ON sub.srvid = srv.srvid
-        ORDER BY srvname, dest_db
+        DECLARE @subscriptions TABLE (subscriber_server sysname, subscriber_db sysname, subscription_type INT, status INT);
+        IF OBJECT_ID(N'syssubscriptions') IS NOT NULL
+            INSERT @subscriptions SELECT DISTINCT srvname, dest_db, subscription_type, status
+            FROM syssubscriptions WHERE dest_db <> N'virtual';
+        SELECT subscriber_server, subscriber_db, subscription_type, status FROM @subscriptions
+        ORDER BY subscriber_server, subscriber_db;
         """
         let rows = try await client.query(sql)
         return rows.compactMap { row in
@@ -196,46 +198,34 @@ public final class SQLServerReplicationClient: @unchecked Sendable {
         public let publicationName: String?
     }
 
-    /// Returns status of replication agents (distribution, log reader, snapshot).
+    /// Status of the replication agents (snapshot, log reader, distribution) from the distribution
+    /// database; `name` is the agent's SQL Agent job. Empty when no distributor is configured.
     @available(macOS 12.0, *)
-    public func agentStatus() async throws -> [SQLServerReplicationAgentStatus] {
-        // Query the distribution database agent tables if distributor is configured
-        let sql = """
-        SELECT
-            'Distribution' AS agent_type,
-            a.name,
-            CASE a.status
-                WHEN 1 THEN 'Started'
-                WHEN 2 THEN 'Succeeded'
-                WHEN 3 THEN 'In progress'
-                WHEN 4 THEN 'Idle'
-                WHEN 5 THEN 'Retrying'
-                WHEN 6 THEN 'Failed'
-                ELSE 'Unknown'
-            END AS status,
-            h.comments AS last_action,
-            CONVERT(VARCHAR(30), h.time, 121) AS last_run_time,
-            p.publication AS publication_name
-        FROM msdb.dbo.MSdistribution_agents a
-        LEFT JOIN msdb.dbo.syspublications p ON a.publication = p.name
-        OUTER APPLY (
-            SELECT TOP 1 comments, time
-            FROM msdb.dbo.MSdistribution_history dh
-            WHERE dh.agent_id = a.id
-            ORDER BY dh.time DESC
-        ) h
-        """
-        let rows: [SQLServerRow]
-        do {
-            rows = try await client.query(sql)
-        } catch {
-            // Distribution database may not be configured
+    public func agentStatus(distributionDatabase: String = "distribution") async throws -> [SQLServerReplicationAgentStatus] {
+        let db = SQLServerSQL.escapeIdentifier(distributionDatabase)
+        func agents(_ type: String, _ table: String, _ history: String, publication: String) -> String {
+            """
+            SELECT '\(type)' AS agent_type, a.name,
+                CASE h.runstatus WHEN 1 THEN 'Started' WHEN 2 THEN 'Succeeded' WHEN 3 THEN 'In progress' WHEN 4 THEN 'Idle'
+                    WHEN 5 THEN 'Retrying' WHEN 6 THEN 'Failed' ELSE 'Never run' END AS status,
+                h.comments AS last_action, CONVERT(VARCHAR(30), h.time, 121) AS last_run_time, \(publication) AS publication_name
+            FROM \(db).dbo.\(table) a
+            OUTER APPLY (SELECT TOP 1 runstatus, comments, time FROM \(db).dbo.\(history) x WHERE x.agent_id = a.id ORDER BY x.time DESC) h
+            """
+        }
+        let sql = [
+            agents("Snapshot", "MSsnapshot_agents", "MSsnapshot_history", publication: "a.publication"),
+            agents("Log Reader", "MSlogreader_agents", "MSlogreader_history", publication: "CAST(NULL AS sysname)"),
+            agents("Distribution", "MSdistribution_agents", "MSdistribution_history", publication: "a.publication"),
+        ].joined(separator: "\nUNION ALL\n")
+        guard try await client.query("SELECT DB_ID(N'\(SQLServerSQL.escapeLiteral(distributionDatabase))') AS id").first?.column("id")?.int != nil else {
             return []
         }
+        let rows = try await client.query(sql)
         return rows.compactMap { row in
             guard let name = row.column("name")?.string else { return nil }
             return SQLServerReplicationAgentStatus(
-                agentType: row.column("agent_type")?.string ?? "Distribution",
+                agentType: row.column("agent_type")?.string ?? "",
                 name: name,
                 status: row.column("status")?.string ?? "Unknown",
                 lastAction: row.column("last_action")?.string,

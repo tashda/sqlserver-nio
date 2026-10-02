@@ -5,12 +5,12 @@ import Logging
 
 enum PromiseTracker {
     private struct Entry { let label: String; let backtrace: [String] }
-    
+
     private struct State {
         var nextID: Int = 1
         var pending: [Int: Entry] = [:]
     }
-    
+
     private static let state = NIOLockedValueBox(State())
     private static let logger = Logger(label: "tds.promise.tracker")
 
@@ -50,7 +50,6 @@ enum PromiseTracker {
             logger.warning("[\(context)] Found \(boxState.pending.count) pending promises:")
             for (id, entry) in boxState.pending {
                 logger.warning("  [\(id)] \(entry.label)")
-                // For brevity, only first 5 symbols of backtrace
                 for symbol in entry.backtrace.prefix(5) {
                     logger.warning("    \(symbol)")
                 }

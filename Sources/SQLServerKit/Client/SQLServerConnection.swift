@@ -21,6 +21,11 @@ public final class SQLServerConnection: @unchecked Sendable {
         public var login: Login
         public var tlsConfiguration: SQLServerTLSConfiguration?
         public var encryptionMode: SQLServerEncryptionMode
+        /// Overrides the hostname used to validate the server certificate's
+        /// CN / subject alternative names. Mirrors SSMS's "Host Name In
+        /// Certificate" / JDBC's `hostNameInCertificate`. When nil, the
+        /// connection's `hostname` is used (the default).
+        public var hostNameInCertificate: String?
         public var transparentNetworkIPResolution: Bool
         public var metadataConfiguration: SQLServerMetadataOperations.Configuration
         public var retryConfiguration: SQLServerRetryConfiguration
@@ -29,13 +34,36 @@ public final class SQLServerConnection: @unchecked Sendable {
         public var connectTimeoutSeconds: Int
         /// When true, signals read-only application intent for AG secondary routing.
         public var readOnlyIntent: Bool
+        /// Reported to SQL Server as APP_NAME() and program_name, which DBAs
+        /// use in monitoring, auditing and Resource Governor classification.
+        public var applicationName: String = "echo-sqlserver"
+        /// Accept TLS 1.0 and 1.1 for a server that offers nothing newer
+        /// (SQL Server 2008 R2 to 2014 without their TLS 1.2 update). Those
+        /// versions are deprecated and weak; leave this off unless the
+        /// server cannot be updated. Never applies to `.strict`.
+        public var allowLegacyTLS: Bool = false
+        /// The network packet size to ask for at login, 512 to 32767 bytes. Larger packets mean fewer
+        /// round trips for big results, scripts and imports; the server may accept less (its
+        /// `network packet size` option). Defaults to 8000, like Microsoft's current drivers.
+        public var packetSize: Int = 8000
+        /// The Kerberos service principal name for Windows authentication, like ODBC's `ServerSPN`
+        /// and JDBC's `serverSpn`: for a server reached by another address than the name its SPN is
+        /// registered for (an IP address, a load balancer). `MSSQLSvc/<hostname>:<port>` when nil.
+        /// A name without `@REALM` is in the login's realm.
+        public var serverSPN: String?
+        /// Always Encrypted: ask SQL Server to describe encrypted columns, like ODBC's
+        /// `ColumnEncryption=Enabled` and JDBC's `columnEncryptionSetting`. The driver holds no column
+        /// master keys, so values stay encrypted: such columns report `encryption` (their plaintext
+        /// type, deterministic or randomized, the key path) and keep their ciphertext. Off by default.
+        public var columnEncryption: Bool = false
 
         public init(
             hostname: String,
             port: Int = 1433,
             login: Login,
-            tlsConfiguration: SQLServerTLSConfiguration? = .makeClientConfiguration(),
-            encryptionMode: SQLServerEncryptionMode = .optional,
+            tlsConfiguration: SQLServerTLSConfiguration? = .clientDefault,
+            encryptionMode: SQLServerEncryptionMode = .mandatory,
+            hostNameInCertificate: String? = nil,
             metadataConfiguration: SQLServerMetadataOperations.Configuration = .init(),
             retryConfiguration: SQLServerRetryConfiguration = .init(),
             sessionOptions: SessionOptions = .ssmsDefaults,
@@ -48,6 +76,7 @@ public final class SQLServerConnection: @unchecked Sendable {
             self.login = login
             self.tlsConfiguration = tlsConfiguration
             self.encryptionMode = encryptionMode
+            self.hostNameInCertificate = hostNameInCertificate
             self.metadataConfiguration = metadataConfiguration
             self.retryConfiguration = retryConfiguration
             self.sessionOptions = sessionOptions
@@ -73,19 +102,58 @@ public final class SQLServerConnection: @unchecked Sendable {
     internal var eventLoop: EventLoop { base.eventLoop }
     public var logger: Logger { base.logger }
     public var currentDatabase: String { stateLock.withLock { _currentDatabase } }
+    /// True once the physical connection is closed, whether by `close()`, the
+    /// server, the network or a protocol failure. A closed connection cannot
+    /// be used again; open a new one. Its session state (temporary tables,
+    /// SET options, open transaction) is gone.
+    public var isClosed: Bool { base.isClosed }
+
+    /// True while the session has an open transaction (BEGIN TRANSACTION,
+    /// implicit transactions, or `withTransaction`), as SQL Server reports
+    /// it through ENVCHANGE. If the connection drops while this is true, the
+    /// server rolls the transaction back.
+    public var isInTransaction: Bool {
+        !base.transactionDescriptor.allSatisfy { $0 == 0 }
+    }
+
+    /// The network packet size the server accepted at login (`packetSize` asks for one); requests
+    /// are sent in packets of this size.
+    public var negotiatedPacketSize: Int { base.negotiatedPacketLength }
+
+    /// Whether SQL Server agreed to describe Always Encrypted columns (`columnEncryption` was
+    /// asked for and the server supports it, SQL Server 2016 and later).
+    public var isColumnEncryptionEnabled: Bool { base.isColumnEncryptionNegotiated }
+
+    /// Completes when the physical connection closes, for any reason. Use it
+    /// to tell the user at once that a session was lost, rather than on the
+    /// next statement. Read `isInTransaction` inside the callback to learn
+    /// whether an open transaction was rolled back.
+    public var closeFuture: EventLoopFuture<Void> { base.closeFuture }
 
     public var lastSessionStatePayload: [UInt8] { base.snapshotSessionStatePayload() }
     public var lastDataClassificationPayload: [UInt8] { base.snapshotDataClassificationPayload() }
 
+    /// Opens a dedicated connection on NIO's shared event loop group, so
+    /// many dedicated connections do not each start their own thread.
     public static func connect(
         configuration: Configuration,
         logger: Logger = Logger(label: "tds.sqlserver.connection")
     ) async throws -> SQLServerConnection {
+        try await connect(configuration: configuration, eventLoopGroup: MultiThreadedEventLoopGroup.singleton, logger: logger)
+    }
+
+    /// Opens a dedicated connection on a caller-owned event loop group. The
+    /// group is not shut down when the connection closes.
+    public static func connect(
+        configuration: Configuration,
+        eventLoopGroup: EventLoopGroup,
+        logger: Logger = Logger(label: "tds.sqlserver.connection")
+    ) async throws -> SQLServerConnection {
         try await connect(
             configuration: configuration,
-            numberOfThreads: System.coreCount,
+            eventLoopGroupProvider: .shared(eventLoopGroup),
             logger: logger
-        )
+        ).get()
     }
 
     public static func connect(
@@ -102,7 +170,7 @@ public final class SQLServerConnection: @unchecked Sendable {
 
     internal static func connect(
         configuration: Configuration,
-        eventLoopGroupProvider: SQLServerClient.EventLoopGroupProvider = .createNew(numberOfThreads: System.coreCount),
+        eventLoopGroupProvider: SQLServerClient.EventLoopGroupProvider = .createNew(numberOfThreads: 1),
         logger: Logger = Logger(label: "tds.sqlserver.connection")
     ) -> EventLoopFuture<SQLServerConnection> {
         let group: EventLoopGroup
@@ -138,100 +206,18 @@ public final class SQLServerConnection: @unchecked Sendable {
         on eventLoop: EventLoop,
         logger: Logger = Logger(label: "tds.sqlserver.connection")
     ) -> EventLoopFuture<SQLServerConnection> {
-        @Sendable
-        func escapeIdentifier(_ identifier: String) -> String {
-            identifier.replacingOccurrences(of: "]", with: "]]")
-        }
-
-        @Sendable
-        func attempt(_ cfg: Configuration) -> EventLoopFuture<SQLServerConnection> {
-            let loginConfiguration = TDSLoginConfiguration(
-                serverName: cfg.hostname,
-                port: cfg.port,
-                database: cfg.login.database,
-                authentication: cfg.login.authentication.tdsAuthentication,
-                readOnlyIntent: cfg.readOnlyIntent
+        openSession(configuration: configuration, on: eventLoop, logger: logger).map { connection in
+            let sqlConnection = SQLServerConnection(
+                base: connection,
+                configuration: configuration,
+                metadataCache: nil,
+                logger: logger,
+                reuseOnClose: false,
+                releaseClosure: { _ in connection.close() }
             )
-
-            return resolveSocketAddresses(
-                hostname: cfg.hostname,
-                port: cfg.port,
-                transparentResolution: cfg.transparentNetworkIPResolution,
-                on: eventLoop
-            ).flatMap { addresses in
-                Self.establishTDSConnection(
-                    addresses: addresses,
-                    tlsConfiguration: cfg.tlsConfiguration,
-                    serverHostname: cfg.hostname,
-                    encryptionMode: cfg.encryptionMode.asTDSMode,
-                    connectTimeout: .seconds(Int64(cfg.connectTimeoutSeconds)),
-                    on: eventLoop,
-                    logger: logger
-                )
-            }.flatMap { connection in
-                connection.login(configuration: loginConfiguration)
-                    .map { connection }
-                    .flatMapError { error in
-                        let normalized = SQLServerError.normalize(error)
-                        guard case .authenticationFailed = normalized,
-                              cfg.login.database.caseInsensitiveCompare("master") != .orderedSame
-                        else {
-                            return connection.close().flatMapThrowing { throw normalized }
-                        }
-
-                        logger.warning("Login to database \(cfg.login.database) failed; retrying via master and issuing USE")
-                        let masterLogin = TDSLoginConfiguration(
-                            serverName: cfg.hostname,
-                            port: cfg.port,
-                            database: "master",
-                            authentication: cfg.login.authentication.tdsAuthentication,
-                            readOnlyIntent: cfg.readOnlyIntent
-                        )
-                        return connection.login(configuration: masterLogin)
-                            .flatMap {
-                                connection.rawSql("USE [\(escapeIdentifier(cfg.login.database))];")
-                            }
-                            .map { _ in connection }
-                            .flatMapError { fallbackError in
-                                connection.close().flatMapThrowing {
-                                    throw SQLServerError.normalize(fallbackError)
-                                }
-                            }
-                    }
-            }.flatMap { connection in
-                let sqlConnection = SQLServerConnection(
-                    base: connection,
-                    configuration: cfg,
-                    metadataCache: nil,
-                    logger: logger,
-                    reuseOnClose: false,
-                    releaseClosure: { close in
-                        if close || connection.isClosed {
-                            return connection.close()
-                        } else {
-                            return connection.eventLoop.makeSucceededFuture(())
-                        }
-                    }
-                )
-                logger.info("Connected to \(cfg.hostname):\(cfg.port)/\(cfg.login.database)")
-                return sqlConnection.bootstrapSession().map { sqlConnection }
-            }
-        }
-
-        return attempt(configuration).flatMapError { error in
-            let normalized = SQLServerError.normalize(error)
-            switch normalized {
-            case .connectionClosed, .transient, .timeout:
-                if configuration.port != 1433 {
-                    var fallback = configuration
-                    fallback.port = 1433
-                    logger.warning("Primary port \(configuration.port) connect failed; attempting fallback to 1433")
-                    return attempt(fallback)
-                }
-                return eventLoop.makeFailedFuture(normalized)
-            default:
-                return eventLoop.makeFailedFuture(normalized)
-            }
+            sqlConnection.syncCurrentDatabaseFromServer()
+            logger.info("Connected to \(configuration.hostname):\(configuration.port)/\(sqlConnection.currentDatabase)")
+            return sqlConnection
         }
     }
 
@@ -253,6 +239,7 @@ public final class SQLServerConnection: @unchecked Sendable {
             configuration: configuration.metadataConfiguration,
             sharedCache: metadataCache,
             defaultDatabase: configuration.login.database,
+            serverMajorVersion: base.serverMajorVersion,
             logger: logger,
             queryExecutor: { [weak self, eventLoop = base.eventLoop] sql in
                 guard let self else {
@@ -278,34 +265,8 @@ public final class SQLServerConnection: @unchecked Sendable {
         guard shouldClose else {
             return eventLoop.makeSucceededFuture(())
         }
-        logger.debug("Connection closed")
-        if reuseOnClose {
-            // Roll back any orphaned transaction before returning to pool.
-            let guardFuture: EventLoopFuture<Void>
-            if !base.isClosed {
-                guardFuture = guardOpenTransaction()
-            } else {
-                guardFuture = eventLoop.makeSucceededFuture(())
-            }
-            return guardFuture.flatMap {
-                let defaultDatabase = self.configuration.login.database
-                let currentDatabase = self.currentDatabase
-                let releaseFuture: EventLoopFuture<Void>
-                if !self.base.isClosed,
-                   currentDatabase.caseInsensitiveCompare(defaultDatabase) != .orderedSame {
-                    releaseFuture = self.changeDatabase(defaultDatabase).flatMap {
-                        self.release(false)
-                    }.flatMapError { _ in
-                        self.release(true)
-                    }
-                } else {
-                    releaseFuture = self.release(false)
-                }
-                return releaseFuture
-            }.map { _ in self.fireAndForgetGroupShutdown() }
-        } else {
-            return release(true).map { _ in self.fireAndForgetGroupShutdown() }
-        }
+        logger.debug(reuseOnClose ? "Connection returned to pool" : "Connection closed")
+        return release(!reuseOnClose).map { _ in self.fireAndForgetGroupShutdown() }
     }
 
     public func close() async throws {
@@ -317,30 +278,11 @@ public final class SQLServerConnection: @unchecked Sendable {
             return true
         }
         guard shouldClose else { return }
-        logger.debug("Connection closed")
+        logger.debug(reuseOnClose ? "Connection returned to pool" : "Connection closed")
 
-        if reuseOnClose {
-            // Roll back any orphaned transaction before returning to pool.
-            if !base.isClosed {
-                try? await guardOpenTransaction().get()
-            }
-            let defaultDatabase = configuration.login.database
-            let currentDatabase = self.currentDatabase
-            if !base.isClosed,
-               currentDatabase.caseInsensitiveCompare(defaultDatabase) != .orderedSame {
-                do {
-                    let switchFuture: EventLoopFuture<Void> = self.changeDatabase(defaultDatabase)
-                    try await switchFuture.get()
-                    try await release(false).get()
-                } catch {
-                    try await release(true).get()
-                }
-            } else {
-                try await release(false).get()
-            }
-        } else {
-            try await release(true).get()
-        }
+        // A pooled session is returned and reset before reuse; a dedicated
+        // connection is closed.
+        try await release(!reuseOnClose).get()
 
         if let group = ownsEventLoopGroup {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -355,29 +297,39 @@ public final class SQLServerConnection: @unchecked Sendable {
         }
     }
 
+    /// Runs `body` in a transaction on this connection, committing when it
+    /// returns and rolling back when it throws. The body runs once and is
+    /// never retried.
+    ///
+    /// If SQL Server rejects the COMMIT, the transaction did not commit and
+    /// that server error is thrown. If the connection fails while the COMMIT
+    /// is in flight, `SQLServerError.commitOutcomeUnknown` is thrown: the
+    /// transaction may or may not be durable, and the caller must check
+    /// before repeating any writes.
     @available(macOS 12.0, *)
     public func withTransaction<T>(body: @escaping (SQLServerConnection) async throws -> T) async throws -> T {
+        try await beginTransaction()
+        let result: T
         do {
-            try await beginTransaction()
-            let result = try await body(self)
-            try await commit()
-            return result
+            result = try await body(self)
         } catch {
-            _ = try? await rollback()
+            _ = try? await rollback().get()
             throw error
+        }
+        do {
+            try await commit().get()
+            return result
+        } catch let error as SQLServerError where error.serverDetails != nil && !error.isConnectionLost {
+            // The server answered: the transaction was not committed.
+            _ = try? await rollback().get()
+            throw error
+        } catch {
+            throw SQLServerError.commitOutcomeUnknown(error)
         }
     }
 
     public func cancelActiveRequest() {
         base.sendAttention()
-    }
-
-    /// Rolls back any open transaction before the connection is returned to a pool.
-    /// This prevents leaked transactions from holding locks on the server.
-    /// Errors are ignored — if the connection is broken, the server will clean up
-    /// when the TCP session dies.
-    internal func guardOpenTransaction() -> EventLoopFuture<Void> {
-        base.rawSql("IF @@TRANCOUNT > 0 ROLLBACK;").map { _ in () }.recover { _ in () }
     }
 
     deinit {
@@ -389,7 +341,7 @@ public final class SQLServerConnection: @unchecked Sendable {
             return true
         }
         if shouldClose {
-            _ = release(!reuseOnClose)
+            _ = release(true)
         }
     }
 }

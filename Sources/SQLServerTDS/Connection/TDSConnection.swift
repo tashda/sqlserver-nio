@@ -1,6 +1,7 @@
 import Foundation
 import NIO
 import NIOSSL
+import NIOConcurrencyHelpers
 import Logging
 
 public final class TDSConnection {
@@ -27,10 +28,20 @@ public final class TDSConnection {
     
     public var logger: Logger
 
+    private let closeLock = NIOLock()
     private var didClose: Bool
 
+    /// True once the connection cannot be used: the channel is closed, or
+    /// the driver has given up on it (protocol failure, unacknowledged
+    /// cancellation) and is closing it.
     public var isClosed: Bool {
-        return !self.channel.isActive
+        return !self.channel.isActive || closeLock.withLock { unusable }
+    }
+
+    private var unusable = false
+
+    internal func markUnusable() {
+        closeLock.withLock { unusable = true }
     }
     
     // Transaction state management
@@ -40,10 +51,16 @@ public final class TDSConnection {
     // Session state & data classification snapshots (raw payloads)
     private var lastSessionStatePayload: [UInt8] = []
     private var lastDataClassificationPayload: [UInt8] = []
-    // Connection reset flag — set when a pooled connection is returned.
-    // The next outbound request will carry the RESETCONNECTION bit in its
-    // TDS packet header, telling SQL Server to reset session state.
+    // Connection reset flag. The next request started carries the
+    // RESETCONNECTION bit in its first packet header.
     internal var needsConnectionReset: Bool = false
+    // Session facts reported by the server through ENVCHANGE tokens. Written
+    // on the event loop, read from any thread.
+    private let sessionLock = NIOLock()
+    private var _currentDatabase: String?
+    private var _routingTarget: TDSRoutingTarget?
+    private var _negotiatedPacketLength = TDSPacket.defaultPacketLength
+    private var _columnEncryptionNegotiated = false
 
     // Stall detection support
     var lastStallSnapshot: String = ""
@@ -70,23 +87,74 @@ public final class TDSConnection {
         let ringSize = ProcessInfo.processInfo.environment["TDS_TOKEN_RING_SIZE"].flatMap { Int($0) } ?? 128
         self.tokenRing = TDSTokenRing(capacity: ringSize)
         self.channel.closeFuture.whenComplete { [weak self] (_: Result<Void, any Error>) in
-            self?.didClose = true
+            guard let self else { return }
+            self.closeLock.withLock { self.didClose = true }
         }
     }
     
+    /// SQL Server product major version from the LOGINACK token. Zero until login completes.
+    public var serverMajorVersion: UInt8 {
+        requestHandler.serverMajorVersion
+    }
+
     // Transaction state accessors
     public var transactionDescriptor: [UInt8] {
-        return currentTransactionDescriptor
+        sessionLock.withLock { currentTransactionDescriptor }
     }
-    
+
     public var requestCount: UInt32 {
-        return outstandingRequestCount
+        sessionLock.withLock { outstandingRequestCount }
     }
-    
+
     public func updateTransactionState(descriptor: [UInt8], requestCount: UInt32) {
-        self.currentTransactionDescriptor = descriptor
-        self.outstandingRequestCount = requestCount
-        self.isInTransaction = !descriptor.allSatisfy { $0 == 0 }
+        sessionLock.withLock {
+            self.currentTransactionDescriptor = descriptor
+            self.outstandingRequestCount = requestCount
+            self.isInTransaction = !descriptor.allSatisfy { $0 == 0 }
+        }
+    }
+
+    /// The database the server reports as current. Updated by every `USE`,
+    /// including one inside a user batch or stored procedure. Nil until login.
+    public var currentDatabase: String? {
+        sessionLock.withLock { _currentDatabase }
+    }
+
+    /// The server a login response redirected this connection to, if any.
+    public var routingTarget: TDSRoutingTarget? {
+        sessionLock.withLock { _routingTarget }
+    }
+
+    /// The packet size the server accepted at login (ENVCHANGE); requests use it.
+    public var negotiatedPacketLength: Int {
+        sessionLock.withLock { _negotiatedPacketLength }
+    }
+
+    internal func updateNegotiatedPacketLength(_ length: Int) {
+        sessionLock.withLock { _negotiatedPacketLength = length }
+    }
+
+    /// Whether the server acknowledged COLUMNENCRYPTION at login (Always Encrypted metadata).
+    public var isColumnEncryptionNegotiated: Bool {
+        sessionLock.withLock { _columnEncryptionNegotiated }
+    }
+
+    internal func updateColumnEncryptionNegotiated(_ negotiated: Bool) {
+        sessionLock.withLock { _columnEncryptionNegotiated = negotiated }
+    }
+
+    internal func updateCurrentDatabase(_ database: String) {
+        sessionLock.withLock { _currentDatabase = database }
+    }
+
+    internal func updateRouting(_ target: TDSRoutingTarget?) {
+        sessionLock.withLock { _routingTarget = target }
+    }
+
+    internal func consumeConnectionResetRequest() -> Bool {
+        guard needsConnectionReset else { return false }
+        needsConnectionReset = false
+        return true
     }
 
     public func updateSessionStatePayload(_ payload: [UInt8]) {
@@ -98,65 +166,71 @@ public final class TDSConnection {
     }
     
     public func close() -> EventLoopFuture<Void> {
-        guard !self.didClose else {
-            return self.eventLoop.makeSucceededFuture(())
+        let shouldClose = closeLock.withLock { () -> Bool in
+            guard !didClose else { return false }
+            didClose = true
+            return true
         }
-        self.didClose = true
+        guard shouldClose else { return channel.closeFuture }
        
-        return self.channel.close(mode: .all)
+        return self.channel.close(mode: .all).flatMapError { error in
+            // SQL Server can close the TCP socket without TLS close_notify while
+            // responding to our explicit close. The transport is already being
+            // discarded, so this does not invalidate a completed operation.
+            if let sslError = error as? NIOSSLError,
+               case .uncleanShutdown = sslError {
+                return self.eventLoop.makeSucceededFuture(())
+            }
+            return self.eventLoop.makeFailedFuture(error)
+        }
     }
 
     /// Best-effort, promise-free close used during deinitialization to avoid
     /// creating futures that might outlive the event loop during shutdown.
     public func closeSilently() {
-        guard !self.didClose else { return }
-        self.didClose = true
+        let shouldClose = closeLock.withLock { () -> Bool in
+            guard !didClose else { return false }
+            didClose = true
+            return true
+        }
+        guard shouldClose else { return }
         self.channel.close(promise: nil)
     }
 
     deinit {
-        if !self.didClose {
+        if !closeLock.withLock({ didClose }) {
             self.closeSilently()
         }
     }
 
-    // Sends an ATTENTION signal to the server to cancel the currently running request.
-    // This is best-effort and does not remove the current request from the queue; the
-    // server will respond by terminating the active operation.
-    /// Marks this connection for a TDS RESETCONNECTION on the next outbound request.
-    /// Called when a connection is returned to a pool and will be reused.
+    /// Marks this connection for a TDS RESETCONNECTION on the next request.
     public func markForReset() {
-        needsConnectionReset = true
+        eventLoop.execute { self.needsConnectionReset = true }
     }
 
+    /// Cancels the request currently executing on this connection, if any.
+    /// Prefer `TDSRequestHandle.cancel()`, which cannot affect a later request.
     public func sendAttention() {
         self.channel.triggerUserOutboundEvent(TDSUserEvent.attention, promise: nil)
     }
 
-    /// Disables auto-read on the underlying channel so that data is only read
-    /// when explicitly requested via `requestRead()`. Used for back-pressure
-    /// in streaming queries.
-    public func suspendAutoRead() {
-        channel.setOption(ChannelOptions.autoRead, value: false).whenFailure { _ in }
+    /// How long to wait for the server to acknowledge a cancellation before
+    /// the connection is closed.
+    public func setAttentionAcknowledgementTimeout(_ timeout: TimeAmount) {
+        eventLoop.execute { self.requestHandler.attentionAcknowledgementTimeout = timeout }
     }
 
-    /// Re-enables auto-read on the underlying channel. Should be called when
-    /// a streaming query completes to restore normal read behavior.
-    public func resumeAutoRead() {
-        channel.setOption(ChannelOptions.autoRead, value: true).whenFailure { _ in }
-        channel.read()
-    }
-
-    /// Requests a single read from the channel. When auto-read is disabled,
-    /// this triggers the next batch of data to be read from the socket.
-    public func requestRead() {
-        channel.read()
-    }
-
-    // Fails the currently active request on this connection with a timeout-like
-    // error without closing the underlying channel. Useful for watchdogs.
+    // Fails the currently active request with a timeout error and cancels it
+    // on the server.
     public func failActiveRequestTimeout() {
         self.channel.triggerUserOutboundEvent(TDSUserEvent.failCurrentRequestTimeout, promise: nil)
+    }
+
+    /// The certificate the server presented in the TLS handshake, if any.
+    public func peerCertificate() -> EventLoopFuture<NIOSSLCertificate?> {
+        channel.pipeline.handler(type: NIOSSLClientHandler.self)
+            .map { $0.peerCertificate }
+            .recover { _ in nil }
     }
 
     public func tokenTraceSnapshot() -> [String] {

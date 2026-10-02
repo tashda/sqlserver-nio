@@ -44,49 +44,17 @@ extension SQLServerClient {
         }
     }
 
-    internal func executeWithRetry<Result: Sendable>(
-        operationName: String,
-        on eventLoop: EventLoop,
-        operation: @Sendable @escaping () -> EventLoopFuture<Result>
-    ) -> EventLoopFuture<Result> {
-        if isClientShutdown {
-            return eventLoop.makeFailedFuture(SQLServerError.clientShutdown)
-        }
-
-        @Sendable
-        func attempt(_ currentAttempt: Int) -> EventLoopFuture<Result> {
-            if self.isClientShutdown {
-                return eventLoop.makeFailedFuture(SQLServerError.clientShutdown)
+    /// Checks out a session. Validation and reset happen inside the pool,
+    /// and session creation already retries transient network failures, so
+    /// no caller operation has started when this fails.
+    internal func acquireHealthyConnection(on loop: EventLoop) -> EventLoopFuture<SQLServerConnection> {
+        guard !isClientShutdown else { return loop.makeFailedFuture(SQLServerError.clientShutdown) }
+        return pool.checkout(on: loop)
+            .map { self.makeConnection(from: $0) }
+            .flatMapErrorThrowing { error in
+                if case SQLServerConnectionPool.Error.poolClosed = error { throw SQLServerError.clientShutdown }
+                if case SQLServerConnectionPool.Error.shutdown = error { throw SQLServerError.clientShutdown }
+                throw SQLServerError.normalize(error)
             }
-
-            return operation().flatMapError { error in
-                let normalized = SQLServerError.normalize(error)
-                guard self.shouldRetry(error: normalized, attempt: currentAttempt) else {
-                    return eventLoop.makeFailedFuture(normalized)
-                }
-                self.logger.debug("Operation \(operationName) attempt \(currentAttempt) failed with \(normalized); retrying.")
-                return attempt(currentAttempt + 1)
-            }
-        }
-
-        return attempt(1)
     }
-
-    internal func shouldRetry(error: Swift.Error, attempt: Int) -> Bool {
-        if attempt >= retryConfiguration.maximumAttempts {
-            return false
-        }
-        if isClientShutdown {
-            return false
-        }
-        return retryConfiguration.shouldRetry(error)
-    }
-
-    internal func healthProbe(_ connection: SQLServerConnection, on loop: EventLoop) -> EventLoopFuture<Void> {
-        let request = RawSqlRequest(
-            sql: "SELECT 1 AS __ping__;"
-        )
-        return connection.underlying.send(request, logger: connection.logger).map { _ in () }
-    }
-
 }

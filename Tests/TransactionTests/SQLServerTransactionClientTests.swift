@@ -1,5 +1,6 @@
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 import XCTest
 import Logging
 
@@ -11,7 +12,7 @@ final class SQLServerTransactionClientTests: XCTestCase, @unchecked Sendable {
     private var testDatabase: String!
     override func setUp() async throws {
         continueAfterFailure = false
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
         _ = isLoggingConfigured
         if let sharedClient = await MainActor.run(body: { Self.sharedClient }) {
             self.client = sharedClient

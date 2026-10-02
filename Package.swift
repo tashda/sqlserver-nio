@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "sqlserver-nio",
+    name: "echo-sqlserver",
     platforms: [
         .macOS(.v10_15),
     ],
@@ -13,9 +13,6 @@ let package = Package(
         .library(
             name: "SQLServerKitTesting",
             targets: ["SQLServerKitTesting"]),
-        .executable(
-            name: "sqlserver-test-fixture",
-            targets: ["SQLServerFixtureTool"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0"),
@@ -23,7 +20,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-log.git", from: "1.5.4"),
         .package(url: "https://github.com/apple/swift-atomics.git", from: "1.2.0"),
         .package(url: "https://github.com/apple/swift-collections.git", from: "1.1.0"),
-        .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
+        .package(url: "https://github.com/apple/swift-crypto.git", from: "4.0.0"),
         .package(url: "https://github.com/swiftlang/swift-docc-plugin", from: "1.4.0"),
     ],
     targets: [
@@ -33,6 +30,7 @@ let package = Package(
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
                 .product(name: "NIOSSL", package: "swift-nio-ssl"),
+                .product(name: "NIOTLS", package: "swift-nio"),
                 .product(name: "Logging", package: "swift-log"),
                 .product(name: "Atomics", package: "swift-atomics"),
                 .product(name: "Collections", package: "swift-collections"),
@@ -71,11 +69,6 @@ let package = Package(
             ],
             path: "Sources/SQLServerKitXCTestSupport"
         ),
-        .executableTarget(
-            name: "SQLServerFixtureTool",
-            dependencies: ["SQLServerKitTesting"],
-            path: "Sources/SQLServerFixtureTool"
-        ),
         .testTarget(
             name: "SQLServerKitTests",
             dependencies: [
@@ -88,10 +81,6 @@ let package = Package(
             ],
             path: "Tests",
             exclude: [
-                "EnvironmentConfig.swift.template",
-                "README.md",
-                "SETUP.md",
-                "Support",
                 "TestTemplate.swift",
                 "CoreTests/QueryTests.swift.disabled",
                 "CoreTests/StreamingTests.swift.disabled",

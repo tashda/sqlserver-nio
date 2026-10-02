@@ -7,6 +7,9 @@ public class TDSTokenOperations: @unchecked Sendable {
     private let logger: Logger
     internal var state: State = .expectingColMetadata
     internal var colMetadata: TDSTokens.ColMetadataToken?
+    /// Set once the server acknowledged COLUMNENCRYPTION: every COLMETADATA then carries a
+    /// CekTable, and encrypted columns and return values carry CryptoMetaData.
+    public var columnEncryption = false
     internal let allocator = ByteBufferAllocator()
     internal static let generalTokenTypes: Set<TDSTokens.TokenType> = [
         .envchange,
@@ -41,103 +44,105 @@ public class TDSTokenOperations: @unchecked Sendable {
         self.logger = logger
     }
 
-    public func parse() throws -> [TDSToken] {
+    /// Parses every complete token currently buffered.
+    ///
+    /// Throws on malformed data. Tokens decoded before the failure are lost;
+    /// use `parseAvailable(messageComplete:)` when they matter.
+    public func parse(messageComplete: Bool = true) throws -> [TDSToken] {
+        let result = parseAvailable(messageComplete: messageComplete)
+        if let error = result.error {
+            throw error
+        }
+        return result.tokens
+    }
+
+    /// Parses every complete token currently buffered and stops at the first
+    /// incomplete one, leaving `streamParser.position` at its first byte so
+    /// parsing resumes there when more bytes arrive.
+    ///
+    /// While `messageComplete` is false a decode failure is treated as a token
+    /// that has not fully arrived yet, because the remaining bytes of the
+    /// message may still be in flight. Once the end of the message has been
+    /// received, the same failure is a protocol error and is returned together
+    /// with the tokens decoded before it.
+    public func parseAvailable(messageComplete: Bool) -> (tokens: [TDSToken], error: Error?) {
         var tokens: [TDSToken] = []
-
-        parsingLoop: while true {
-
-            guard let nextByte = streamParser.peekUInt8() else {
-                break
-            }
-
-            if nextByte == 0x00 {
-                _ = streamParser.readUInt8()
-                continue
-            }
-
-            if nextByte == TDSTokens.TokenType.unknown0x04.rawValue {
-                logger.debug("Skipping unknown token 0x04 at position \(streamParser.position)")
-                _ = streamParser.readUInt8()
-                continue
-            }
-
-            guard let nextType = TDSTokens.TokenType(rawValue: nextByte) else {
-                logger.warning("Skipping unknown token byte 0x\(String(format: "%02X", nextByte)) at position \(streamParser.position)")
-                _ = streamParser.readUInt8()
-                continue
-            }
-
-            if let generalToken = try parseGeneralTokenIfNeeded(for: nextType) {
-                tokens.append(generalToken)
-                continue
-            } else if TDSTokenOperations.generalTokenTypes.contains(nextType) {
-                // General token type but not enough data yet; wait for more bytes.
-                break parsingLoop
-            }
-
-            switch state {
-            case .expectingColMetadata:
-                guard nextType == .colMetadata else {
-                    state = .expectingRow
-                    continue
+        while true {
+            let start = streamParser.position
+            let startState = state
+            do {
+                guard let step = try parseNextToken() else {
+                    return (tokens, nil)
                 }
-
-                let start = streamParser.position
-                _ = streamParser.readUInt8() // consume token type
-                var bufferCopy = streamParser.buffer
-                bufferCopy.moveReaderIndex(to: streamParser.position)
-
-                do {
-                    let colMetadataToken = try TDSTokenOperations.parseColMetadataToken(from: &bufferCopy)
-                    self.colMetadata = colMetadataToken
-                    tokens.append(colMetadataToken)
-                    streamParser.position = bufferCopy.readerIndex
-                    state = .expectingRow
-                } catch TDSError.needMoreData {
-                    streamParser.position = start
-                    break parsingLoop
+                if let token = step {
+                    tokens.append(token)
                 }
-
-            case .expectingRow:
-                if nextType == .row {
-                    guard let rowToken = try parseRowToken() else {
-                        break parsingLoop
-                    }
-                    tokens.append(rowToken)
-                } else if nextType == .nbcRow {
-                    guard let nbcToken = try parseNbcRowToken() else {
-                        break parsingLoop
-                    }
-                    tokens.append(nbcToken)
-                } else if nextType == .tvpRow {
-                    guard let tvpToken = try parseTVPRowToken() else {
-                        break parsingLoop
-                    }
-                    tokens.append(tvpToken)
-                } else if nextType == .order {
-                    guard let orderToken = try parseOrderToken() else {
-                        break parsingLoop
-                    }
-                    tokens.append(orderToken)
-                } else {
-                    state = .expectingDone
-                }
-
-            case .expectingDone:
-                do {
-                    if let doneToken = try parseDoneToken() {
-                        tokens.append(doneToken)
-                        state = .expectingColMetadata
-                    } else {
-                        break parsingLoop
-                    }
-                } catch TDSError.needMoreData {
-                    break parsingLoop
-                }
+            } catch TDSError.needMoreData {
+                streamParser.position = start
+                state = startState
+                return (tokens, nil)
+            } catch {
+                streamParser.position = start
+                state = startState
+                return (tokens, messageComplete ? error : nil)
             }
         }
+    }
 
-        return tokens
+    /// Returns nil when no further byte is buffered, `.some(nil)` when bytes
+    /// were consumed without producing a token, or the parsed token.
+    private func parseNextToken() throws -> TDSToken?? {
+        guard let nextByte = streamParser.peekUInt8() else {
+            return nil
+        }
+
+        if nextByte == 0x00 || nextByte == TDSTokens.TokenType.unknown0x04.rawValue {
+            _ = streamParser.readUInt8()
+            return .some(nil)
+        }
+
+        guard let nextType = TDSTokens.TokenType(rawValue: nextByte) else {
+            // Every token has a known framing. An unknown byte means the stream
+            // is no longer aligned, and skipping it would decode garbage.
+            throw TDSError.protocolError("Unknown TDS token 0x\(String(format: "%02X", nextByte)) at offset \(streamParser.position)")
+        }
+
+        if TDSTokenOperations.generalTokenTypes.contains(nextType) {
+            guard let generalToken = try parseGeneralTokenIfNeeded(for: nextType) else {
+                throw TDSError.needMoreData
+            }
+            return generalToken
+        }
+
+        switch nextType {
+        case .colMetadata:
+            _ = streamParser.readUInt8()
+            var bufferCopy = streamParser.buffer
+            bufferCopy.moveReaderIndex(to: streamParser.position)
+            let colMetadataToken = try TDSTokenOperations.parseColMetadataToken(from: &bufferCopy, columnEncryption: columnEncryption)
+            self.colMetadata = colMetadataToken
+            streamParser.position = bufferCopy.readerIndex
+            state = .expectingRow
+            return colMetadataToken
+        case .row:
+            guard let token = try parseRowToken() else { throw TDSError.needMoreData }
+            return token
+        case .nbcRow:
+            guard let token = try parseNbcRowToken() else { throw TDSError.needMoreData }
+            return token
+        case .tvpRow:
+            guard let token = try parseTVPRowToken() else { throw TDSError.needMoreData }
+            return token
+        case .order:
+            guard let token = try parseOrderToken() else { throw TDSError.needMoreData }
+            return token
+        case .done, .doneInProc, .doneProc:
+            guard let token = try parseDoneToken() else { throw TDSError.needMoreData }
+            state = .expectingColMetadata
+            return token
+        default:
+            throw TDSError.protocolError("Unexpected TDS token \(nextType) at offset \(streamParser.position)")
+        }
     }
 
     private func parseGeneralTokenIfNeeded(for tokenType: TDSTokens.TokenType) throws -> TDSToken? {
@@ -267,7 +272,8 @@ public class TDSTokenOperations: @unchecked Sendable {
                 break
             }
 
-            guard let ackLength = try? buffer.readUShort() else {
+            // FeatureAckDataLen is a DWORD (MS-TDS 2.2.7.11).
+            guard let ackLength: UInt32 = buffer.readInteger(endianness: .little) else {
                 throw TDSError.needMoreData
             }
 

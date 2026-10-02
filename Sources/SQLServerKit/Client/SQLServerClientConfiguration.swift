@@ -5,12 +5,15 @@ public typealias SQLServerTLSConfiguration = TLSConfiguration
 
 /// Controls how encryption is negotiated with the SQL Server.
 ///
-/// Maps to the ENCRYPT connection string option in JDBC/ODBC:
-/// - `optional`: Try encryption but fall back to unencrypted if server doesn't support it (default for on-prem)
-/// - `mandatory`: Require encryption; fail if server doesn't support it (default for Azure SQL)
-/// - `strict`: TDS 8.0 strict mode — TLS before any TDS traffic (Azure SQL recommended)
+/// Inspired by the ENCRYPT connection string option in JDBC/ODBC:
+/// - `optional`: Encrypts the whole session. With no TLS configuration the
+///   server certificate is not validated (Microsoft's Encrypt=Optional
+///   validates nothing either, and only encrypts the login).
+/// - `mandatory`: Require full-session encryption (the default).
+/// - `strict`: TDS 8.0 strict mode; TLS is established before PRELOGIN.
 public enum SQLServerEncryptionMode: String, Sendable, CaseIterable {
-    /// Encryption is optional. Client requests encryption but accepts unencrypted if server doesn't support it.
+    /// Full-session encryption; without a TLS configuration the server
+    /// certificate is not validated. Credentials are never sent unencrypted.
     case optional
     /// Encryption is mandatory. Connection fails if the server doesn't support encryption.
     case mandatory
@@ -29,13 +32,13 @@ public enum SQLServerEncryptionMode: String, Sendable, CaseIterable {
 
 extension SQLServerTLSConfiguration {
     public static var clientDefault: SQLServerTLSConfiguration {
-        .makeClientConfiguration()
+        TDSConnection.defaultTLSConfiguration()
     }
 
     /// A TLS configuration that skips server certificate validation.
     /// Equivalent to JDBC's `trustServerCertificate=true`.
     public static var trustingServerCertificate: SQLServerTLSConfiguration {
-        var config = makeClientConfiguration()
+        var config = TDSConnection.defaultTLSConfiguration()
         config.certificateVerification = .none
         return config
     }
@@ -43,8 +46,8 @@ extension SQLServerTLSConfiguration {
     /// A TLS configuration that uses a custom CA certificate for server verification.
     /// - Parameter path: Path to a PEM-encoded CA certificate file.
     public static func withCACertificate(atPath path: String) -> SQLServerTLSConfiguration {
-        var config = makeClientConfiguration()
-        config.certificateVerification = .noHostnameVerification
+        var config = TDSConnection.defaultTLSConfiguration()
+        config.certificateVerification = .fullVerification
         config.trustRoots = .file(path)
         return config
     }
@@ -76,7 +79,8 @@ extension SQLServerClient {
             port: Int = 1433,
             login: SQLServerConnection.Configuration.Login,
             tlsConfiguration: SQLServerTLSConfiguration? = .clientDefault,
-            encryptionMode: SQLServerEncryptionMode = .optional,
+            encryptionMode: SQLServerEncryptionMode = .mandatory,
+            hostNameInCertificate: String? = nil,
             poolConfiguration: SQLServerConnectionPool.Configuration = .init(),
             metadataConfiguration: SQLServerMetadataOperations.Configuration = .init(),
             retryConfiguration: SQLServerRetryConfiguration = .init(),
@@ -88,6 +92,7 @@ extension SQLServerClient {
                 login: login,
                 tlsConfiguration: tlsConfiguration,
                 encryptionMode: encryptionMode,
+                hostNameInCertificate: hostNameInCertificate,
                 metadataConfiguration: metadataConfiguration,
                 retryConfiguration: retryConfiguration,
                 sessionOptions: .ssmsDefaults,
@@ -104,7 +109,8 @@ extension SQLServerClient {
             tlsEnabled: Bool,
             trustServerCertificate: Bool = false,
             caCertificatePath: String? = nil,
-            encryptionMode: SQLServerEncryptionMode = .optional,
+            encryptionMode: SQLServerEncryptionMode = .mandatory,
+            hostNameInCertificate: String? = nil,
             poolConfiguration: SQLServerConnectionPool.Configuration = .init(),
             metadataConfiguration: SQLServerMetadataOperations.Configuration = .init(),
             retryConfiguration: SQLServerRetryConfiguration = .init(),
@@ -129,6 +135,7 @@ extension SQLServerClient {
                 authentication: authentication,
                 tlsConfiguration: tlsConfig,
                 encryptionMode: encryptionMode,
+                hostNameInCertificate: hostNameInCertificate,
                 poolConfiguration: poolConfiguration,
                 metadataConfiguration: metadataConfiguration,
                 retryConfiguration: retryConfiguration,
@@ -142,7 +149,8 @@ extension SQLServerClient {
             database: String = "master",
             authentication: SQLServerAuthentication,
             tlsConfiguration: SQLServerTLSConfiguration? = .clientDefault,
-            encryptionMode: SQLServerEncryptionMode = .optional,
+            encryptionMode: SQLServerEncryptionMode = .mandatory,
+            hostNameInCertificate: String? = nil,
             poolConfiguration: SQLServerConnectionPool.Configuration = .init(),
             metadataConfiguration: SQLServerMetadataOperations.Configuration = .init(),
             retryConfiguration: SQLServerRetryConfiguration = .init(),
@@ -154,6 +162,7 @@ extension SQLServerClient {
                 login: .init(database: database, authentication: authentication),
                 tlsConfiguration: tlsConfiguration,
                 encryptionMode: encryptionMode,
+                hostNameInCertificate: hostNameInCertificate,
                 poolConfiguration: poolConfiguration,
                 metadataConfiguration: metadataConfiguration,
                 retryConfiguration: retryConfiguration,

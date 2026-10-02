@@ -1,6 +1,6 @@
 import Foundation
 import NIO
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 import XCTest
 
@@ -14,7 +14,7 @@ final class MinimalAgentTests: AgentTestBase, @unchecked Sendable {
 
         // Test the enhanced API
         let jobs = try await withTimeout(operationTimeout) {
-            try await agent.listJobsDetailed()
+            try await agent.listJobDetails()
         }
 
         // Verify we got job data

@@ -1,6 +1,7 @@
 import XCTest
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 /// Tests for server-level permissions: listAllServerPermissions, grantRaw/revokeRaw/denyRaw,
 /// and the expanded ServerPermissionName enum.
@@ -12,11 +13,7 @@ final class ServerPermissionTests: XCTestCase, @unchecked Sendable {
     override func setUp() async throws {
         try await super.setUp()
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables()
-
-        if envFlagEnabled("USE_DOCKER") {
-            try SQLServerDockerManager.shared.startIfNeeded()
-        }
+        try requireSQLServerTestServer()
 
         let config = makeSQLServerClientConfiguration()
         client = try await SQLServerClient.connect(configuration: config, numberOfThreads: 1)

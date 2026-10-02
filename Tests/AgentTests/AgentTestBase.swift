@@ -1,6 +1,7 @@
 import Foundation
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 import XCTest
 
 class AgentTestBase: XCTestCase, @unchecked Sendable {
@@ -12,11 +13,7 @@ class AgentTestBase: XCTestCase, @unchecked Sendable {
 
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables()
-
-        if envFlagEnabled("USE_DOCKER") {
-            try SQLServerDockerManager.shared.startIfNeeded()
-        }
+        try requireSQLServerTestServer()
 
         var config = makeSQLServerClientConfiguration()
         config.poolConfiguration.connectionIdleTimeout = nil

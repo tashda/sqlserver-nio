@@ -21,11 +21,11 @@ extension SQLServerMetadataOperations {
         includeComments: Bool = false
     ) -> EventLoopFuture<[RoutineMetadata]> {
         let resolvedDatabase = effectiveDatabase(database)
-        let dbPrefix = resolvedDatabase.map { "[\(SQLServerMetadataOperations.escapeIdentifier($0))]." } ?? ""
+        let dbPrefix = resolvedDatabase.map { "\(SQLServerSQL.escapeIdentifier($0))." } ?? ""
 
         var predicates: [String] = ["1=1"]
         if let schema {
-            predicates.append("s.name = N'\(SQLServerMetadataOperations.escapeLiteral(schema))'")
+            predicates.append("s.name = N'\(SQLServerSQL.escapeLiteral(schema))'")
         } else if !self.configuration.includeSystemSchemas {
             predicates.append("s.name NOT IN ('sys', 'INFORMATION_SCHEMA')")
         }
@@ -64,11 +64,11 @@ extension SQLServerMetadataOperations {
         includeComments: Bool = false
     ) -> EventLoopFuture<[RoutineMetadata]> {
         let resolvedDatabase = effectiveDatabase(database)
-        let dbPrefix = resolvedDatabase.map { "[\(SQLServerMetadataOperations.escapeIdentifier($0))]." } ?? ""
+        let dbPrefix = resolvedDatabase.map { "\(SQLServerSQL.escapeIdentifier($0))." } ?? ""
 
         var predicates: [String] = ["o.type IN ('FN', 'TF', 'IF')"]
         if let schema {
-            predicates.append("s.name = N'\(SQLServerMetadataOperations.escapeLiteral(schema))'")
+            predicates.append("s.name = N'\(SQLServerSQL.escapeLiteral(schema))'")
         } else if !self.configuration.includeSystemSchemas {
             predicates.append("s.name NOT IN ('sys', 'INFORMATION_SCHEMA')")
         }
@@ -123,9 +123,9 @@ extension SQLServerMetadataOperations {
         object: String
     ) -> EventLoopFuture<[ParameterMetadata]> {
         let resolvedDatabase = effectiveDatabase(database)
-        let dbPrefix = resolvedDatabase.map { "[\(SQLServerMetadataOperations.escapeIdentifier($0))]." } ?? ""
-        let escapedSchema = SQLServerMetadataOperations.escapeLiteral(schema)
-        let escapedObject = SQLServerMetadataOperations.escapeLiteral(object)
+        let dbPrefix = resolvedDatabase.map { "\(SQLServerSQL.escapeIdentifier($0))." } ?? ""
+        let escapedSchema = SQLServerSQL.escapeLiteral(schema)
+        let escapedObject = SQLServerSQL.escapeLiteral(object)
 
         let sql = """
         SELECT schema_name = s.name, object_name = o.name, object_type = o.type, parameter_id = p.parameter_id,
@@ -167,8 +167,8 @@ extension SQLServerMetadataOperations {
         let initial = eventLoop.makeSucceededFuture([ObjectDefinition]())
         return identifiers.reduce(initial) { partial, target in
             partial.flatMap { collected in
-                let dbPrefix = target.database.map { "[\(SQLServerMetadataOperations.escapeIdentifier($0))]." } ?? ""
-                let sql = "SELECT s.name as schema_name, o.name as object_name, o.type_desc, o.is_ms_shipped, o.create_date, o.modify_date FROM \(dbPrefix)sys.objects o JOIN \(dbPrefix)sys.schemas s ON o.schema_id = s.schema_id WHERE s.name = N'\(SQLServerMetadataOperations.escapeLiteral(target.schema))' AND o.name = N'\(SQLServerMetadataOperations.escapeLiteral(target.name))'"
+                let dbPrefix = target.database.map { "\(SQLServerSQL.escapeIdentifier($0))." } ?? ""
+                let sql = "SELECT s.name as schema_name, o.name as object_name, o.type_desc, o.is_ms_shipped, o.create_date, o.modify_date FROM \(dbPrefix)sys.objects o JOIN \(dbPrefix)sys.schemas s ON o.schema_id = s.schema_id WHERE s.name = N'\(SQLServerSQL.escapeLiteral(target.schema))' AND o.name = N'\(SQLServerSQL.escapeLiteral(target.name))'"
                 return self.queryExecutor(sql).flatMap { rows in
                     guard let row = rows.first, let s = row.column("schema_name")?.string, let o = row.column("object_name")?.string, let td = row.column("type_desc")?.string else { return self.eventLoop.makeSucceededFuture(collected) }
                     let type = ObjectDefinition.ObjectType.from(typeDesc: td)
@@ -204,14 +204,14 @@ extension SQLServerMetadataOperations {
         FROM \(dbPrefix)sys.objects AS o
         JOIN \(dbPrefix)sys.schemas AS s ON s.schema_id = o.schema_id
         JOIN \(dbPrefix)sys.sql_modules AS m ON m.object_id = o.object_id
-        WHERE s.name = N'\(SQLServerMetadataOperations.escapeLiteral(schema))' AND o.name = N'\(SQLServerMetadataOperations.escapeLiteral(object))';
+        WHERE s.name = N'\(SQLServerSQL.escapeLiteral(schema))' AND o.name = N'\(SQLServerSQL.escapeLiteral(object))';
         """
         let preambleSql = """
         SELECT m.uses_ansi_nulls, m.uses_quoted_identifier
         FROM \(dbPrefix)sys.objects AS o
         JOIN \(dbPrefix)sys.schemas AS s ON s.schema_id = o.schema_id
         LEFT JOIN \(dbPrefix)sys.sql_modules AS m ON m.object_id = o.object_id
-        WHERE s.name = N'\(SQLServerMetadataOperations.escapeLiteral(schema))' AND o.name = N'\(SQLServerMetadataOperations.escapeLiteral(object))';
+        WHERE s.name = N'\(SQLServerSQL.escapeLiteral(schema))' AND o.name = N'\(SQLServerSQL.escapeLiteral(object))';
         """
 
         let defFuture = queryExecutor(defSql).map { rows -> String? in
@@ -237,11 +237,11 @@ extension SQLServerMetadataOperations {
                     for index in indexes where !constraintNames.contains(index.name) {
                         if index.indexType == 5 || index.indexType == 6 {
                             let kind = index.indexType == 5 ? "CLUSTERED COLUMNSTORE" : "NONCLUSTERED COLUMNSTORE"
-                            var statement = "\n\nCREATE \(kind) INDEX [\(SQLServerMetadataOperations.escapeIdentifier(index.name))] ON [\(SQLServerMetadataOperations.escapeIdentifier(schema))].[\(SQLServerMetadataOperations.escapeIdentifier(object))]"
+                            var statement = "\n\nCREATE \(kind) INDEX \(SQLServerSQL.escapeIdentifier(index.name)) ON \(SQLServerSQL.escapeIdentifier(schema)).\(SQLServerSQL.escapeIdentifier(object))"
                             if index.indexType == 6 {
                                 let columns = index.columns
                                     .sorted { $0.ordinal < $1.ordinal }
-                                    .map { "[\(SQLServerMetadataOperations.escapeIdentifier($0.column))]" }
+                                    .map { "\(SQLServerSQL.escapeIdentifier($0.column))" }
                                     .joined(separator: ", ")
                                 if !columns.isEmpty {
                                     statement += " (\(columns))"
@@ -261,12 +261,12 @@ extension SQLServerMetadataOperations {
                         let keyColumns = index.columns
                             .filter { !$0.isIncluded }
                             .sorted { $0.ordinal < $1.ordinal }
-                            .map { "[\(SQLServerMetadataOperations.escapeIdentifier($0.column))] \($0.isDescending ? "DESC" : "ASC")" }
+                            .map { "\(SQLServerSQL.escapeIdentifier($0.column)) \($0.isDescending ? "DESC" : "ASC")" }
                             .joined(separator: ", ")
-                        var statement = "\n\nCREATE \(index.isUnique ? "UNIQUE " : "")\(index.isClustered ? "CLUSTERED" : "NONCLUSTERED") INDEX [\(SQLServerMetadataOperations.escapeIdentifier(index.name))] ON [\(SQLServerMetadataOperations.escapeIdentifier(schema))].[\(SQLServerMetadataOperations.escapeIdentifier(object))] (\(keyColumns))"
+                        var statement = "\n\nCREATE \(index.isUnique ? "UNIQUE " : "")\(index.isClustered ? "CLUSTERED" : "NONCLUSTERED") INDEX \(SQLServerSQL.escapeIdentifier(index.name)) ON \(SQLServerSQL.escapeIdentifier(schema)).\(SQLServerSQL.escapeIdentifier(object)) (\(keyColumns))"
                         let includedColumns = index.columns
                             .filter { $0.isIncluded }
-                            .map { "[\(SQLServerMetadataOperations.escapeIdentifier($0.column))]" }
+                            .map { "\(SQLServerSQL.escapeIdentifier($0.column))" }
                         if !includedColumns.isEmpty {
                             statement += " INCLUDE (\(includedColumns.joined(separator: ", ")))"
                         }

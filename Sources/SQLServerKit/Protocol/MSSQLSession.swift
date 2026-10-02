@@ -1,7 +1,7 @@
 import Foundation
 
 /// Protocol defining enhanced SQL Server session capabilities
-public protocol MSSQLSession {
+public protocol MSSQLSession: Sendable {
     func serverVersion() async throws -> String
     var metadata: SQLServerMetadataNamespace { get }
     var agent: SQLServerAgentOperations { get }
@@ -31,32 +31,17 @@ public protocol MSSQLSession {
     var profiler: SQLServerProfilerClient { get }
     var resourceGovernor: SQLServerResourceGovernorClient { get }
     var policy: SQLServerPolicyClient { get }
+    @available(*, deprecated, message: "Use metadata.objectDependencies() instead.")
     var dependencies: SQLServerDependencyClient { get }
+    @available(*, deprecated, message: "DAC operations are not yet implemented.")
     var dac: SQLServerDACClient { get }
-    var bulkCopy: SQLServerBulkCopyClient { get }
+    var bulk: SQLServerBulkClient { get }
     var ssis: SQLServerSSISClient { get }
-    var ssas: SQLServerSSASClient { get }
-    var ssrs: SQLServerSSRSClient { get }
-    @available(*, deprecated, message: "Use client.agent instead.")
-    func makeAgentClient() -> SQLServerAgentOperations
-    @available(*, deprecated, message: "Use client.admin instead.")
-    func makeAdministrationClient() -> SQLServerAdministrationClient
-    @available(*, deprecated, message: "Use client.security instead.")
-    func makeDatabaseSecurityClient() -> SQLServerDatabaseSecurityClient
-    @available(*, deprecated, message: "Use client.serverSecurity instead.")
-    func makeServerSecurityClient() -> SQLServerServerSecurityClient
+    /// Runs or parses T-SQL scripts with `GO` separators.
+    var scripts: SQLServerScriptClient { get }
 }
 
 extension MSSQLSession {
-    @available(*, deprecated, message: "Use client.agent instead.")
-    public func makeAgentClient() -> SQLServerAgentOperations { agent }
-    @available(*, deprecated, message: "Use client.admin instead.")
-    public func makeAdministrationClient() -> SQLServerAdministrationClient { admin }
-    @available(*, deprecated, message: "Use client.security instead.")
-    public func makeDatabaseSecurityClient() -> SQLServerDatabaseSecurityClient { security }
-    @available(*, deprecated, message: "Use client.serverSecurity instead.")
-    public func makeServerSecurityClient() -> SQLServerServerSecurityClient { serverSecurity }
-
     /// Returns the display type for a column based on its TDS metadata
     public static func displayType(for column: SQLServerColumn) -> String {
         column.typeName

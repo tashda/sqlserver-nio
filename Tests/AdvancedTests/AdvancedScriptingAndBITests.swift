@@ -1,8 +1,8 @@
 import XCTest
 import Logging
-@testable import SQLServerTDS
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 /// Advanced scripting and Data Movement tests (Phase 6 & 7)
 final class AdvancedScriptingAndBITests: XCTestCase, @unchecked Sendable {
@@ -10,7 +10,7 @@ final class AdvancedScriptingAndBITests: XCTestCase, @unchecked Sendable {
     private let logger = Logger(label: "AdvancedScriptingAndBITests")
 
     override func setUp() async throws {
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
         
         let config = makeSQLServerClientConfiguration()
         self.client = try await SQLServerClient.connect(
@@ -40,7 +40,7 @@ final class AdvancedScriptingAndBITests: XCTestCase, @unchecked Sendable {
     func testBulkCopySchemaInference() async throws {
         logger.info("🔧 Testing Bulk Copy Schema Inference...")
         
-        let bulkClient = client.bulkCopy
+        let bulkClient = client.bulk
         
         let headers = ["ID", "Name", "Score", "StartDate"]
         let rows = [

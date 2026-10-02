@@ -1,18 +1,25 @@
 import Foundation
 import NIO
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 import XCTest
 
 /// Tests for the enhanced SQLServerAgentOperations APIs that provide comprehensive job management data
 final class AgentEnhancedAPITests: AgentTestBase, @unchecked Sendable {
+    /// A running Agent is not starting any more (job changes would fail while it is).
+    func testRunningAgentIsNotStarting() async throws {
+        let agent = SQLServerAgentOperations(client: self.client)
+        let starting = try await agent.isStarting()
+        XCTAssertFalse(starting)
+    }
+
 
     func testListJobsDetailedReturnsComprehensiveData() async throws {
         let agent = SQLServerAgentOperations(client: self.client)
 
         // Test the enhanced API
         let jobs = try await withTimeout(operationTimeout) {
-            try await agent.listJobsDetailed()
+            try await agent.listJobDetails()
         }
 
         // Verify we got job data
@@ -85,7 +92,7 @@ final class AgentEnhancedAPITests: AgentTestBase, @unchecked Sendable {
 
         // Test getting schedules for the job
         let schedules = try await withTimeout(operationTimeout) {
-            try await agent.getJobSchedules(jobName: managedJob.jobName)
+            try await agent.listJobSchedules(jobName: managedJob.jobName)
         }
 
         XCTAssertNotNil(schedules, "Should get schedules array (may be empty)")
@@ -166,7 +173,7 @@ final class AgentEnhancedAPITests: AgentTestBase, @unchecked Sendable {
         // Test that the enhanced APIs work without throwing errors
         // This implicitly tests that they're using stored procedures correctly
         let jobs = try await withTimeout(operationTimeout) {
-            try await agent.listJobsDetailed()
+            try await agent.listJobDetails()
         }
 
         // If we get here without errors, the stored procedures are working
@@ -259,7 +266,7 @@ final class AgentEnhancedAPITests: AgentTestBase, @unchecked Sendable {
         for attempt in 1...totalAttempts {
             do {
                 print("🔍 [EnhancedAPI] Attempt \(attempt) testing listJobsDetailed()...")
-                let jobs = try await agent.listJobsDetailed()
+                let jobs = try await agent.listJobDetails()
                 print("✅ [EnhancedAPI] Attempt \(attempt) succeeded: loaded \(jobs.count) jobs")
                 successfulAttempts += 1
 

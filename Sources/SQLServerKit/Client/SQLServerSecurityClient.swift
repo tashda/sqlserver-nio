@@ -29,10 +29,6 @@ public final class SQLServerSecurityClient: @unchecked Sendable {
         }
     }
 
-    internal static func escapeIdentifier(_ identifier: String) -> String {
-        "[\(identifier.replacingOccurrences(of: "]", with: "]]"))]"
-    }
-
     // MARK: - Backing execution helpers
     @available(macOS 12.0, *)
     internal func exec(_ sql: String) async throws -> SQLServerExecutionResult {

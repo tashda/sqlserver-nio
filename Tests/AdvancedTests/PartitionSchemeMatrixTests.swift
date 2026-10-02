@@ -1,5 +1,6 @@
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 import XCTest
 import Logging
 
@@ -7,7 +8,7 @@ final class SQLServerPartitionSchemeMatrixTests: XCTestCase, @unchecked Sendable
     var client: SQLServerClient!
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
+        try requireSQLServerTestServer(); // Load environment configuration
         client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
         do { _ = try await withTimeout(5) { try await self.client.query("SELECT 1") } } catch { throw error }
     }

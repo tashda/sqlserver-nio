@@ -7,11 +7,11 @@ import FoundationXML
 
 /// SAX-based parser for SQL Server ShowPlanXML execution plans.
 /// Uses Foundation XMLParser for cross-platform compatibility (macOS + Linux).
-internal final class ShowPlanXMLParser: NSObject, XMLParserDelegate, @unchecked Sendable {
+public final class ShowPlanXMLParser: NSObject, XMLParserDelegate, @unchecked Sendable {
 
     // MARK: - Parse entry point
 
-    static func parse(xml: String) throws -> ShowPlan {
+    public static func parse(xml: String) throws -> ShowPlan {
         // SQL Server returns XML with encoding="utf-16" but by the time it's a Swift String
         // it's already decoded. Replace the encoding declaration so NSXMLParser doesn't reject it.
         let normalized = xml.replacingOccurrences(of: "encoding=\"utf-16\"", with: "encoding=\"utf-8\"")
@@ -170,7 +170,7 @@ internal final class ShowPlanXMLParser: NSObject, XMLParserDelegate, @unchecked 
 
     // MARK: - XMLParserDelegate
 
-    func parser(
+    public func parser(
         _ parser: XMLParser,
         didStartElement elementName: String,
         namespaceURI: String?,
@@ -362,7 +362,7 @@ internal final class ShowPlanXMLParser: NSObject, XMLParserDelegate, @unchecked 
         }
     }
 
-    func parser(
+    public func parser(
         _ parser: XMLParser,
         didEndElement elementName: String,
         namespaceURI: String?,
@@ -453,7 +453,7 @@ internal final class ShowPlanXMLParser: NSObject, XMLParserDelegate, @unchecked 
         }
     }
 
-    func parser(_ parser: XMLParser, parseErrorOccurred parseError: Error) {
+    public func parser(_ parser: XMLParser, parseErrorOccurred parseError: Error) {
         self.parseError = ShowPlanParseError.invalidXML(parseError.localizedDescription)
     }
 }

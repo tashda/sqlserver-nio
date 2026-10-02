@@ -1,5 +1,5 @@
 import Foundation
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 import XCTest
 

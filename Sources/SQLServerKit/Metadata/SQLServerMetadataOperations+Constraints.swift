@@ -26,9 +26,9 @@ extension SQLServerMetadataOperations {
         schema: String?,
         table: String
     ) -> EventLoopFuture<[KeyConstraintMetadata]> {
-        var parameters: [String] = ["@table_name = N'\(SQLServerMetadataOperations.escapeLiteral(table))'"]
-        if let schema { parameters.append("@table_owner = N'\(SQLServerMetadataOperations.escapeLiteral(schema))'") }
-        if let database { parameters.append("@table_qualifier = N'\(SQLServerMetadataOperations.escapeLiteral(database))'") }
+        var parameters: [String] = ["@table_name = N'\(SQLServerSQL.escapeLiteral(table))'"]
+        if let schema { parameters.append("@table_owner = N'\(SQLServerSQL.escapeLiteral(schema))'") }
+        if let database { parameters.append("@table_qualifier = N'\(SQLServerSQL.escapeLiteral(database))'") }
         
         let sql = "SET NOCOUNT ON; EXEC sp_pkeys \(parameters.joined(separator: ", "));"
 
@@ -83,8 +83,8 @@ extension SQLServerMetadataOperations {
         WHERE kc.type = '\(type == .primaryKey ? "PK" : "UQ")'
         """
         var predicates: [String] = []
-        if let schema { predicates.append("s.name = N'\(SQLServerMetadataOperations.escapeLiteral(schema))'") }
-        if let table { predicates.append("t.name = N'\(SQLServerMetadataOperations.escapeLiteral(table))'") }
+        if let schema { predicates.append("s.name = N'\(SQLServerSQL.escapeLiteral(schema))'") }
+        if let table { predicates.append("t.name = N'\(SQLServerSQL.escapeLiteral(table))'") }
         if !predicates.isEmpty { sql += " AND " + predicates.joined(separator: " AND ") }
         sql += " ORDER BY s.name, t.name, kc.name, ic.key_ordinal;"
 
@@ -109,8 +109,8 @@ extension SQLServerMetadataOperations {
 
     private func fetchPrimaryKeyClusterInfo(database: String?, schema: String?, table: String?) -> EventLoopFuture<[String: Bool]> {
         var sql = "SELECT s.name as schema_name, t.name as table_name, kc.name as constraint_name, is_clustered = CASE WHEN i.type = 1 THEN 1 ELSE 0 END FROM \(qualified(database, object: "sys.key_constraints")) kc JOIN \(qualified(database, object: "sys.tables")) t ON kc.parent_object_id = t.object_id JOIN \(qualified(database, object: "sys.schemas")) s ON t.schema_id = s.schema_id JOIN \(qualified(database, object: "sys.indexes")) i ON kc.parent_object_id = i.object_id AND kc.unique_index_id = i.index_id WHERE kc.type = 'PK'"
-        if let schema { sql += " AND s.name = N'\(SQLServerMetadataOperations.escapeLiteral(schema))'" }
-        if let table { sql += " AND t.name = N'\(SQLServerMetadataOperations.escapeLiteral(table))'" }
+        if let schema { sql += " AND s.name = N'\(SQLServerSQL.escapeLiteral(schema))'" }
+        if let table { sql += " AND t.name = N'\(SQLServerSQL.escapeLiteral(table))'" }
         return queryExecutor(sql).map { rows in
             var info: [String: Bool] = [:]
             for row in rows {
@@ -147,8 +147,8 @@ extension SQLServerMetadataOperations {
             ON i.object_id = ic.object_id AND i.index_id = ic.index_id
         LEFT JOIN \(qualified(database, object: "sys.columns")) AS c
             ON ic.object_id = c.object_id AND ic.column_id = c.column_id
-        WHERE s.name = N'\(SQLServerMetadataOperations.escapeLiteral(schema))'
-          AND o.name = N'\(SQLServerMetadataOperations.escapeLiteral(table))'
+        WHERE s.name = N'\(SQLServerSQL.escapeLiteral(schema))'
+          AND o.name = N'\(SQLServerSQL.escapeLiteral(table))'
           AND o.type IN ('U', 'V')
           AND i.index_id > 0
           AND i.is_hypothetical = 0
@@ -226,8 +226,57 @@ extension SQLServerMetadataOperations {
         JOIN \(qualified(database, object: "sys.foreign_key_columns")) AS fkc ON fk.object_id = fkc.constraint_object_id
         JOIN \(qualified(database, object: "sys.columns")) AS fc ON fkc.parent_object_id = fc.object_id AND fkc.parent_column_id = fc.column_id
         JOIN \(qualified(database, object: "sys.columns")) AS pc ON fkc.referenced_object_id = pc.object_id AND fkc.referenced_column_id = pc.column_id
-        WHERE fs.name = N'\(SQLServerMetadataOperations.escapeLiteral(schema))'
-          AND ft.name = N'\(SQLServerMetadataOperations.escapeLiteral(table))'
+        WHERE fs.name = N'\(SQLServerSQL.escapeLiteral(schema))'
+          AND ft.name = N'\(SQLServerSQL.escapeLiteral(table))'
+        ORDER BY fs.name, ft.name, fk.name, fkc.constraint_column_id;
+        """
+        return queryExecutor(sql).map { rows in
+            var grouped: [String: (schema: String, table: String, name: String, refSchema: String, refTable: String, del: Int, upd: Int, cols: [ForeignKeyColumnMetadata])] = [:]
+            for row in rows {
+                guard let fs = row.column("fk_schema")?.string,
+                      let ft = row.column("fk_table")?.string,
+                      let n = row.column("fk_name")?.string,
+                      let ps = row.column("pk_schema")?.string,
+                      let pt = row.column("pk_table")?.string else { continue }
+                let key = "\(fs)|\(ft)|\(n)"
+                var entry = grouped[key] ?? (schema: fs, table: ft, name: n, refSchema: ps, refTable: pt, del: row.column("delete_rule")?.int ?? 1, upd: row.column("update_rule")?.int ?? 1, cols: [])
+                if let pc = row.column("fk_column")?.string, let rc = row.column("pk_column")?.string, let ord = row.column("ordinal")?.int {
+                    entry.cols.append(ForeignKeyColumnMetadata(parentColumn: pc, referencedColumn: rc, ordinal: ord))
+                }
+                grouped[key] = entry
+            }
+            return grouped.values.map { e in
+                ForeignKeyMetadata(schema: e.schema, table: e.table, name: e.name, referencedSchema: e.refSchema, referencedTable: e.refTable, deleteAction: ForeignKeyMetadata.mapAction(e.del), updateAction: ForeignKeyMetadata.mapAction(e.upd), columns: e.cols.sorted { $0.ordinal < $1.ordinal })
+            }.sorted { $0.name < $1.name }
+        }
+    }
+
+    /// Lists foreign keys from OTHER tables that reference the given table (inbound relationships).
+    /// This is the reverse of `listForeignKeys` which lists outbound FKs.
+    internal func listReferencingForeignKeys(database: String? = nil, schema: String, table: String) -> EventLoopFuture<[ForeignKeyMetadata]> {
+        let sql = """
+        SELECT
+            fk_schema = fs.name,
+            fk_table = ft.name,
+            fk_name = fk.name,
+            pk_schema = ps.name,
+            pk_table = pt.name,
+            delete_rule = fk.delete_referential_action,
+            update_rule = fk.update_referential_action,
+            ordinal = fkc.constraint_column_id,
+            fk_column = fc.name,
+            pk_column = pc.name
+        FROM \(qualified(database, object: "sys.foreign_keys")) AS fk
+        JOIN \(qualified(database, object: "sys.tables")) AS ft ON fk.parent_object_id = ft.object_id
+        JOIN \(qualified(database, object: "sys.schemas")) AS fs ON ft.schema_id = fs.schema_id
+        JOIN \(qualified(database, object: "sys.tables")) AS pt ON fk.referenced_object_id = pt.object_id
+        JOIN \(qualified(database, object: "sys.schemas")) AS ps ON pt.schema_id = ps.schema_id
+        JOIN \(qualified(database, object: "sys.foreign_key_columns")) AS fkc ON fk.object_id = fkc.constraint_object_id
+        JOIN \(qualified(database, object: "sys.columns")) AS fc ON fkc.parent_object_id = fc.object_id AND fkc.parent_column_id = fc.column_id
+        JOIN \(qualified(database, object: "sys.columns")) AS pc ON fkc.referenced_object_id = pc.object_id AND fkc.referenced_column_id = pc.column_id
+        WHERE ps.name = N'\(SQLServerSQL.escapeLiteral(schema))'
+          AND pt.name = N'\(SQLServerSQL.escapeLiteral(table))'
+          AND NOT (fs.name = N'\(SQLServerSQL.escapeLiteral(schema))' AND ft.name = N'\(SQLServerSQL.escapeLiteral(table))')
         ORDER BY fs.name, ft.name, fk.name, fkc.constraint_column_id;
         """
         return queryExecutor(sql).map { rows in
@@ -254,7 +303,7 @@ extension SQLServerMetadataOperations {
     // MARK: - Dependencies
 
     internal func listDependencies(database: String? = nil, schema: String, object: String) -> EventLoopFuture<[DependencyMetadata]> {
-        let sql = "WITH target AS (SELECT o.object_id FROM \(qualified(database, object: "sys.objects")) o JOIN \(qualified(database, object: "sys.schemas")) s ON o.schema_id = s.schema_id WHERE s.name = N'\(SQLServerMetadataOperations.escapeLiteral(schema))' AND o.name = N'\(SQLServerMetadataOperations.escapeLiteral(object))') SELECT rs.name as referencing_schema, ro.name as referencing_object, ro.type_desc as referencing_type, sed.is_schema_bound_reference as is_schema_bound FROM target JOIN \(qualified(database, object: "sys.sql_expression_dependencies")) sed ON sed.referenced_id = target.object_id JOIN \(qualified(database, object: "sys.objects")) ro ON sed.referencing_id = ro.object_id JOIN \(qualified(database, object: "sys.schemas")) rs ON ro.schema_id = rs.schema_id WHERE sed.referenced_minor_id = 0 ORDER BY rs.name, ro.name;"
+        let sql = "WITH target AS (SELECT o.object_id FROM \(qualified(database, object: "sys.objects")) o JOIN \(qualified(database, object: "sys.schemas")) s ON o.schema_id = s.schema_id WHERE s.name = N'\(SQLServerSQL.escapeLiteral(schema))' AND o.name = N'\(SQLServerSQL.escapeLiteral(object))') SELECT rs.name as referencing_schema, ro.name as referencing_object, ro.type_desc as referencing_type, sed.is_schema_bound_reference as is_schema_bound FROM target JOIN \(qualified(database, object: "sys.sql_expression_dependencies")) sed ON sed.referenced_id = target.object_id JOIN \(qualified(database, object: "sys.objects")) ro ON sed.referencing_id = ro.object_id JOIN \(qualified(database, object: "sys.schemas")) rs ON ro.schema_id = rs.schema_id WHERE sed.referenced_minor_id = 0 ORDER BY rs.name, ro.name;"
         return queryExecutor(sql).map { rows in
             rows.compactMap { row in
                 guard let s = row.column("referencing_schema")?.string, let o = row.column("referencing_object")?.string, let t = row.column("referencing_type")?.string else { return nil }
@@ -266,8 +315,8 @@ extension SQLServerMetadataOperations {
     // MARK: - Bidirectional Dependencies
 
     internal func objectDependencies(database: String? = nil, schema: String, name: String) -> EventLoopFuture<[SQLServerObjectDependency]> {
-        let escapedSchema = SQLServerMetadataOperations.escapeLiteral(schema)
-        let escapedName = SQLServerMetadataOperations.escapeLiteral(name)
+        let escapedSchema = SQLServerSQL.escapeLiteral(schema)
+        let escapedName = SQLServerSQL.escapeLiteral(name)
         let sql = """
         SELECT
             referencing_entity_name = OBJECT_NAME(d.referencing_id),
@@ -300,22 +349,16 @@ extension SQLServerMetadataOperations {
     // MARK: - Table Properties
 
     internal func tableProperties(database: String? = nil, schema: String, table: String) -> EventLoopFuture<SQLServerTableProperties> {
-        let escapedSchema = SQLServerMetadataOperations.escapeLiteral(schema)
-        let escapedTable = SQLServerMetadataOperations.escapeLiteral(table)
+        let escapedSchema = SQLServerSQL.escapeLiteral(schema)
+        let escapedTable = SQLServerSQL.escapeLiteral(table)
 
-        // Query create/modify dates from sys.objects
-        let datesSql = """
-        SELECT o.create_date, o.modify_date
-        FROM \(qualified(database, object: "sys.objects")) o
-        JOIN \(qualified(database, object: "sys.schemas")) s ON o.schema_id = s.schema_id
-        WHERE s.name = N'\(escapedSchema)' AND o.name = N'\(escapedTable)';
-        """
-
-        // Query space usage from sys.dm_db_partition_stats and sys.allocation_units
-        // This avoids sp_spaceused which returns multiple result sets
+        // Query space usage from sys.allocation_units. Rows are counted from sys.partitions alone:
+        // a partition has up to three allocation units (in-row, LOB, row-overflow), so summing
+        // p.rows across the join would count each row once per unit.
         let spaceSql = """
         SELECT
-            SUM(p.rows) AS row_count,
+            (SELECT SUM(pr.rows) FROM \(qualified(database, object: "sys.partitions")) pr
+             WHERE pr.object_id = o.object_id AND pr.index_id IN (0, 1)) AS row_count,
             SUM(a.total_pages) * 8 AS reserved_kb,
             SUM(a.data_pages) * 8 AS data_kb,
             SUM(CASE WHEN a.type <> 1 THEN a.used_pages ELSE 0 END) * 8 AS index_kb,
@@ -324,22 +367,118 @@ extension SQLServerMetadataOperations {
         JOIN \(qualified(database, object: "sys.allocation_units")) a ON p.partition_id = a.container_id
         JOIN \(qualified(database, object: "sys.objects")) o ON p.object_id = o.object_id
         JOIN \(qualified(database, object: "sys.schemas")) s ON o.schema_id = s.schema_id
-        WHERE s.name = N'\(escapedSchema)' AND o.name = N'\(escapedTable)' AND p.index_id IN (0, 1);
+        WHERE s.name = N'\(escapedSchema)' AND o.name = N'\(escapedTable)' AND p.index_id IN (0, 1)
+        GROUP BY o.object_id;
         """
 
-        return queryExecutor(datesSql).flatMap { dateRows in
-            let createDate = dateRows.first?.column("create_date")?.date
-            let modifyDate = dateRows.first?.column("modify_date")?.date
-            return self.queryExecutor(spaceSql).map { spaceRows in
-                let row = spaceRows.first
+        // Version-gated columns/JOINs.
+        // temporal_type / history_table_id / sys.periods were added in SQL Server 2016 (major 13).
+        // is_memory_optimized / durability_desc were added in SQL Server 2014 (major 12).
+        let temporalPropsSelect: String
+        let temporalPropsJoins: String
+        if supportsTemporalTables {
+            temporalPropsSelect = "t.temporal_type,\n            hs.name AS history_schema,\n            ht.name AS history_table,\n            pc_start.name AS period_start_column,\n            pc_end.name AS period_end_column,"
+            temporalPropsJoins = "LEFT JOIN \(qualified(database, object: "sys.tables")) ht ON ht.object_id = t.history_table_id\n        LEFT JOIN \(qualified(database, object: "sys.schemas")) hs ON hs.schema_id = ht.schema_id\n        LEFT JOIN \(qualified(database, object: "sys.periods")) pr ON pr.object_id = t.object_id\n        LEFT JOIN \(qualified(database, object: "sys.columns")) pc_start\n            ON pc_start.object_id = t.object_id AND pc_start.column_id = pr.start_column_id\n        LEFT JOIN \(qualified(database, object: "sys.columns")) pc_end\n            ON pc_end.object_id = t.object_id AND pc_end.column_id = pr.end_column_id"
+        } else {
+            temporalPropsSelect = ""
+            temporalPropsJoins = ""
+        }
+
+        let memOptPropsSelect = supportsMemoryOptimized
+            ? "t.is_memory_optimized,\n            t.durability_desc,"
+            : ""
+
+        // Query table metadata: dates, storage config, partitioning, temporal, in-memory, change tracking
+        let propsSql = """
+        SELECT
+            o.create_date,
+            o.modify_date,
+            o.is_ms_shipped,
+            p.data_compression_desc,
+            fg.name AS filegroup_name,
+            t.lock_escalation_desc,
+            \(temporalPropsSelect)
+            t.uses_ansi_nulls,
+            t.is_replicated,
+            \(memOptPropsSelect)
+            fg_lob.name AS text_filegroup,
+            fg_fs.name AS filestream_filegroup,
+            CASE WHEN ps.data_space_id IS NOT NULL THEN 1 ELSE 0 END AS is_partitioned,
+            ps.name AS partition_scheme,
+            pc_part.name AS partition_column,
+            (SELECT COUNT(*) FROM \(qualified(database, object: "sys.partitions")) sp
+             WHERE sp.object_id = t.object_id AND sp.index_id IN (0, 1)) AS partition_count,
+            ct.is_track_columns_updated_on AS track_columns_updated
+        FROM \(qualified(database, object: "sys.tables")) t
+        JOIN \(qualified(database, object: "sys.objects")) o ON o.object_id = t.object_id
+        JOIN \(qualified(database, object: "sys.schemas")) s ON t.schema_id = s.schema_id
+        JOIN \(qualified(database, object: "sys.partitions")) p
+            ON p.object_id = t.object_id AND p.index_id IN (0, 1) AND p.partition_number = 1
+        JOIN \(qualified(database, object: "sys.indexes")) i
+            ON i.object_id = t.object_id AND i.index_id IN (0, 1)
+        -- A partitioned table's index lives on a partition scheme, not a filegroup.
+        LEFT JOIN \(qualified(database, object: "sys.filegroups")) fg
+            ON fg.data_space_id = i.data_space_id
+        \(temporalPropsJoins)
+        LEFT JOIN \(qualified(database, object: "sys.filegroups")) fg_lob
+            ON fg_lob.data_space_id = t.lob_data_space_id
+        LEFT JOIN \(qualified(database, object: "sys.filegroups")) fg_fs
+            ON fg_fs.data_space_id = t.filestream_data_space_id
+        LEFT JOIN \(qualified(database, object: "sys.partition_schemes")) ps
+            ON ps.data_space_id = i.data_space_id
+        LEFT JOIN \(qualified(database, object: "sys.index_columns")) ic_part
+            ON ic_part.object_id = i.object_id AND ic_part.index_id = i.index_id AND ic_part.partition_ordinal = 1
+        LEFT JOIN \(qualified(database, object: "sys.columns")) pc_part
+            ON pc_part.object_id = t.object_id AND pc_part.column_id = ic_part.column_id
+        LEFT JOIN \(qualified(database, object: "sys.change_tracking_tables")) ct
+            ON ct.object_id = t.object_id
+        WHERE s.name = N'\(escapedSchema)' AND t.name = N'\(escapedTable)';
+        """
+
+        return queryExecutor(spaceSql).flatMap { spaceRows in
+            let spaceRow = spaceRows.first
+            let rowCount = spaceRow?.column("row_count")?.int64 ?? 0
+            let reservedKB = spaceRow?.column("reserved_kb")?.int64 ?? 0
+            let dataKB = spaceRow?.column("data_kb")?.int64 ?? 0
+            let indexKB = spaceRow?.column("index_kb")?.int64 ?? 0
+            let unusedKB = spaceRow?.column("unused_kb")?.int64 ?? 0
+
+            return self.queryExecutor(propsSql).map { propsRows in
+                let row = propsRows.first
+                let temporalType = row?.column("temporal_type")?.int ?? 0
+                let isMemOpt = (row?.column("is_memory_optimized")?.int ?? 0) != 0
+                let isPartitioned = (row?.column("is_partitioned")?.int ?? 0) != 0
+                let ctTrackCols = row?.column("track_columns_updated")?.int
+
                 return SQLServerTableProperties(
-                    rowCount: row?.column("row_count")?.int64 ?? 0,
-                    reservedKB: row?.column("reserved_kb")?.int64 ?? 0,
-                    dataKB: row?.column("data_kb")?.int64 ?? 0,
-                    indexKB: row?.column("index_kb")?.int64 ?? 0,
-                    unusedKB: row?.column("unused_kb")?.int64 ?? 0,
-                    createDate: createDate,
-                    modifyDate: modifyDate
+                    rowCount: rowCount,
+                    reservedKB: reservedKB,
+                    dataKB: dataKB,
+                    indexKB: indexKB,
+                    unusedKB: unusedKB,
+                    createDate: row?.column("create_date")?.date,
+                    modifyDate: row?.column("modify_date")?.date,
+                    dataCompression: row?.column("data_compression_desc")?.string,
+                    filegroup: row?.column("filegroup_name")?.string,
+                    lockEscalation: row?.column("lock_escalation_desc")?.string,
+                    textFilegroup: row?.column("text_filegroup")?.string,
+                    filestreamFilegroup: row?.column("filestream_filegroup")?.string,
+                    isSystemObject: (row?.column("is_ms_shipped")?.int ?? 0) != 0 ? true : nil,
+                    usesAnsiNulls: (row?.column("uses_ansi_nulls")?.int ?? 0) != 0 ? true : false,
+                    isReplicated: (row?.column("is_replicated")?.int ?? 0) != 0 ? true : nil,
+                    isPartitioned: isPartitioned ? true : nil,
+                    partitionScheme: isPartitioned ? row?.column("partition_scheme")?.string : nil,
+                    partitionColumn: isPartitioned ? row?.column("partition_column")?.string : nil,
+                    partitionCount: isPartitioned ? row?.column("partition_count")?.int : nil,
+                    isSystemVersioned: temporalType == 2 ? true : nil,
+                    historyTableSchema: row?.column("history_schema")?.string,
+                    historyTableName: row?.column("history_table")?.string,
+                    periodStartColumn: row?.column("period_start_column")?.string,
+                    periodEndColumn: row?.column("period_end_column")?.string,
+                    isMemoryOptimized: isMemOpt ? true : nil,
+                    memoryOptimizedDurability: isMemOpt ? row?.column("durability_desc")?.string : nil,
+                    changeTrackingEnabled: ctTrackCols != nil ? true : nil,
+                    trackColumnsUpdated: ctTrackCols != nil ? (ctTrackCols != 0) : nil
                 )
             }
         }
@@ -348,9 +487,15 @@ extension SQLServerMetadataOperations {
     // MARK: - Object Definition (raw string)
 
     internal func objectDefinitionString(database: String? = nil, schema: String, name: String) -> EventLoopFuture<String?> {
-        let escapedSchema = SQLServerMetadataOperations.escapeLiteral(schema)
-        let escapedName = SQLServerMetadataOperations.escapeLiteral(name)
-        let sql = "SELECT OBJECT_DEFINITION(OBJECT_ID(N'\(escapedSchema).\(escapedName)')) AS definition;"
+        let escapedSchema = SQLServerSQL.escapeLiteral(schema)
+        let escapedName = SQLServerSQL.escapeLiteral(name)
+        let qualifiedName: String
+        if let db = effectiveDatabase(database), !db.isEmpty {
+            qualifiedName = "[\(db.replacingOccurrences(of: "]", with: "]]"))].[\(escapedSchema)].[\(escapedName)]"
+        } else {
+            qualifiedName = "[\(escapedSchema)].[\(escapedName)]"
+        }
+        let sql = "SELECT OBJECT_DEFINITION(OBJECT_ID(N'\(qualifiedName)')) AS definition;"
         return queryExecutor(sql).map { rows in
             rows.first?.column("definition")?.string
         }

@@ -26,7 +26,7 @@ public final class SQLServerProfilerClient: @unchecked Sendable {
         events: [SQLTraceEvent],
         targetDatabase: String? = nil
     ) async throws {
-        var actions = ["sqlserver.client_app_name", "sqlserver.client_hostname", "sqlserver.database_name", "sqlserver.session_id", "sqlserver.sql_text", "sqlserver.username"]
+        let actions = ["sqlserver.client_app_name", "sqlserver.client_hostname", "sqlserver.database_name", "sqlserver.session_id", "sqlserver.sql_text", "sqlserver.username"]
         
         var predicate: String? = nil
         if let db = targetDatabase {

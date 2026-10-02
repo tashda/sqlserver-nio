@@ -36,6 +36,32 @@ public struct SecurityPolicyInfo: Sendable, Hashable, Identifiable {
     }
 }
 
+/// A predicate definition used when creating or altering a security policy.
+public struct SecurityPredicateDefinition: Sendable, Hashable {
+    public let predicateType: PredicateType
+    public let functionName: String
+    public let functionSchema: String
+    public let targetTable: String
+    public let targetSchema: String
+    public let blockOperation: BlockOperation?
+
+    public init(
+        predicateType: PredicateType = .filter,
+        functionName: String,
+        functionSchema: String,
+        targetTable: String,
+        targetSchema: String,
+        blockOperation: BlockOperation? = nil
+    ) {
+        self.predicateType = predicateType
+        self.functionName = functionName
+        self.functionSchema = functionSchema
+        self.targetTable = targetTable
+        self.targetSchema = targetSchema
+        self.blockOperation = blockOperation
+    }
+}
+
 /// A security predicate within a security policy from `sys.security_predicates`.
 public struct SecurityPredicateInfo: Sendable, Hashable, Identifiable {
     public var id: String { "\(targetSchema).\(targetTable).\(predicateType.rawValue).\(operation?.rawValue ?? "")" }

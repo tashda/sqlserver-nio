@@ -5,21 +5,22 @@ import NIO
 import NIOConcurrencyHelpers
 @testable import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 final class SQLServerBulkCopyTests: XCTestCase, @unchecked Sendable {
     private var client: SQLServerClient!
     private var adminClient: SQLServerAdministrationClient!
-    private var bulkCopyClient: SQLServerBulkCopyClient!
+    private var bulkClient: SQLServerBulkClient!
     private var tablesToDrop: [String] = []
 
     override func setUp() async throws {
         try await super.setUp()
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
         let config = makeSQLServerClientConfiguration()
         client = try await SQLServerClient.connect(configuration: config, numberOfThreads: 1)
         adminClient = SQLServerAdministrationClient(client: client)
-        bulkCopyClient = SQLServerBulkCopyClient(client: client)
+        bulkClient = SQLServerBulkClient(client: client)
     }
 
     override func tearDown() async throws {
@@ -28,7 +29,7 @@ final class SQLServerBulkCopyTests: XCTestCase, @unchecked Sendable {
         }
         tablesToDrop.removeAll()
         try? await client?.shutdownGracefully()
-        bulkCopyClient = nil
+        bulkClient = nil
         adminClient = nil
         client = nil
         try await super.tearDown()
@@ -56,7 +57,7 @@ final class SQLServerBulkCopyTests: XCTestCase, @unchecked Sendable {
             SQLServerBulkCopyRow(values: [.nString("Software"), .decimal("300.00")])
         ]
         
-        let summary = try await bulkCopyClient.copy(rows: rows, options: options)
+        let summary = try await bulkClient.copy(rows: rows, options: options)
         XCTAssertEqual(summary.totalRows, rows.count)
         XCTAssertEqual(summary.batchesExecuted, 2)
         
@@ -93,7 +94,7 @@ final class SQLServerBulkCopyTests: XCTestCase, @unchecked Sendable {
             identityInsert: true
         )
         
-        let summary = try await bulkCopyClient.copy(rows: rows, options: options)
+        let summary = try await bulkClient.copy(rows: rows, options: options)
         XCTAssertEqual(summary.totalRows, rows.count)
         XCTAssertEqual(summary.identityInsert, true)
         
@@ -134,7 +135,7 @@ final class SQLServerBulkCopyTests: XCTestCase, @unchecked Sendable {
             ])
         ]
         
-        let summary = try await bulkCopyClient.copy(
+        let summary = try await bulkClient.copy(
             rows: rows,
             options: SQLServerBulkCopyOptions(table: tableName, columns: ["id", "payload", "snapshot_time", "document", "reference_id"], batchSize: 1)
         )
@@ -155,18 +156,8 @@ final class SQLServerBulkCopyTests: XCTestCase, @unchecked Sendable {
             SQLServerColumnDefinition(name: "category", definition: .standard(.init(dataType: .nvarchar(length: .length(20)))))
         ]
         try await adminClient.createTable(name: tableName, columns: columns)
-        try await client.withConnection { connection in
-            let promise = connection.eventLoop.makePromise(of: Void.self)
-            Task {
-                do {
-                    try await connection.addCheckConstraint(name: "CK_\(tableName)_amount", table: tableName, expression: "amount >= 0")
-                    promise.succeed(())
-                } catch {
-                    promise.fail(error)
-                }
-            }
-            return promise.futureResult
-        }.get()
+        let constraintClient = SQLServerConstraintClient(client: client)
+        try await constraintClient.addCheckConstraint(name: "CK_\(tableName)_amount", table: tableName, expression: "amount >= 0")
         
         let rows = [
             SQLServerBulkCopyRow(values: [.int(1), .decimal("10.00"), .nString("ok")]),
@@ -174,13 +165,13 @@ final class SQLServerBulkCopyTests: XCTestCase, @unchecked Sendable {
         ]
         
         do {
-            _ = try await bulkCopyClient.copy(
+            _ = try await bulkClient.copy(
                 rows: rows,
                 options: SQLServerBulkCopyOptions(table: tableName, columns: ["id", "amount", "category"], batchSize: 1)
             )
             XCTFail("Constraint violation should throw")
         } catch {
-            guard case SQLServerError.sqlExecutionError(let message) = error else {
+            guard case SQLServerError.sqlExecutionError(let message, _) = error else {
                 XCTFail("Expected SQL execution error, got \(error)")
                 return
             }
@@ -206,7 +197,7 @@ final class SQLServerBulkCopyTests: XCTestCase, @unchecked Sendable {
         ]
         
         do {
-            _ = try await bulkCopyClient.copy(
+            _ = try await bulkClient.copy(
                 rows: rows,
                 options: SQLServerBulkCopyOptions(table: tableName, columns: ["id", "name"])
             )
@@ -241,7 +232,7 @@ final class SQLServerBulkCopyTests: XCTestCase, @unchecked Sendable {
         
         let rowDuration = try await executeRowByRow(rows: rows, tableName: tableName, columns: options.columns)
         try await truncateTable(named: tableName)
-        let bulkSummary = try await bulkCopyClient.copy(rows: rows, options: options)
+        let bulkSummary = try await bulkClient.copy(rows: rows, options: options)
         
         XCTAssertEqual(bulkSummary.totalRows, rows.count)
         XCTAssertLessThanOrEqual(bulkSummary.batchesExecuted, Int(ceil(Double(rows.count) / Double(options.batchSize))))
@@ -265,27 +256,28 @@ final class SQLServerBulkCopyTests: XCTestCase, @unchecked Sendable {
         
         let dropCount = NIOLockedValueBox(0)
         do {
-            _ = try await bulkCopyClient.copy(rows: rows, options: options, afterBatch: { connection, batch in
+            _ = try await bulkClient.copy(rows: rows, options: options, afterBatch: { connection, batch in
                 if batch == 1 && dropCount.withLockedValue({ $0 }) == 0 {
                     dropCount.withLockedValue { $0 += 1 }
                     try await self.closeUnderlyingConnection(connection)
                 }
             })
-            XCTFail("Connection drop should force retry failure")
+            XCTFail("A dropped connection must fail the copy")
         } catch {
             XCTAssertEqual(dropCount.withLockedValue { $0 }, 1)
-            guard case SQLServerError.sqlExecutionError(let message) = error else {
-                XCTFail("Expected SQL execution error after retry exhaustion, got \(error)")
+            // Writes are never replayed on another connection: the batch in
+            // flight has an unknown outcome, so the loss is reported instead.
+            guard let sqlError = error as? SQLServerError, sqlError.isConnectionLost else {
+                XCTFail("Expected a lost-connection error, got \(error)")
                 return
             }
-            XCTAssertTrue(message.contains("PRIMARY KEY") || message.localizedCaseInsensitiveContains("connection"), "Unexpected error message: \(message)")
         }
-        
+
         let persisted = try await client.query("SELECT COUNT(*) AS inserted FROM [\(tableName)]")
         XCTAssertEqual(persisted.first?.column("inserted")?.int, options.batchSize)
         
         try await truncateTable(named: tableName)
-        let recoverySummary = try await bulkCopyClient.copy(rows: rows, options: options)
+        let recoverySummary = try await bulkClient.copy(rows: rows, options: options)
         XCTAssertEqual(recoverySummary.totalRows, rows.count)
     }
     
@@ -301,25 +293,23 @@ final class SQLServerBulkCopyTests: XCTestCase, @unchecked Sendable {
     }
     
     private func truncateTable(named tableName: String) async throws {
-        try await client.withConnection { connection in
-            try await connection.truncateTable(name: tableName)
-        }
+        try await adminClient.truncateTable(name: tableName)
     }
     
     private func singleInsertStatement(row: SQLServerBulkCopyRow, tableName: String, columns: [String]) -> String {
         let columnList = columns
-            .map { "[\(SQLServerBulkCopyClient.escapeIdentifier($0))]" }
+            .map { "[\($0.replacingOccurrences(of: "]", with: "]]"))]" }
             .joined(separator: ", ")
         let literals = row.values.map { $0.sqlLiteral() }.joined(separator: ", ")
         return "INSERT INTO \(qualifiedTableName(tableName)) (\(columnList)) VALUES (\(literals));"
     }
-    
+
     private func qualifiedTableName(_ tableName: String) -> String {
-        "[dbo].[\(SQLServerBulkCopyClient.escapeIdentifier(tableName))]"
+        "[dbo].[\(tableName.replacingOccurrences(of: "]", with: "]]"))]"
     }
     
     private func closeUnderlyingConnection(_ connection: SQLServerConnection) async throws {
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
             connection.underlying.close().whenComplete { result in
                 continuation.resume(with: result)
             }

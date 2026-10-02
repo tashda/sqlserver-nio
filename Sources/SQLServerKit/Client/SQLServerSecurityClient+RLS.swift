@@ -72,8 +72,8 @@ extension SQLServerSecurityClient {
     /// Enables or disables a security policy.
     @available(macOS 12.0, *)
     public func alterSecurityPolicyState(name: String, schema: String, enabled: Bool) async throws {
-        let escapedSchema = Self.escapeIdentifier(schema)
-        let escapedName = Self.escapeIdentifier(name)
+        let escapedSchema = SQLServerSQL.escapeIdentifier(schema)
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
         let state = enabled ? "ON" : "OFF"
         _ = try await exec("ALTER SECURITY POLICY \(escapedSchema).\(escapedName) WITH (STATE = \(state))")
     }
@@ -81,12 +81,12 @@ extension SQLServerSecurityClient {
     /// Drops a security policy.
     @available(macOS 12.0, *)
     public func dropSecurityPolicy(name: String, schema: String) async throws {
-        let escapedSchema = Self.escapeIdentifier(schema)
-        let escapedName = Self.escapeIdentifier(name)
+        let escapedSchema = SQLServerSQL.escapeIdentifier(schema)
+        let escapedName = SQLServerSQL.escapeIdentifier(name)
         _ = try await exec("DROP SECURITY POLICY \(escapedSchema).\(escapedName)")
     }
 
-    /// Creates a security policy with a filter predicate.
+    /// Creates a security policy with a single predicate.
     @available(macOS 12.0, *)
     public func createSecurityPolicy(
         name: String,
@@ -99,17 +99,129 @@ extension SQLServerSecurityClient {
         enabled: Bool = true,
         schemaBound: Bool = true
     ) async throws {
-        let policyName = "\(Self.escapeIdentifier(schema)).\(Self.escapeIdentifier(name))"
-        let funcName = "\(Self.escapeIdentifier(filterFunctionSchema)).\(Self.escapeIdentifier(filterFunction))"
-        let tableName = "\(Self.escapeIdentifier(targetSchema)).\(Self.escapeIdentifier(targetTable))"
-        let predicateKeyword = predicateType == .filter ? "FILTER" : "BLOCK"
+        let predicate = SecurityPredicateDefinition(
+            predicateType: predicateType,
+            functionName: filterFunction,
+            functionSchema: filterFunctionSchema,
+            targetTable: targetTable,
+            targetSchema: targetSchema
+        )
+        try await createSecurityPolicy(
+            name: name,
+            schema: schema,
+            predicates: [predicate],
+            enabled: enabled,
+            schemaBound: schemaBound
+        )
+    }
+
+    /// Creates a security policy with multiple predicates.
+    @available(macOS 12.0, *)
+    public func createSecurityPolicy(
+        name: String,
+        schema: String,
+        predicates: [SecurityPredicateDefinition],
+        enabled: Bool = true,
+        schemaBound: Bool = true
+    ) async throws {
+        guard !predicates.isEmpty else {
+            throw SQLServerError.invalidArgument("At least one predicate is required to create a security policy")
+        }
+
+        let policyName = "\(SQLServerSQL.escapeIdentifier(schema)).\(SQLServerSQL.escapeIdentifier(name))"
+
+        var predicateClauses: [String] = []
+        for pred in predicates {
+            let funcName = "\(SQLServerSQL.escapeIdentifier(pred.functionSchema)).\(SQLServerSQL.escapeIdentifier(pred.functionName))"
+            let tableName = "\(SQLServerSQL.escapeIdentifier(pred.targetSchema)).\(SQLServerSQL.escapeIdentifier(pred.targetTable))"
+            let predicateArguments = try await predicateArgumentList(
+                functionName: pred.functionName,
+                functionSchema: pred.functionSchema
+            )
+            let keyword = pred.predicateType == .filter ? "FILTER" : "BLOCK"
+            var clause = "ADD \(keyword) PREDICATE \(funcName)(\(predicateArguments)) ON \(tableName)"
+            if pred.predicateType == .block, let op = pred.blockOperation {
+                clause += " \(op.rawValue)"
+            }
+            predicateClauses.append(clause)
+        }
 
         let sql = """
         CREATE SECURITY POLICY \(policyName)
-        ADD \(predicateKeyword) PREDICATE \(funcName)(\(tableName))
-        ON \(tableName)
+        \(predicateClauses.joined(separator: ",\n"))
         WITH (STATE = \(enabled ? "ON" : "OFF"), SCHEMABINDING = \(schemaBound ? "ON" : "OFF"));
         """
         _ = try await exec(sql)
+    }
+
+    /// Adds a predicate to an existing security policy.
+    @available(macOS 12.0, *)
+    public func addSecurityPredicate(
+        policyName: String,
+        policySchema: String,
+        predicate: SecurityPredicateDefinition
+    ) async throws {
+        let policy = "\(SQLServerSQL.escapeIdentifier(policySchema)).\(SQLServerSQL.escapeIdentifier(policyName))"
+        let funcName = "\(SQLServerSQL.escapeIdentifier(predicate.functionSchema)).\(SQLServerSQL.escapeIdentifier(predicate.functionName))"
+        let tableName = "\(SQLServerSQL.escapeIdentifier(predicate.targetSchema)).\(SQLServerSQL.escapeIdentifier(predicate.targetTable))"
+        let predicateArguments = try await predicateArgumentList(
+            functionName: predicate.functionName,
+            functionSchema: predicate.functionSchema
+        )
+        let keyword = predicate.predicateType == .filter ? "FILTER" : "BLOCK"
+
+        var clause = "ADD \(keyword) PREDICATE \(funcName)(\(predicateArguments)) ON \(tableName)"
+        if predicate.predicateType == .block, let op = predicate.blockOperation {
+            clause += " \(op.rawValue)"
+        }
+
+        let sql = "ALTER SECURITY POLICY \(policy) \(clause);"
+        _ = try await exec(sql)
+    }
+
+    /// Drops a predicate from an existing security policy.
+    @available(macOS 12.0, *)
+    public func dropSecurityPredicate(
+        policyName: String,
+        policySchema: String,
+        predicateType: PredicateType,
+        targetTable: String,
+        targetSchema: String,
+        blockOperation: BlockOperation? = nil
+    ) async throws {
+        let policy = "\(SQLServerSQL.escapeIdentifier(policySchema)).\(SQLServerSQL.escapeIdentifier(policyName))"
+        let tableName = "\(SQLServerSQL.escapeIdentifier(targetSchema)).\(SQLServerSQL.escapeIdentifier(targetTable))"
+        let keyword = predicateType == .filter ? "FILTER" : "BLOCK"
+
+        var clause = "DROP \(keyword) PREDICATE ON \(tableName)"
+        if predicateType == .block, let op = blockOperation {
+            clause += " \(op.rawValue)"
+        }
+
+        let sql = "ALTER SECURITY POLICY \(policy) \(clause);"
+        _ = try await exec(sql)
+    }
+
+    @available(macOS 12.0, *)
+    private func predicateArgumentList(functionName: String, functionSchema: String) async throws -> String {
+        let rows = try await query("""
+        SELECT p.name
+        FROM sys.parameters AS p
+        INNER JOIN sys.objects AS o ON o.object_id = p.object_id
+        INNER JOIN sys.schemas AS s ON s.schema_id = o.schema_id
+        WHERE o.name = N'\(functionName.replacingOccurrences(of: "'", with: "''"))'
+          AND s.name = N'\(functionSchema.replacingOccurrences(of: "'", with: "''"))'
+        ORDER BY p.parameter_id
+        """)
+
+        let arguments = rows.compactMap { row -> String? in
+            guard let parameterName = row.column("name")?.string else {
+                return nil
+            }
+            let columnName = parameterName.hasPrefix("@") ? String(parameterName.dropFirst()) : parameterName
+            return SQLServerSQL.escapeIdentifier(columnName)
+        }
+
+        return arguments.joined(separator: ", ")
     }
 }

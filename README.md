@@ -4,7 +4,7 @@ SQLServerNIO is a non-blocking Swift client for Microsoft SQL Server built on Sw
 
 ## Key Features
 
-- **Connection Management**: `SQLServerClient` for pooled connections with automatic retries, `SQLServerConnection` for direct connection control
+- **Connection Management**: `SQLServerClient` for pooled sessions that are reset (RESETCONNECTION) before reuse, `SQLServerConnection` for dedicated sessions that keep their state
 - **Modern Swift APIs**: Full async/await support with EventLoopFuture fallbacks for compatibility
 - **Transaction Support**: Proper transaction descriptor management with savepoints and isolation levels
 - **Batch Processing**: Execute pre-split batches sequentially on a single connection via `executeBatches(_:)` with continue-on-error support
@@ -12,7 +12,7 @@ SQLServerNIO is a non-blocking Swift client for Microsoft SQL Server built on Sw
 - **Administrative Tools**: Server management via `SQLServerAdministrationClient` and SQL Agent via `SQLServerAgentClient`
 - **Activity Monitor**: SSMS-like activity snapshots and streaming via `SQLServerActivityMonitor` (2008+)
 - **Security Parity**: Securable-aware GRANT/REVOKE/DENY, application roles, schema helpers; extended server login types
-- **Streaming Support**: AsyncSequence-based result streaming for large datasets
+- **Streaming Support**: AsyncSequence-based result streaming with socket back-pressure, so memory stays bounded for any result size
 - **Error Handling**: Robust error handling with proper SQL Server error propagation
 
 
@@ -21,7 +21,7 @@ SQLServerNIO is a non-blocking Swift client for Microsoft SQL Server built on Sw
 Add the dependency to `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/tashda/sqlserver-nio.git", from: "0.1.0")
+.package(url: "https://github.com/tashda/echo-sqlserver.git", from: "0.1.0")
 ```
 
 Then add the product to your target:
@@ -30,7 +30,7 @@ Then add the product to your target:
 .target(
     name: "MyApp",
     dependencies: [
-        .product(name: "SQLServerNIO", package: "sqlserver-nio")
+        .product(name: "SQLServerKit", package: "echo-sqlserver")
     ]
 )
 ```
@@ -40,7 +40,7 @@ Then add the product to your target:
 ### Pooled Client (Recommended)
 
 ```swift
-import SQLServerNIO
+import SQLServerKit
 
 let configuration = SQLServerClient.Configuration(
     hostname: "localhost",
@@ -93,6 +93,18 @@ configuration.connection.sessionOptions = .init(
 )
 configuration.connection.transparentNetworkIPResolution = true // try all DNS answers before failing
 ```
+
+## Reliability Contract
+
+These rules follow the behaviour of Microsoft's ODBC, JDBC and SqlClient drivers.
+
+- **Encryption.** Credentials are never sent unencrypted. `.mandatory` (default) and `.strict` (TDS 8.0, TLS before any TDS traffic) require a TLS configuration and validate the server certificate unless you opt out with `.trustingServerCertificate`. Validation requires the certificate to name the host (or `hostNameInCertificate`); an IP address match on the connected socket is not accepted in its place. `.optional` without a TLS configuration encrypts the whole session but does not validate the certificate.
+- **No automatic replay.** A SQL batch, RPC or transaction body runs at most once. Only connection establishment is retried, and only for network failures (never for login or TLS failures, which would count towards account lockout). If a connection fails while a statement is running, the error has `isConnectionLost == true` and the statement's outcome is unknown.
+- **Transactions.** `withTransaction` commits once. A COMMIT that SQL Server rejects throws that server error (the transaction did not commit). A connection failure during COMMIT throws `commitOutcomeUnknown`. Deadlock victims (1205) are rolled back by SQL Server; only a retry of the whole transaction is safe, and that decision is left to the caller.
+- **Cancellation and deadlines.** Cancelling the task that awaits `execute`, `query`, `call` or a stream sends a TDS ATTENTION, waits for SQL Server to acknowledge it, and throws `CancellationError`; the connection stays usable. `execute(_:timeout:)` and `SessionOptions.defaultQueryTimeout` cancel the same way and throw `SQLServerError.timeout`. If SQL Server sends nothing for 15 seconds while a cancellation is pending, the connection is closed. With `XACT_ABORT ON` (the default session option) a cancelled statement rolls back the open transaction.
+- **Pooled sessions.** A session returned to the pool is reset by SQL Server (`sp_reset_connection` via RESETCONNECTION: open transactions rolled back, temporary objects dropped, SET options, database, isolation level, CONTEXT_INFO and SESSION_CONTEXT restored) and the configured session options are re-applied before anyone else can use it. A session that cannot be reset, for example after an `EXECUTE AS` that was never reverted, is closed. Sessions idle longer than 30 seconds are validated before reuse and closed after 5 minutes idle.
+- **Dedicated sessions.** `SQLServerConnection` keeps temp tables, SET options, database and transactions across calls. `currentDatabase` follows every `USE`, including one inside a batch.
+- **Errors.** Server errors carry number, severity, state, line, procedure and every message of the batch (`error.serverDetails`). `isTransient` marks errors Microsoft documents as transient; `isConnectionLost` marks errors after which the connection cannot be used.
 
 ## Core Operations
 
@@ -569,20 +581,34 @@ try await indexClient.rebuildIndex(name: "IX_Users_Email", table: "Users")
 
 ## Bulk Copy
 
+Rows are sent with the TDS bulk load (as `bcp` and SqlBulkCopy send them). A column whose values
+all convert on the client (numbers, ISO dates such as `yyyy-MM-dd HH:mm:ss`, `.` decimals, `0x…`
+binary) is sent in its own type. A column with other text (`12/31/2023`, `Dec 31 2023`) is sent as
+`nvarchar` and SQL Server converts it exactly as an INSERT would. A value that is not text and does
+not convert throws `SQLServerBulkCopyError.invalidValue`, naming the row and column, before anything
+is written.
+
 ```swift
-let bulkCopy = SQLServerBulkCopyClient(client: client)
-let options = SQLServerBulkCopyOptions(
+let bulk = SQLServerBulkClient(client: client)
+var options = SQLServerBulkCopyOptions(
     table: "Costs",
-    columns: ["category", "amount"],
-    batchSize: 500
+    columns: ["category", "amount", "booked_at"],
+    batchSize: 5_000
 )
+options.tableLock = true          // faster, blocks other writers during each batch
+options.fireTriggers = false      // defaults: constraints checked, triggers fired, NULLs kept
 let rows = [
-    SQLServerBulkCopyRow(values: [.nString("Hardware"), .decimal("123.45")]),
-    SQLServerBulkCopyRow(values: [.nString("Software"), .decimal("300.00")])
+    SQLServerBulkCopyRow(values: [.nString("Hardware"), .string("123.45"), .string("2024-02-29 13:14:15")]),
+    SQLServerBulkCopyRow(values: [.nString("Software"), .decimal("300.00"), .null])
 ]
-let summary = try await bulkCopy.copy(rows: rows, options: options)
-print("Inserted \\(summary.totalRows) rows across \\(summary.batchesExecuted) batches in \\(summary.duration)s")
+let summary = try await bulk.copy(rows: rows, options: options)
+print("Copied \(summary.totalRows) rows in \(summary.batchesExecuted) batches (\(summary.method))")
 ```
+
+`connection.bulkCopy(rows:options:)` does the same on one connection, for example inside a
+transaction. Tables with `text`, `ntext`, `image`, `sql_variant`, CLR (`geometry`, `geography`,
+`hierarchyid`), `json` or `vector` columns, and rows with `.raw` SQL values, are copied with
+multi-row INSERT statements instead (`summary.method == .insertStatements`).
 
 ## Table-Valued Parameters
 
@@ -770,16 +796,6 @@ try await agent.grantLoginToProxy(proxyName: "nio_proxy", loginName: currentLogi
 try await agent.grantProxyToSubsystem(proxyName: "nio_proxy", subsystem: "CmdExec")
 let proxies = try await agent.listProxies()
 
-### Testing Agent end-to-end
-
-Agent integration tests now run as part of the normal suite. The recommended setup is the Docker-backed test environment so the package, Xcode test plan, and GitHub Actions all exercise the same path.
-
-Use focused filters only for iteration speed, not feature gating:
-
-```bash
-USE_DOCKER=1 TDS_VERSION=2022-latest TDS_DOCKER_PORT=14331 swift test --filter MinimalAgentTests
-```
-
 ## Error Handling & Retries
 
 
@@ -796,23 +812,18 @@ Configure retries via `SQLServerRetryConfiguration` on your connection/client co
 
 ## Testing
 
-1. For a host-managed instance, export `TDS_HOSTNAME`, `TDS_PORT`, `TDS_DATABASE`, `TDS_USERNAME`, and `TDS_PASSWORD`.
-2. For the full Docker-backed matrix, set `USE_DOCKER=1`, pick a `TDS_VERSION`, and optionally enable `TDS_LOAD_ADVENTUREWORKS=1`.
-3. Run `swift test` or open `SQLServerNIO.xctestplan` in Xcode.
-
-Host-managed example:
-
 ```bash
-TDS_HOSTNAME=127.0.0.1 TDS_PORT=1433 TDS_DATABASE=master TDS_USERNAME=sa TDS_PASSWORD=<your_password> swift test
+swift test   # unit tests; integration tests skip without a server
+docker run -d --name sqlserver-test -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD='Your_password1' \
+    -p 1433:1433 mcr.microsoft.com/mssql/server:2022-latest
+SQLSERVER_TEST_URL='sqlserver://sa:Your_password1@localhost:1433/master?trustServerCertificate=true' swift test
 ```
 
-Docker-backed example:
-
-```bash
-USE_DOCKER=1 TDS_VERSION=2022-latest TDS_DOCKER_PORT=14331 TDS_LOAD_ADVENTUREWORKS=1 TDS_AW_DATABASE=AdventureWorks swift test
-```
-
-`SQLServerNIO.xctestplan` now carries one configuration per supported SQL Server version so Xcode uses the same Docker-backed environment model as GitHub Actions.
+Integration tests find their server through one URL variable per setup (`SQLSERVER_TEST_URL`,
+`SQLSERVER_TEST_TLS_URL`, `SQLSERVER_TEST_KERBEROS_URL`, `SQLSERVER_TEST_AG_URLS`,
+`SQLSERVER_TEST_PROXY_URL`) and are skipped, naming the variable, when it is not set.
+[TESTING.md](TESTING.md) has the URL form, how to get each setup with Docker, and what CI runs
+(SQL Server 2017, 2019, 2022 and 2025).
 
 ## Contributing
 

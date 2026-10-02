@@ -3,15 +3,16 @@ import SQLServerTDS
 
 extension SQLServerConstraintClient {
     // MARK: - Check Constraints
-    
+
+    @discardableResult
     public func addCheckConstraint(
         name: String,
         table: String,
         expression: String,
         schema: String = "dbo",
         checkExisting: Bool = true
-    ) -> EventLoopFuture<Void> {
-        let promise = client.eventLoopGroup.next().makePromise(of: Void.self)
+    ) -> EventLoopFuture<[SQLServerStreamMessage]> {
+        let promise = client.eventLoopGroup.next().makePromise(of: [SQLServerStreamMessage].self)
         if #available(macOS 12.0, *) {
             promise.completeWithTask {
                 try await self.addCheckConstraint(name: name, table: table, expression: expression, schema: schema, checkExisting: checkExisting)
@@ -21,35 +22,35 @@ extension SQLServerConstraintClient {
         }
         return promise.futureResult
     }
-    
+
     @available(macOS 12.0, *)
+    @discardableResult
     public func addCheckConstraint(
         name: String,
         table: String,
         expression: String,
         schema: String = "dbo",
         checkExisting: Bool = true
-    ) async throws {
-        let escapedConstraintName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+    ) async throws -> [SQLServerStreamMessage] {
+        let escapedConstraintName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
-        
-        var sql = """
-        ALTER TABLE \(fullTableName)
+
+        // WITH NOCHECK belongs between the table and ADD; after the constraint it is a syntax error.
+        let sql = """
+        ALTER TABLE \(fullTableName)\(checkExisting ? "" : " WITH NOCHECK")
         ADD CONSTRAINT \(escapedConstraintName)
         CHECK (\(expression))
         """
-        
-        if !checkExisting {
-            sql += " WITH NOCHECK"
-        }
-        
-        _ = try await client.execute(sql)
+
+        let result = try await client.execute(sql)
+        return result.messages
     }
-    
-    internal func dropCheckConstraint(name: String, table: String, schema: String = "dbo") -> EventLoopFuture<Void> {
-        let promise = client.eventLoopGroup.next().makePromise(of: Void.self)
+
+    @discardableResult
+    internal func dropCheckConstraint(name: String, table: String, schema: String = "dbo") -> EventLoopFuture<[SQLServerStreamMessage]> {
+        let promise = client.eventLoopGroup.next().makePromise(of: [SQLServerStreamMessage].self)
         if #available(macOS 12.0, *) {
             promise.completeWithTask {
                 try await self.dropCheckConstraint(name: name, table: table, schema: schema)
@@ -59,15 +60,17 @@ extension SQLServerConstraintClient {
         }
         return promise.futureResult
     }
-    
+
     @available(macOS 12.0, *)
-    public func dropCheckConstraint(name: String, table: String, schema: String = "dbo") async throws {
-        let escapedConstraintName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+    @discardableResult
+    public func dropCheckConstraint(name: String, table: String, schema: String = "dbo") async throws -> [SQLServerStreamMessage] {
+        let escapedConstraintName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
-        
+
         let sql = "ALTER TABLE \(fullTableName) DROP CONSTRAINT \(escapedConstraintName)"
-        _ = try await client.execute(sql)
+        let result = try await client.execute(sql)
+        return result.messages
     }
 }

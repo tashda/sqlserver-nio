@@ -187,9 +187,9 @@ extension SQLServerConstraintClient {
 
     @available(macOS 12.0, *)
     public func dropConstraint(name: String, table: String, schema: String = "dbo") async throws {
-        let escapedConstraintName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedConstraintName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
 
         let sql = "ALTER TABLE \(fullTableName) DROP CONSTRAINT \(escapedConstraintName)"
@@ -200,9 +200,9 @@ extension SQLServerConstraintClient {
     
     @available(macOS 12.0, *)
     public func enableConstraint(name: String, table: String, schema: String = "dbo") async throws {
-        let escapedConstraintName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedConstraintName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
         
         let sql = "ALTER TABLE \(fullTableName) CHECK CONSTRAINT \(escapedConstraintName)"
@@ -211,9 +211,9 @@ extension SQLServerConstraintClient {
     
     @available(macOS 12.0, *)
     public func disableConstraint(name: String, table: String, schema: String = "dbo") async throws {
-        let escapedConstraintName = Self.escapeIdentifier(name)
-        let escapedTableName = Self.escapeIdentifier(table)
-        let schemaPrefix = schema != "dbo" ? "\(Self.escapeIdentifier(schema))." : ""
+        let escapedConstraintName = SQLServerSQL.escapeIdentifier(name)
+        let escapedTableName = SQLServerSQL.escapeIdentifier(table)
+        let schemaPrefix = schema != "dbo" ? "\(SQLServerSQL.escapeIdentifier(schema))." : ""
         let fullTableName = "\(schemaPrefix)\(escapedTableName)"
         
         let sql = "ALTER TABLE \(fullTableName) NOCHECK CONSTRAINT \(escapedConstraintName)"

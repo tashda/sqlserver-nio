@@ -153,4 +153,5 @@ public struct SQLServerExpensiveQuery: Sendable, Identifiable {
     public let lastExecutionTime: Date?
     public let sqlText: String?
     public let planXml: String?
+    public let databaseName: String?
 }

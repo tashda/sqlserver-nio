@@ -1,6 +1,7 @@
 import XCTest
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 final class SQLServerCRUDOperationsTests: XCTestCase, @unchecked Sendable {
     var baseClient: SQLServerClient!
@@ -10,7 +11,7 @@ final class SQLServerCRUDOperationsTests: XCTestCase, @unchecked Sendable {
 
     override func setUp() async throws {
         continueAfterFailure = false
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
         _ = isLoggingConfigured
         self.baseClient = try await SQLServerClient.connect(
             configuration: makeSQLServerClientConfiguration(),
@@ -333,12 +334,10 @@ final class SQLServerCRUDOperationsTests: XCTestCase, @unchecked Sendable {
             SQLServerColumnDefinition(name: "name", definition: .standard(.init(dataType: .nvarchar(length: .length(50)))))
         ])
 
-        let count = try await client.withConnection { connection in
-            try await connection.insertRow(into: tableName, values: [
-                "id": .int(1),
-                "name": .nString("Direct")
-            ])
-        }
+        let count = try await client.admin.insertRow(into: tableName, values: [
+            "id": .int(1),
+            "name": .nString("Direct")
+        ])
         XCTAssertEqual(count, 1)
 
         try await adminClient.dropTable(name: tableName)
@@ -351,15 +350,13 @@ final class SQLServerCRUDOperationsTests: XCTestCase, @unchecked Sendable {
             SQLServerColumnDefinition(name: "value", definition: .standard(.init(dataType: .int)))
         ])
 
-        let count = try await client.withConnection { connection in
-            try await connection.insertRows(into: tableName, columns: ["id", "value"], values: [
-                [.int(1), .int(100)],
-                [.int(2), .int(200)],
-                [.int(3), .int(300)],
-                [.int(4), .int(400)],
-                [.int(5), .int(500)]
-            ])
-        }
+        let count = try await client.admin.insertRows(into: tableName, columns: ["id", "value"], values: [
+            [.int(1), .int(100)],
+            [.int(2), .int(200)],
+            [.int(3), .int(300)],
+            [.int(4), .int(400)],
+            [.int(5), .int(500)]
+        ])
         XCTAssertEqual(count, 5)
 
         try await adminClient.dropTable(name: tableName)
@@ -378,13 +375,11 @@ final class SQLServerCRUDOperationsTests: XCTestCase, @unchecked Sendable {
             [.int(3), .nString("inactive")]
         ])
 
-        let count = try await client.withConnection { connection in
-            try await connection.updateRows(
-                in: tableName,
-                set: ["status": .nString("archived")],
-                where: "[status] = N'active'"
-            )
-        }
+        let count = try await client.admin.updateRows(
+            in: tableName,
+            set: ["status": .nString("archived")],
+            where: "[status] = N'active'"
+        )
         XCTAssertEqual(count, 2)
 
         try await adminClient.dropTable(name: tableName)
@@ -400,9 +395,7 @@ final class SQLServerCRUDOperationsTests: XCTestCase, @unchecked Sendable {
             [.int(1)], [.int(2)], [.int(3)]
         ])
 
-        let count = try await client.withConnection { connection in
-            try await connection.deleteRows(from: tableName, where: "[id] = 2")
-        }
+        let count = try await client.admin.deleteRows(from: tableName, where: "[id] = 2")
         XCTAssertEqual(count, 1)
 
         try await adminClient.dropTable(name: tableName)

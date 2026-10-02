@@ -29,7 +29,7 @@ public final class SQLServerClient: @unchecked Sendable {
     ) async throws -> SQLServerClient {
         try await connect(
             configuration: configuration,
-            numberOfThreads: System.coreCount,
+            numberOfThreads: min(System.coreCount, 4),
             logger: logger
         )
     }
@@ -74,8 +74,8 @@ public final class SQLServerClient: @unchecked Sendable {
         tlsEnabled: Bool = true,
         trustServerCertificate: Bool = false,
         caCertificatePath: String? = nil,
-        encryptionMode: SQLServerEncryptionMode = .optional,
-        numberOfThreads: Int = System.coreCount,
+        encryptionMode: SQLServerEncryptionMode = .mandatory,
+        numberOfThreads: Int = min(System.coreCount, 4),
         poolConfiguration: SQLServerConnectionPool.Configuration = .init(),
         metadataConfiguration: SQLServerMetadataOperations.Configuration = .init(),
         retryConfiguration: SQLServerRetryConfiguration = .init(),
@@ -104,97 +104,9 @@ public final class SQLServerClient: @unchecked Sendable {
 
     internal static func connect(
         configuration: Configuration,
-        eventLoopGroupProvider: EventLoopGroupProvider = .createNew(numberOfThreads: System.coreCount),
+        eventLoopGroupProvider: EventLoopGroupProvider = .createNew(numberOfThreads: min(System.coreCount, 4)),
         logger: Logger = Logger(label: "tds.sqlserver.client")
     ) -> EventLoopFuture<SQLServerClient> {
-        @Sendable func scheduleRetry<T: Sendable>(
-            on eventLoop: EventLoop,
-            attempt: Int,
-            error: Error,
-            operation: @Sendable @escaping () -> EventLoopFuture<T>
-        ) -> EventLoopFuture<T> {
-            let normalized = SQLServerError.normalize(error)
-            guard attempt < configuration.retryConfiguration.maximumAttempts,
-                  configuration.retryConfiguration.shouldRetry(normalized) else {
-                return eventLoop.makeFailedFuture(normalized)
-            }
-
-            logger.debug("Initial connection attempt \(attempt) failed; retrying with \(normalized)")
-            let delay = configuration.retryConfiguration.backoffStrategy(attempt).nioTimeAmount
-            return eventLoop.scheduleTask(in: delay) {}.futureResult.flatMap { operation() }
-        }
-
-        @Sendable func establishConnection(on eventLoop: EventLoop, attempt: Int = 1) -> EventLoopFuture<TDSConnection> {
-            let targetDatabase = configuration.connection.login.database
-            let escapedTargetDatabase = targetDatabase.replacingOccurrences(of: "]", with: "]]")
-
-            func attemptConnect() -> EventLoopFuture<TDSConnection> {
-                @Sendable
-                func bootstrapSession(on connection: TDSConnection) -> EventLoopFuture<TDSConnection> {
-                    let statements = configuration.connection.sessionOptions.buildStatements()
-                    guard !statements.isEmpty else {
-                        return eventLoop.makeSucceededFuture(connection)
-                    }
-                    let batch = statements.joined(separator: " ")
-                    return connection.rawSql(batch).map { _ in connection }
-                }
-
-                @Sendable
-                func connectForDatabase(_ database: String) -> EventLoopFuture<TDSConnection> {
-                    SQLServerConnection.resolveSocketAddresses(
-                        hostname: configuration.connection.hostname,
-                        port: configuration.connection.port,
-                        transparentResolution: configuration.connection.transparentNetworkIPResolution,
-                        on: eventLoop
-                    ).flatMap { addresses in
-                        SQLServerConnection.establishTDSConnection(
-                            addresses: addresses,
-                            tlsConfiguration: configuration.connection.tlsConfiguration,
-                            serverHostname: configuration.connection.hostname,
-                            encryptionMode: configuration.connection.encryptionMode.asTDSMode,
-                            connectTimeout: .seconds(Int64(configuration.connection.connectTimeoutSeconds)),
-                            on: eventLoop,
-                            logger: logger
-                        )
-                    }.flatMap { connection in
-                        let cfg = TDSLoginConfiguration(
-                            serverName: configuration.connection.hostname,
-                            port: configuration.connection.port,
-                            database: database,
-                            authentication: configuration.connection.login.authentication.tdsAuthentication,
-                            readOnlyIntent: configuration.connection.readOnlyIntent
-                        )
-                        return connection.login(configuration: cfg)
-                            .flatMap { bootstrapSession(on: connection) }
-                            .flatMapError { error in
-                                connection.close().recover { _ in () }.flatMapThrowing {
-                                    throw SQLServerError.normalize(error)
-                                }
-                            }
-                    }
-                }
-
-                return connectForDatabase(configuration.connection.login.database).flatMapError { error in
-                    let normalized = SQLServerError.normalize(error)
-                    guard case .authenticationFailed = normalized,
-                          targetDatabase.caseInsensitiveCompare("master") != .orderedSame
-                    else {
-                        return eventLoop.makeFailedFuture(normalized)
-                    }
-                    logger.warning("Direct login to \(targetDatabase) failed during connect; retrying via master and issuing USE")
-                    return connectForDatabase("master").flatMap { connection in
-                        connection.rawSql("USE [\(escapedTargetDatabase)];").map { _ in connection }
-                    }
-                }.flatMapError { error in
-                    scheduleRetry(on: eventLoop, attempt: attempt, error: error) {
-                        establishConnection(on: eventLoop, attempt: attempt + 1)
-                    }
-                }
-            }
-
-            return attemptConnect()
-        }
-
         let eventLoopGroup: EventLoopGroup
         let ownsGroup: Bool
 
@@ -207,28 +119,35 @@ public final class SQLServerClient: @unchecked Sendable {
             ownsGroup = true
         }
 
+
         let connectionFactory: (EventLoop) -> EventLoopFuture<TDSConnection> = { eventLoop in
-            establishConnection(on: eventLoop)
+            SQLServerConnection.openSession(configuration: configuration.connection, on: eventLoop, logger: logger)
         }
 
+        let resetBatch = configuration.connection.sessionResetBatch
         let pool = SQLServerConnectionPool(
             configuration: configuration.poolConfiguration,
             eventLoopGroup: eventLoopGroup,
             logger: logger,
-            connectionFactory: connectionFactory
+            connectionFactory: connectionFactory,
+            sessionReset: { connection in
+                SQLServerConnection.runSessionBatch(resetBatch, on: connection, resetConnection: true, timeout: .seconds(15))
+            }
         )
 
         let loop = eventLoopGroup.next()
-        return connectionFactory(loop).flatMap { connection in
-            connection.close().map {
-                SQLServerClient(
-                    configuration: configuration,
-                    eventLoopGroup: eventLoopGroup,
-                    ownsEventLoopGroup: ownsGroup,
-                    pool: pool,
-                    logger: logger
-                )
-            }
+        // Opening one session up front surfaces configuration and credential
+        // errors from connect(). The session then serves the first checkout.
+        return connectionFactory(loop).map { connection in
+            pool.adoptIdle(connection)
+            pool.start()
+            return SQLServerClient(
+                configuration: configuration,
+                eventLoopGroup: eventLoopGroup,
+                ownsEventLoopGroup: ownsGroup,
+                pool: pool,
+                logger: logger
+            )
         }.flatMapError { error in
             pool.shutdownGracefully().flatMapThrowing { _ -> SQLServerClient in
                 // Fire-and-forget ELG shutdown — returning a future from shutdownEventLoopGroup
@@ -242,16 +161,51 @@ public final class SQLServerClient: @unchecked Sendable {
     }
 
     public func shutdownGracefully() async throws {
+        try await shutdownGracefully(drainTimeout: 10)
+    }
+
+    /// Stops accepting operations, waits up to `drainTimeout` seconds for
+    /// running operations to finish, then closes every session. Operations
+    /// still running at that point fail with `connectionClosed`, so shutdown
+    /// cannot hang behind a long-running query.
+    public func shutdownGracefully(drainTimeout: TimeInterval) async throws {
         var already = false
         stateLock.withLock {
             if _isShutdown { already = true } else { _isShutdown = true }
         }
         if already { return }
 
-        while true {
-            let pending = stateLock.withLock { inFlightOperations }
-            if pending == 0 { break }
-            try await Task.sleep(nanoseconds: 10_000_000)
+        // Wait for in-flight operations (including connection close/invalidate)
+        // using the drain waiter pattern instead of busy-polling.
+        let needsDrain: Bool = stateLock.withLock { inFlightOperations > 0 }
+        if needsDrain {
+            let loop = eventLoopGroup.next()
+            let force = loop.scheduleTask(in: drainTimeout.nioTimeAmount) { [pool, logger] in
+                logger.warning("Operations still running after \(drainTimeout)s; closing their connections")
+                _ = pool.shutdownGracefully()
+            }
+            defer { force.cancel() }
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                let p = loop.makePromise(of: Void.self)
+                self.stateLock.withLock { self.drainWaiters.append(p) }
+                p.futureResult.whenComplete { result in
+                    switch result {
+                    case .success: continuation.resume()
+                    case .failure(let error): continuation.resume(throwing: error)
+                    }
+                }
+                // Re-check: operations may have completed between our check and
+                // adding the waiter, so drain immediately if already at zero.
+                let stillPending: Bool = self.stateLock.withLock { self.inFlightOperations > 0 }
+                if !stillPending {
+                    var toComplete: [EventLoopPromise<Void>] = []
+                    self.stateLock.withLock {
+                        toComplete = self.drainWaiters
+                        self.drainWaiters.removeAll(keepingCapacity: false)
+                    }
+                    toComplete.forEach { $0.succeed(()) }
+                }
+            }
         }
 
         try await pool.shutdownGracefully().get()
@@ -275,17 +229,7 @@ public final class SQLServerClient: @unchecked Sendable {
 
     @available(macOS 12.0, *)
     public func connection() async throws -> SQLServerConnection {
-        let pooled = try await pool.checkout().get()
-        let connection = makeConnection(from: pooled)
-        let loop = connection.eventLoop
-
-        do {
-            try await healthProbe(connection, on: loop).get()
-            return connection
-        } catch {
-            _ = try? await connection.invalidate().get()
-            throw SQLServerError.normalize(error)
-        }
+        try await acquireHealthyConnection(on: eventLoopGroup.next()).get()
     }
 
     internal func shutdownGracefully() -> EventLoopFuture<Void> {
@@ -313,6 +257,26 @@ public final class SQLServerClient: @unchecked Sendable {
         }
     }
 
+    internal func beginOperation() -> Bool {
+        stateLock.withLock { () -> Bool in
+            guard !_isShutdown else { return false }
+            inFlightOperations += 1
+            return true
+        }
+    }
+
+    internal func endOperation() {
+        var toComplete: [EventLoopPromise<Void>] = []
+        stateLock.withLock {
+            inFlightOperations = max(0, inFlightOperations - 1)
+            if inFlightOperations == 0 && _isShutdown {
+                toComplete = drainWaiters
+                drainWaiters.removeAll(keepingCapacity: false)
+            }
+        }
+        toComplete.forEach { $0.succeed(()) }
+    }
+
     public func withConnection<Result: Sendable>(
         on eventLoop: EventLoop? = nil,
         _ operation: @Sendable @escaping (SQLServerConnection) -> EventLoopFuture<Result>
@@ -321,52 +285,40 @@ public final class SQLServerClient: @unchecked Sendable {
             return operation(scoped)
         }
         let loop = eventLoop ?? eventLoopGroup.next()
-        let fut = executeWithRetry(operationName: "withConnection", on: loop) {
-            self.pool.checkout(on: loop).flatMap { pooled -> EventLoopFuture<Result> in
-                let sqlConnection = self.makeConnection(from: pooled)
-                let probe = self.healthProbe(sqlConnection, on: loop).flatMapError { hpError in
-                    let normalized = SQLServerError.normalize(hpError)
-                    let retryError: SQLServerError = (hpError is SQLServerError) ? (hpError as! SQLServerError) : .connectionClosed
-                    self.logger.debug("Connection health probe failed: \(normalized); invalidating connection")
-                    return sqlConnection.invalidate().recover { _ in () }.flatMap { _ in
-                        loop.makeFailedFuture(retryError)
-                    }
-                }
-                let op: EventLoopFuture<Result> = probe.flatMap {
-                    self.stateLock.withLock { self.inFlightOperations += 1 }
-                    let userFuture = operation(sqlConnection)
-                    let bridge = loop.makePromise(of: Result.self)
-                    userFuture.whenComplete { result in
-                        var toComplete: [EventLoopPromise<Void>] = []
-                        self.stateLock.withLock {
-                            self.inFlightOperations = max(0, self.inFlightOperations - 1)
-                            if self.inFlightOperations == 0 && self._isShutdown {
-                                toComplete = self.drainWaiters; self.drainWaiters.removeAll(keepingCapacity: false)
-                            }
-                        }
-                        toComplete.forEach { $0.succeed(()) }
-                        bridge.completeWith(result)
-                    }
-                    return bridge.futureResult
-                }
+        let accepted = self.stateLock.withLock { () -> Bool in
+            guard !self._isShutdown else { return false }
+            self.inFlightOperations += 1
+            return true
+        }
+        guard accepted else { return loop.makeFailedFuture(SQLServerError.clientShutdown) }
+        let fut = self.acquireHealthyConnection(on: loop).flatMap { sqlConnection -> EventLoopFuture<Result> in
+                // Track the FULL withConnection lifecycle (including connection
+                // close/invalidate) so shutdownGracefully() cannot proceed while
+                // connections are still being returned to the pool.
+                let op = operation(sqlConnection)
                 return op.flatMap { value in
                     sqlConnection.close().map { value }
                 }.flatMapError { error in
                     let normalized = SQLServerError.normalize(error)
-                    switch normalized {
-                    case .sqlExecutionError, .deadlockDetected:
-                        return sqlConnection.close().recover { _ in () }.flatMap { _ in
-                            loop.makeFailedFuture(normalized)
-                        }
-                    default:
-                        return sqlConnection.invalidate().recover { _ in () }.flatMap { _ in
-                            loop.makeFailedFuture(normalized)
-                        }
-                    }
+                    // A usable session goes back to the pool, which resets it
+                    // before reuse; a broken one is discarded.
+                    let returned = normalized.isConnectionLost || sqlConnection.underlying.isClosed
+                        ? sqlConnection.invalidate()
+                        : sqlConnection.close()
+                    return returned.recover { _ in () }.flatMapThrowing { _ in throw error }
+                }
+        }
+        return fut.always { _ in
+            var toComplete: [EventLoopPromise<Void>] = []
+            self.stateLock.withLock {
+                self.inFlightOperations = max(0, self.inFlightOperations - 1)
+                if self.inFlightOperations == 0 && self._isShutdown {
+                    toComplete = self.drainWaiters
+                    self.drainWaiters.removeAll(keepingCapacity: false)
                 }
             }
-        }
-        return fut.withTestTimeoutIfEnabled(on: loop)
+            toComplete.forEach { $0.succeed(()) }
+        }.withTestTimeoutIfEnabled(on: loop)
     }
 
     internal init(

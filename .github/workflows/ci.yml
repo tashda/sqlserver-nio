@@ -1,0 +1,201 @@
+name: CI
+
+# Tests find their servers through URL variables (TESTING.md). Here each server is a GitHub
+# service container; SQLSERVER_TEST_REQUIRED=1 makes a test whose variable is missing fail, so a
+# job cannot pass by skipping.
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  LOG_LEVEL: "info"
+  SWIFT_VERSION: "6.2.4"
+  # A throwaway password for the CI containers.
+  SA_PASSWORD: "Ci_sqlserver-nio_1"
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+  workflow_dispatch:
+
+concurrency:
+  # One group per pull request (a new push cancels its older run) and one per pushed commit, so
+  # every commit is checked. A shared group would not do: GitHub keeps one waiting run per group
+  # and cancels the older waiting ones whatever cancel-in-progress says.
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  unit:
+    name: "Unit tests (no server)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: swift-actions/setup-swift@v3
+        with:
+          swift-version: ${{ env.SWIFT_VERSION }}
+          skip-verify-signature: true
+      - name: Build
+        run: swift build --build-tests
+      - name: Unit tests (integration tests skip without SQLSERVER_TEST_URL)
+        run: swift test --skip-build
+
+  integration:
+    name: "SQL Server ${{ matrix.version }}${{ matrix.columnEncryption == 'true' && ' (Always Encrypted metadata on)' || '' }}"
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ["2017", "2019", "2022", "2025"]
+        columnEncryption: ["false"]
+        include:
+          # Every result set, row and RPC parsed with COLUMNENCRYPTION negotiated (CekTable in every COLMETADATA).
+          - version: "2022"
+            columnEncryption: "true"
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:${{ matrix.version }}-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "Ci_sqlserver-nio_1"
+          MSSQL_AGENT_ENABLED: "true"
+        ports:
+          - 1433:1433
+    env:
+      SQLSERVER_TEST_URL: "sqlserver://sa:Ci_sqlserver-nio_1@localhost:1433/master?encrypt=mandatory&trustServerCertificate=true&columnEncryption=${{ matrix.columnEncryption }}"
+      SQLSERVER_TEST_REQUIRED: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: swift-actions/setup-swift@v3
+        with:
+          swift-version: ${{ env.SWIFT_VERSION }}
+          skip-verify-signature: true
+      - name: Build
+        run: swift build --build-tests
+      - name: Wait for SQL Server and restore AdventureWorks
+        run: .github/scripts/prepare-sqlserver.sh "${{ job.services.sqlserver.id }}" "$SA_PASSWORD" "${{ matrix.version }}"
+      - name: Tests
+        # The TLS, fault, availability-group and Kerberos suites need their own servers (jobs below,
+        # or TESTING.md).
+        run: swift test --skip-build --skip 'TLSCertificateTests|NetworkFaultTests|AvailabilityGroupRoutingTests|KerberosLoginTests'
+
+  parser-stress:
+    name: "Incremental parser stress (SQL Server 2022, 7-byte fragments)"
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "Ci_sqlserver-nio_1"
+        ports:
+          - 1433:1433
+    env:
+      SQLSERVER_TEST_URL: "sqlserver://sa:Ci_sqlserver-nio_1@localhost:1433/master?encrypt=mandatory&trustServerCertificate=true"
+      SQLSERVER_TEST_REQUIRED: "1"
+      TDS_DEBUG_FRAGMENT_SIZE: "7"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: swift-actions/setup-swift@v3
+        with:
+          swift-version: ${{ env.SWIFT_VERSION }}
+          skip-verify-signature: true
+      - name: Build
+        run: swift build --build-tests
+      - name: Wait for SQL Server
+        run: .github/scripts/prepare-sqlserver.sh "${{ job.services.sqlserver.id }}" "$SA_PASSWORD" 2022 --no-adventureworks
+      - name: Every packet split into 7-byte fragments
+        run: swift test --skip-build --filter 'QueryTests|MultiResultSetTests|LargeResultSetTests|OutputParameterTests|SQLServerDataTypeRoundTripTests|SQLServerLegacyLobRoundTripTests|SQLServerSpatialTests|SQLServerClrUdtDisplayTests|ExecutionPlanTests|ProductionHardeningTests'
+
+  tls:
+    name: "TLS: certificates (2022) and TDS 8.0 Strict (2025)"
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      mandatory:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "Ci_sqlserver-nio_1"
+        ports:
+          - 14331:1433
+      strict:
+        image: mcr.microsoft.com/mssql/server:2025-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "Ci_sqlserver-nio_1"
+        ports:
+          - 14332:1433
+    env:
+      SQLSERVER_TEST_REQUIRED: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: swift-actions/setup-swift@v3
+        with:
+          swift-version: ${{ env.SWIFT_VERSION }}
+          skip-verify-signature: true
+      - name: Build
+        run: swift build --build-tests
+      - name: Give both servers a certificate from a CI CA and force encryption
+        run: |
+          .github/scripts/prepare-sqlserver.sh "${{ job.services.mandatory.id }}" "$SA_PASSWORD" 2022 --no-adventureworks
+          .github/scripts/prepare-sqlserver.sh "${{ job.services.strict.id }}" "$SA_PASSWORD" 2025 --no-adventureworks
+          .github/scripts/enable-tls.sh "${{ job.services.mandatory.id }}" "$RUNNER_TEMP/tls"
+          .github/scripts/enable-tls.sh "${{ job.services.strict.id }}" "$RUNNER_TEMP/tls" --strict
+          .github/scripts/prepare-sqlserver.sh "${{ job.services.mandatory.id }}" "$SA_PASSWORD" 2022 --no-adventureworks
+          sleep 20 # Strict servers refuse sqlcmd's TDS 7.x login, so give the restart time.
+      - name: Certificates (encrypt=mandatory)
+        run: |
+          export SQLSERVER_TEST_TLS_URL="sqlserver://sa:Ci_sqlserver-nio_1@localhost:14331/master?encrypt=mandatory&trustServerCertificate=false&caFile=$RUNNER_TEMP/tls/ca.pem"
+          swift test --skip-build --filter TLSCertificateTests
+      - name: TDS 8.0 Strict (encrypt=strict)
+        run: |
+          export SQLSERVER_TEST_TLS_URL="sqlserver://sa:Ci_sqlserver-nio_1@localhost:14332/master?encrypt=strict&trustServerCertificate=false&caFile=$RUNNER_TEMP/tls/ca.pem"
+          swift test --skip-build --filter TLSCertificateTests
+      - name: Server logs on failure
+        if: failure()
+        run: |
+          docker logs --tail 50 "${{ job.services.mandatory.id }}"
+          docker logs --tail 50 "${{ job.services.strict.id }}"
+
+  faults:
+    name: "Network faults (Toxiproxy in front of SQL Server 2022)"
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "Ci_sqlserver-nio_1"
+      toxiproxy:
+        image: ghcr.io/shopify/toxiproxy:2.12.0
+        ports:
+          - 8474:8474
+          - 21433:21433
+    env:
+      SQLSERVER_TEST_PROXY_URL: "sqlserver://sa:Ci_sqlserver-nio_1@localhost:21433/master?encrypt=mandatory&trustServerCertificate=true"
+      SQLSERVER_TEST_PROXY_CONTROL: "http://localhost:8474"
+      SQLSERVER_TEST_REQUIRED: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: swift-actions/setup-swift@v3
+        with:
+          swift-version: ${{ env.SWIFT_VERSION }}
+          skip-verify-signature: true
+      - name: Build
+        run: swift build --build-tests
+      - name: Wait for SQL Server and create the proxy
+        run: |
+          .github/scripts/prepare-sqlserver.sh "${{ job.services.sqlserver.id }}" "$SA_PASSWORD" 2022 --no-adventureworks
+          curl -fsS -X POST http://localhost:8474/proxies \
+            -d '{"name":"sqlserver","listen":"0.0.0.0:21433","upstream":"sqlserver:1433"}'
+      - name: Fault tests
+        run: swift test --skip-build --filter NetworkFaultTests

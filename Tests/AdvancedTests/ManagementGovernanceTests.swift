@@ -1,8 +1,8 @@
 import XCTest
 import Logging
-@testable import SQLServerTDS
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 /// Governance and Management tests (Phase 4)
 final class ManagementGovernanceTests: XCTestCase, @unchecked Sendable {
@@ -10,7 +10,7 @@ final class ManagementGovernanceTests: XCTestCase, @unchecked Sendable {
     private let logger = Logger(label: "ManagementGovernanceTests")
 
     override func setUp() async throws {
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
         
         let config = makeSQLServerClientConfiguration()
         self.client = try await SQLServerClient.connect(

@@ -1,5 +1,6 @@
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 import XCTest
 import Logging
 
@@ -8,7 +9,7 @@ final class SQLServerPlpChunkingTests: XCTestCase, @unchecked Sendable {
 
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
+        try requireSQLServerTestServer(); // Load environment configuration
         client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
     }
 
@@ -39,9 +40,7 @@ final class SQLServerPlpChunkingTests: XCTestCase, @unchecked Sendable {
                         // Use a BMP character so NVARCHAR stores 2 bytes per char deterministically
                         let nv = String(repeating: "ユ", count: s/2)
                         let vb = Array((0..<s).map { UInt8($0 & 0xFF) })
-                        try await dbClient.withConnection { connection in
-                            try await connection.insertRow(into: table, values: ["nv": .nString(nv), "vb": .bytes(vb)])
-                        }
+                        _ = try await dbAdminClient.insertRow(into: table, values: ["nv": .nString(nv), "vb": .bytes(vb)])
                     }
 
                     // Query data back using SQLServerKit APIs

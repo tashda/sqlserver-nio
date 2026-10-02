@@ -1,6 +1,5 @@
 import XCTest
-import NIO
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
 
 final class TriggerInformationTests: TriggerTestBase, @unchecked Sendable {

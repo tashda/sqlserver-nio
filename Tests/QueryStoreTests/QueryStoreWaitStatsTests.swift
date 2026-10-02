@@ -1,6 +1,7 @@
 import Foundation
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 import XCTest
 
 final class QueryStoreWaitStatsTests: XCTestCase, @unchecked Sendable {
@@ -10,11 +11,7 @@ final class QueryStoreWaitStatsTests: XCTestCase, @unchecked Sendable {
 
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables()
-
-        if envFlagEnabled("USE_DOCKER") {
-            try SQLServerDockerManager.shared.startIfNeeded()
-        }
+        try requireSQLServerTestServer()
 
         var config = makeSQLServerClientConfiguration()
         config.poolConfiguration.connectionIdleTimeout = nil
@@ -42,7 +39,7 @@ final class QueryStoreWaitStatsTests: XCTestCase, @unchecked Sendable {
     func testWaitStatsReturnsArray() async throws {
         // Query Store may not be enabled on all databases.
         // Use a database that likely has Query Store enabled, or skip gracefully.
-        let database = env("TDS_AW_DATABASE") ?? "master"
+        let database = (try? await requireAdventureWorks(using: client)) ?? "master"
 
         do {
             // planId 1 is arbitrary — may not exist, but the API should still return an empty array
@@ -67,6 +64,27 @@ final class QueryStoreWaitStatsTests: XCTestCase, @unchecked Sendable {
                 throw XCTSkip("Query Store is not enabled on the test database")
             }
             throw error
+        }
+    }
+
+    // MARK: - Capture and flush
+
+    func testCapturedQueryCanBeFlushedAndForced() async throws {
+        try await withTemporaryDatabase(client: self.client, prefix: "tmp_qs") { db in
+            let store = self.client.queryStore
+            try await store.setEnabled(database: db, enabled: true)
+            try await store.alterOption(database: db, option: .queryCaptureMode(.all))
+            for _ in 1...3 {
+                _ = try await self.client.withDatabase(db) { try await $0.query("SELECT COUNT(*) AS n FROM sys.objects WHERE type = 'U'") }
+            }
+            try await store.flush(database: db)
+            let queries = try await store.topQueries(database: db, limit: 50, queryTextFilter: "sys.objects")
+            let query = try XCTUnwrap(queries.first)
+            let plans = try await store.queryPlans(database: db, queryId: query.queryId)
+            let plan = try XCTUnwrap(plans.first)
+            try await store.forcePlan(database: db, queryId: query.queryId, planId: plan.planId)
+            let forced = try await store.queryPlans(database: db, queryId: query.queryId).first { $0.planId == plan.planId }
+            XCTAssertEqual(forced?.isForcedPlan, true)
         }
     }
 

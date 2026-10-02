@@ -1,5 +1,6 @@
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 import XCTest
 import Logging
 
@@ -10,7 +11,7 @@ final class SQLServerTableDefinitionCoverageTests: XCTestCase, @unchecked Sendab
         continueAfterFailure = false
 
         // Load environment configuration
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
 
         // Configure logging
         _ = isLoggingConfigured
@@ -85,9 +86,7 @@ final class SQLServerTableDefinitionCoverageTests: XCTestCase, @unchecked Sendab
 
             guard let def = try await withRetry(attempts: 5, operation: {
                 try await withTimeout(60, operation: {
-                    try await dbClient.withConnection { conn in
-                        try await conn.objectDefinition(schema: "dbo", name: child, kind: .table)
-                    }
+                    try await dbClient.metadata.objectDefinition(schema: "dbo", name: child, kind: .table)
                 })
             }), let ddl = def.definition else {
                 XCTFail("No definition returned")
@@ -140,13 +139,15 @@ final class SQLServerTableDefinitionCoverageTests: XCTestCase, @unchecked Sendab
             if let te = error as? AsyncTimeoutError {
                 throw XCTSkip("Skipping due to timeout during comprehensive table scripting: \(te)")
             }
-            let norm = SQLServerError.normalize(error)
-            switch norm {
-            case .connectionClosed, .timeout:
-                throw XCTSkip("Skipping due to unstable server during comprehensive table scripting: \(norm)")
-            default:
-                throw error
+            if let sqlError = error as? SQLServerError {
+                switch sqlError {
+                case .connectionClosed, .timeout:
+                    throw XCTSkip("Skipping due to unstable server during comprehensive table scripting: \(sqlError)")
+                default:
+                    break
+                }
             }
+            throw error
         }
     }
 }

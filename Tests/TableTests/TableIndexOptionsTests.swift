@@ -1,5 +1,6 @@
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 import XCTest
 import Logging
 
@@ -8,7 +9,7 @@ final class SQLServerTableIndexOptionsTests: XCTestCase, @unchecked Sendable {
 
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
+        try requireSQLServerTestServer(); // Load environment configuration
 
         let config = makeSQLServerClientConfiguration()
         self.client = try await SQLServerClient.connect(configuration: config, numberOfThreads: 1)
@@ -54,15 +55,13 @@ final class SQLServerTableIndexOptionsTests: XCTestCase, @unchecked Sendable {
         try await withDbClient(for: db) { dbClient in
             guard let def = try await withRetry(attempts: 5, operation: {
                 try await withTimeout(60, operation: {
-                    try await dbClient.withConnection { conn in
-                        do {
-                            return try await conn.objectDefinition(schema: "dbo", name: table, kind: .table)
-                        } catch {
-                            if error.localizedDescription == "Already closed" {
-                                throw SQLServerError.connectionClosed // Convert to retryable error
-                            } else {
-                                throw error
-                            }
+                    do {
+                        return try await dbClient.metadata.objectDefinition(schema: "dbo", name: table, kind: .table)
+                    } catch {
+                        if error.localizedDescription == "Already closed" {
+                            throw SQLServerError.connectionClosed // Convert to retryable error
+                        } else {
+                            throw error
                         }
                     }
                 })
@@ -94,13 +93,15 @@ final class SQLServerTableIndexOptionsTests: XCTestCase, @unchecked Sendable {
             if let te = error as? AsyncTimeoutError {
                 throw XCTSkip("Skipping due to timeout during index option scripting: \(te)")
             }
-            let norm = SQLServerError.normalize(error)
-            switch norm {
-            case .connectionClosed, .timeout:
-                throw XCTSkip("Skipping due to unstable server during index option scripting: \(norm)")
-            default:
-                throw error
+            if let sqlError = error as? SQLServerError {
+                switch sqlError {
+                case .connectionClosed, .timeout:
+                    throw XCTSkip("Skipping due to unstable server during index option scripting: \(sqlError)")
+                default:
+                    break
+                }
             }
+            throw error
         }
     }
 }

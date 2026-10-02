@@ -1,11 +1,100 @@
 import Foundation
 import SQLServerTDS
 
+// MARK: - Create Database Options
+
+/// Options for creating a SQL Server database, including collation, containment, and file settings.
+public struct SQLServerCreateDatabaseOptions: Sendable {
+    public var collation: String?
+    public var containment: String?
+    public var dataFileName: String?
+    public var dataFileSize: Int?
+    public var dataFileMaxSize: Int?
+    public var dataFileGrowth: Int?
+    public var logFileName: String?
+    public var logFileSize: Int?
+    public var logFileMaxSize: Int?
+    public var logFileGrowth: Int?
+
+    public init(
+        collation: String? = nil,
+        containment: String? = nil,
+        dataFileName: String? = nil,
+        dataFileSize: Int? = nil,
+        dataFileMaxSize: Int? = nil,
+        dataFileGrowth: Int? = nil,
+        logFileName: String? = nil,
+        logFileSize: Int? = nil,
+        logFileMaxSize: Int? = nil,
+        logFileGrowth: Int? = nil
+    ) {
+        self.collation = collation
+        self.containment = containment
+        self.dataFileName = dataFileName
+        self.dataFileSize = dataFileSize
+        self.dataFileMaxSize = dataFileMaxSize
+        self.dataFileGrowth = dataFileGrowth
+        self.logFileName = logFileName
+        self.logFileSize = logFileSize
+        self.logFileMaxSize = logFileMaxSize
+        self.logFileGrowth = logFileGrowth
+    }
+}
+
 extension SQLServerAdministrationClient {
     // MARK: - Database Management
 
     /// Create a database with optional configuration for collation, containment, and file settings.
     @available(macOS 12.0, *)
+    @discardableResult
+    public func createDatabase(
+        name: String,
+        options: SQLServerCreateDatabaseOptions = .init()
+    ) async throws -> [SQLServerStreamMessage] {
+        let escaped = SQLServerSQL.escapeIdentifier(name)
+        var sql = "CREATE DATABASE \(escaped)"
+
+        if let collation = options.collation {
+            sql += "\n    COLLATE \(collation)"
+        }
+
+        if let containment = options.containment {
+            sql += "\n    WITH CONTAINMENT = \(containment)"
+        }
+
+        // Primary data file
+        if options.dataFileName != nil || options.dataFileSize != nil {
+            let logicalName = options.dataFileName ?? name
+            let escapedLogical = logicalName.replacingOccurrences(of: "'", with: "''")
+            var fileParts = ["NAME = N'\(escapedLogical)'"]
+            if let size = options.dataFileSize { fileParts.append("SIZE = \(size)MB") }
+            if let maxSize = options.dataFileMaxSize {
+                fileParts.append("MAXSIZE = \(maxSize)MB")
+            }
+            if let growth = options.dataFileGrowth { fileParts.append("FILEGROWTH = \(growth)MB") }
+            sql += "\n    ON PRIMARY (\(fileParts.joined(separator: ", ")))"
+        }
+
+        // Log file
+        if options.logFileName != nil || options.logFileSize != nil {
+            let logicalName = options.logFileName ?? "\(name)_log"
+            let escapedLogical = logicalName.replacingOccurrences(of: "'", with: "''")
+            var fileParts = ["NAME = N'\(escapedLogical)'"]
+            if let size = options.logFileSize { fileParts.append("SIZE = \(size)MB") }
+            if let maxSize = options.logFileMaxSize {
+                fileParts.append("MAXSIZE = \(maxSize)MB")
+            }
+            if let growth = options.logFileGrowth { fileParts.append("FILEGROWTH = \(growth)MB") }
+            sql += "\n    LOG ON (\(fileParts.joined(separator: ", ")))"
+        }
+
+        let result = try await client.execute(sql)
+        return result.messages
+    }
+
+    /// Create a database with optional configuration for collation, containment, and file settings.
+    @available(macOS 12.0, *)
+    @available(*, deprecated, message: "Use createDatabase(name:options:) instead")
     @discardableResult
     public func createDatabase(
         name: String,
@@ -20,45 +109,21 @@ extension SQLServerAdministrationClient {
         logFileMaxSize: Int? = nil,
         logFileGrowth: Int? = nil
     ) async throws -> [SQLServerStreamMessage] {
-        let escaped = Self.escapeIdentifier(name)
-        var sql = "CREATE DATABASE \(escaped)"
-
-        if let collation {
-            sql += "\n    COLLATE \(collation)"
-        }
-
-        if let containment {
-            sql += "\n    WITH CONTAINMENT = \(containment)"
-        }
-
-        // Primary data file
-        if dataFileName != nil || dataFileSize != nil {
-            let logicalName = dataFileName ?? name
-            let escapedLogical = logicalName.replacingOccurrences(of: "'", with: "''")
-            var fileParts = ["NAME = N'\(escapedLogical)'"]
-            if let size = dataFileSize { fileParts.append("SIZE = \(size)MB") }
-            if let maxSize = dataFileMaxSize {
-                fileParts.append("MAXSIZE = \(maxSize)MB")
-            }
-            if let growth = dataFileGrowth { fileParts.append("FILEGROWTH = \(growth)MB") }
-            sql += "\n    ON PRIMARY (\(fileParts.joined(separator: ", ")))"
-        }
-
-        // Log file
-        if logFileName != nil || logFileSize != nil {
-            let logicalName = logFileName ?? "\(name)_log"
-            let escapedLogical = logicalName.replacingOccurrences(of: "'", with: "''")
-            var fileParts = ["NAME = N'\(escapedLogical)'"]
-            if let size = logFileSize { fileParts.append("SIZE = \(size)MB") }
-            if let maxSize = logFileMaxSize {
-                fileParts.append("MAXSIZE = \(maxSize)MB")
-            }
-            if let growth = logFileGrowth { fileParts.append("FILEGROWTH = \(growth)MB") }
-            sql += "\n    LOG ON (\(fileParts.joined(separator: ", ")))"
-        }
-
-        let result = try await client.execute(sql)
-        return result.messages
+        try await createDatabase(
+            name: name,
+            options: SQLServerCreateDatabaseOptions(
+                collation: collation,
+                containment: containment,
+                dataFileName: dataFileName,
+                dataFileSize: dataFileSize,
+                dataFileMaxSize: dataFileMaxSize,
+                dataFileGrowth: dataFileGrowth,
+                logFileName: logFileName,
+                logFileSize: logFileSize,
+                logFileMaxSize: logFileMaxSize,
+                logFileGrowth: logFileGrowth
+            )
+        )
     }
 
     /// List available collations from sys.fn_helpcollations().
@@ -79,7 +144,7 @@ extension SQLServerAdministrationClient {
     @available(macOS 12.0, *)
     @discardableResult
     public func takeDatabaseOffline(name: String) async throws -> [SQLServerStreamMessage] {
-        let escaped = Self.escapeIdentifier(name)
+        let escaped = SQLServerSQL.escapeIdentifier(name)
         let result = try await client.execute("ALTER DATABASE \(escaped) SET OFFLINE WITH ROLLBACK IMMEDIATE")
         return result.messages
     }
@@ -89,8 +154,18 @@ extension SQLServerAdministrationClient {
     @available(macOS 12.0, *)
     @discardableResult
     public func bringDatabaseOnline(name: String) async throws -> [SQLServerStreamMessage] {
-        let escaped = Self.escapeIdentifier(name)
+        let escaped = SQLServerSQL.escapeIdentifier(name)
         let result = try await client.execute("ALTER DATABASE \(escaped) SET ONLINE")
+        return result.messages
+    }
+
+    /// Make `login` the owner of a database (`ALTER AUTHORIZATION ON DATABASE`).
+    @available(macOS 12.0, *)
+    @discardableResult
+    public func setDatabaseOwner(name: String, login: String) async throws -> [SQLServerStreamMessage] {
+        let result = try await client.execute(
+            "ALTER AUTHORIZATION ON DATABASE::\(SQLServerSQL.escapeIdentifier(name)) TO \(SQLServerSQL.escapeIdentifier(login))"
+        )
         return result.messages
     }
 
@@ -99,7 +174,7 @@ extension SQLServerAdministrationClient {
     @available(macOS 12.0, *)
     @discardableResult
     public func shrinkDatabase(name: String) async throws -> [SQLServerStreamMessage] {
-        let escaped = Self.escapeIdentifier(name)
+        let escaped = SQLServerSQL.escapeIdentifier(name)
         let result = try await client.execute("DBCC SHRINKDATABASE(\(escaped))")
         return result.messages
     }
@@ -109,7 +184,7 @@ extension SQLServerAdministrationClient {
     @available(macOS 12.0, *)
     @discardableResult
     public func dropDatabase(name: String, forceSingleUser: Bool = false) async throws -> [SQLServerStreamMessage] {
-        let escaped = Self.escapeIdentifier(name)
+        let escaped = SQLServerSQL.escapeIdentifier(name)
         let sql: String
         if forceSingleUser {
             sql = """
@@ -130,13 +205,13 @@ extension SQLServerAdministrationClient {
     @discardableResult
     public func setSnapshotIsolation(database name: String, enabled: Bool) async throws -> [SQLServerStreamMessage] {
         let state = enabled ? "ON" : "OFF"
-        let result = try await client.execute("ALTER DATABASE \(Self.escapeIdentifier(name)) SET ALLOW_SNAPSHOT_ISOLATION \(state)")
+        let result = try await client.execute("ALTER DATABASE \(SQLServerSQL.escapeIdentifier(name)) SET ALLOW_SNAPSHOT_ISOLATION \(state)")
         return result.messages
     }
 
-    /// Fetch comprehensive properties for a database from sys.databases and related system views.
+    /// Get comprehensive properties for a database from sys.databases and related system views.
     @available(macOS 12.0, *)
-    public func fetchDatabaseProperties(name: String) async throws -> SQLServerDatabaseProperties {
+    public func getDatabaseProperties(name: String) async throws -> SQLServerDatabaseProperties {
         let escapedName = name.replacingOccurrences(of: "'", with: "''")
         let sql = """
         SELECT
@@ -268,9 +343,15 @@ extension SQLServerAdministrationClient {
         )
     }
 
-    /// Fetch database files from sys.master_files.
+    @available(*, deprecated, renamed: "getDatabaseProperties(name:)")
     @available(macOS 12.0, *)
-    public func fetchDatabaseFiles(name: String) async throws -> [SQLServerDatabaseFile] {
+    public func fetchDatabaseProperties(name: String) async throws -> SQLServerDatabaseProperties {
+        try await getDatabaseProperties(name: name)
+    }
+
+    /// Get database files from sys.master_files.
+    @available(macOS 12.0, *)
+    public func getDatabaseFiles(name: String) async throws -> [SQLServerDatabaseFile] {
         let escapedName = name.replacingOccurrences(of: "'", with: "''")
         let sql = """
         SELECT
@@ -333,6 +414,12 @@ extension SQLServerAdministrationClient {
         }
     }
 
+    @available(*, deprecated, renamed: "getDatabaseFiles(name:)")
+    @available(macOS 12.0, *)
+    public func fetchDatabaseFiles(name: String) async throws -> [SQLServerDatabaseFile] {
+        try await getDatabaseFiles(name: name)
+    }
+
     /// Modify a database file property (size, max size, or growth).
     /// Returns informational messages from SQL Server.
     @available(macOS 12.0, *)
@@ -342,7 +429,7 @@ extension SQLServerAdministrationClient {
         logicalFileName: String,
         option: SQLServerDatabaseFileOption
     ) async throws -> [SQLServerStreamMessage] {
-        let escapedDb = Self.escapeIdentifier(databaseName)
+        let escapedDb = SQLServerSQL.escapeIdentifier(databaseName)
         let escapedFile = logicalFileName.replacingOccurrences(of: "'", with: "''")
 
         let optionClause: String
@@ -379,7 +466,7 @@ extension SQLServerAdministrationClient {
         filegrowthMB: Int = 64,
         fileGroup: String? = nil
     ) async throws -> [SQLServerStreamMessage] {
-        let escapedDb = Self.escapeIdentifier(databaseName)
+        let escapedDb = SQLServerSQL.escapeIdentifier(databaseName)
         let escapedLogical = logicalName.replacingOccurrences(of: "'", with: "''")
         let escapedPhysical = fileName.replacingOccurrences(of: "'", with: "''")
 
@@ -399,7 +486,7 @@ extension SQLServerAdministrationClient {
         let fileSpec = clauses.joined(separator: ", ")
         let toFileGroup: String
         if let fg = fileGroup {
-            toFileGroup = " TO FILEGROUP \(Self.escapeIdentifier(fg))"
+            toFileGroup = " TO FILEGROUP \(SQLServerSQL.escapeIdentifier(fg))"
         } else {
             toFileGroup = ""
         }
@@ -421,7 +508,7 @@ extension SQLServerAdministrationClient {
         maxSizeMB: Int? = nil,
         filegrowthMB: Int = 64
     ) async throws -> [SQLServerStreamMessage] {
-        let escapedDb = Self.escapeIdentifier(databaseName)
+        let escapedDb = SQLServerSQL.escapeIdentifier(databaseName)
         let escapedLogical = logicalName.replacingOccurrences(of: "'", with: "''")
         let escapedPhysical = fileName.replacingOccurrences(of: "'", with: "''")
 
@@ -453,9 +540,9 @@ extension SQLServerAdministrationClient {
         databaseName: String,
         logicalFileName: String
     ) async throws -> [SQLServerStreamMessage] {
-        let escapedDb = Self.escapeIdentifier(databaseName)
+        let escapedDb = SQLServerSQL.escapeIdentifier(databaseName)
         let escapedFile = logicalFileName.replacingOccurrences(of: "'", with: "''")
-        let sql = "ALTER DATABASE \(escapedDb) REMOVE FILE \(Self.escapeIdentifier(escapedFile))"
+        let sql = "ALTER DATABASE \(escapedDb) REMOVE FILE \(SQLServerSQL.escapeIdentifier(escapedFile))"
         let result = try await client.execute(sql)
         return result.messages
     }
@@ -472,7 +559,7 @@ extension SQLServerAdministrationClient {
     ) async throws -> [SQLServerStreamMessage] {
         // DBCC SHRINKFILE must run in the context of the target database.
         let escapedFile = logicalFileName.replacingOccurrences(of: "'", with: "''")
-        let escapedDb = Self.escapeIdentifier(databaseName)
+        let escapedDb = SQLServerSQL.escapeIdentifier(databaseName)
         let sql = """
         USE \(escapedDb);
         DBCC SHRINKFILE(N'\(escapedFile)', \(targetSizeMB));
@@ -506,7 +593,7 @@ extension SQLServerAdministrationClient {
         name: String,
         files: [String]
     ) async throws -> [SQLServerStreamMessage] {
-        let escaped = Self.escapeIdentifier(name)
+        let escaped = SQLServerSQL.escapeIdentifier(name)
         let fileSpecs = files.map { path in
             let escapedPath = path.replacingOccurrences(of: "'", with: "''")
             return "    (FILENAME = N'\(escapedPath)')"
@@ -527,7 +614,7 @@ extension SQLServerAdministrationClient {
         name: String,
         files: [String]
     ) async throws -> [SQLServerStreamMessage] {
-        let escaped = Self.escapeIdentifier(name)
+        let escaped = SQLServerSQL.escapeIdentifier(name)
         let fileSpecs = files.map { path in
             let escapedPath = path.replacingOccurrences(of: "'", with: "''")
             return "    (FILENAME = N'\(escapedPath)')"
@@ -574,7 +661,7 @@ extension SQLServerAdministrationClient {
     @available(macOS 12.0, *)
     @discardableResult
     public func setDatabaseSingleUser(name: String, rollbackImmediate: Bool = true) async throws -> [SQLServerStreamMessage] {
-        let escaped = Self.escapeIdentifier(name)
+        let escaped = SQLServerSQL.escapeIdentifier(name)
         let rollback = rollbackImmediate ? " WITH ROLLBACK IMMEDIATE" : ""
         let result = try await client.execute("ALTER DATABASE \(escaped) SET SINGLE_USER\(rollback)")
         return result.messages
@@ -584,9 +671,16 @@ extension SQLServerAdministrationClient {
     @available(macOS 12.0, *)
     @discardableResult
     public func setDatabaseMultiUser(name: String) async throws -> [SQLServerStreamMessage] {
-        let escaped = Self.escapeIdentifier(name)
+        let escaped = SQLServerSQL.escapeIdentifier(name)
         let result = try await client.execute("ALTER DATABASE \(escaped) SET MULTI_USER")
         return result.messages
+    }
+
+    /// List all online user databases.
+    @available(macOS 12.0, *)
+    public func listDatabases() async throws -> [String] {
+        let rows = try await client.query("SELECT name FROM sys.databases WHERE state = 0 AND database_id > 0 ORDER BY name")
+        return rows.compactMap { $0.column("name")?.string }
     }
 
 }

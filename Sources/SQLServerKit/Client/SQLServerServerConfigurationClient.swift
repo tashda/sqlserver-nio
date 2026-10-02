@@ -317,9 +317,9 @@ public final class SQLServerServerConfigurationClient: @unchecked Sendable {
     /// Requires VIEW SERVER STATE and sysadmin permissions.
     @available(macOS 12.0, *)
     public func fetchStartupParameters() async throws -> [String] {
-        let sql = "SELECT [value] FROM sys.dm_server_registry WHERE registry_key LIKE '%\\MSSQLServer\\Parameters'"
+        let sql = "SELECT [value_data] FROM sys.dm_server_registry WHERE registry_key LIKE '%\\MSSQLServer\\Parameters'"
         let rows = try await client.query(sql)
-        return rows.compactMap { $0.column("value")?.string }
+        return rows.compactMap { $0.column("value_data")?.string }
     }
 
     // MARK: - Private

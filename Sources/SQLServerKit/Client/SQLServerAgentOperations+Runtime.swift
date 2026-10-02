@@ -37,7 +37,7 @@ extension SQLServerAgentOperations {
                 h.run_time
             FROM msdb.dbo.sysjobhistory AS h WITH (NOLOCK)
             INNER JOIN msdb.dbo.sysjobs AS j WITH (NOLOCK) ON h.job_id = j.job_id
-            WHERE j.name = N'\(Self.escapeLiteral(jobName))'
+            WHERE j.name = N'\(SQLServerSQL.escapeLiteral(jobName))'
             ORDER BY h.instance_id DESC;
             """
             return self.run(sql)
@@ -80,7 +80,7 @@ extension SQLServerAgentOperations {
         FROM msdb.dbo.sysjobactivity AS a
         INNER JOIN msdb.dbo.sysjobs AS j ON j.job_id = a.job_id
         LEFT JOIN msdb.dbo.sysjobsteps AS s ON s.job_id = a.job_id AND s.step_id = a.last_executed_step_id
-        WHERE j.name = N'\(Self.escapeLiteral(jobName))'
+        WHERE j.name = N'\(SQLServerSQL.escapeLiteral(jobName))'
           AND a.start_execution_date IS NOT NULL
           AND a.stop_execution_date IS NULL
           AND a.session_id = (SELECT MAX(session_id) FROM msdb.dbo.syssessions)

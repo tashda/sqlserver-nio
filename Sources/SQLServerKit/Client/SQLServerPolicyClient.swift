@@ -45,7 +45,7 @@ public final class SQLServerPolicyClient: @unchecked Sendable {
     @available(macOS 12.0, *)
     public func listConditions() async throws -> [SQLServerPolicyCondition] {
         let sql = """
-        SELECT condition_id, name, facet_name, expression
+        SELECT condition_id, name, facet AS facet_name, expression
         FROM msdb.dbo.syspolicy_conditions
         """
         let rows = try await client.query(sql)
@@ -68,7 +68,7 @@ public final class SQLServerPolicyClient: @unchecked Sendable {
     /// Lists all available management facets.
     @available(macOS 12.0, *)
     public func listFacets() async throws -> [SQLServerPolicyFacet] {
-        let sql = "SELECT name, description FROM msdb.dbo.syspolicy_management_facets"
+        let sql = "SELECT name, CAST(NULL AS NVARCHAR(MAX)) AS description FROM msdb.dbo.syspolicy_management_facets"
         let rows = try await client.query(sql)
         return rows.compactMap { row in
             guard let name = row.column("name")?.string else { return nil }
@@ -113,7 +113,7 @@ public final class SQLServerPolicyClient: @unchecked Sendable {
     public func enablePolicy(name: String) async throws {
         let escaped = name.replacingOccurrences(of: "'", with: "''")
         let sql = "EXEC msdb.dbo.sp_syspolicy_update_policy @name = N'\(escaped)', @is_enabled = 1;"
-        try await client.execute(sql)
+        _ = try await client.execute(sql)
     }
 
     /// Disables a policy.
@@ -121,7 +121,7 @@ public final class SQLServerPolicyClient: @unchecked Sendable {
     public func disablePolicy(name: String) async throws {
         let escaped = name.replacingOccurrences(of: "'", with: "''")
         let sql = "EXEC msdb.dbo.sp_syspolicy_update_policy @name = N'\(escaped)', @is_enabled = 0;"
-        try await client.execute(sql)
+        _ = try await client.execute(sql)
     }
 
     // MARK: - Execution
@@ -131,6 +131,6 @@ public final class SQLServerPolicyClient: @unchecked Sendable {
     public func evaluatePolicy(name: String) async throws {
         let escaped = name.replacingOccurrences(of: "'", with: "''")
         let sql = "EXEC msdb.dbo.sp_syspolicy_execute_policy @policy_name = N'\(escaped)';"
-        try await client.execute(sql)
+        _ = try await client.execute(sql)
     }
 }

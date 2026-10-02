@@ -1,5 +1,6 @@
 import Foundation
 import SQLServerTDS
+import NIOCore
 
 /// Shared date formatter — ISO8601DateFormatter is expensive to create and should be reused.
 /// Thread-safe: ISO8601DateFormatter is stateless after initialization.
@@ -19,112 +20,125 @@ public struct SQLServerRow: Sendable {
         let columnCount = base.columnMetadata.count
         var result: [String?] = []
         result.reserveCapacity(columnCount)
-
         for i in 0..<columnCount {
             guard i < base.columnData.count, let buffer = base.columnData[i].data else {
                 result.append(nil)
                 continue
             }
-
-            let metadata = base.columnMetadata[i]
-            let tdsData = TDSData(metadata: metadata, value: buffer)
-
-            // Direct type dispatch — avoids the cascade of failed type checks
-            // that made the old approach (try .string, try .int, try .date...)
-            // do 6+ failed property accesses per datetime cell.
-            switch metadata.dataType {
-            // String types — direct decode
-            case .nvarchar, .nchar, .nText, .xml:
-                result.append(tdsData.string)
-            case .varchar, .varcharLegacy, .char, .text:
-                result.append(tdsData.string)
-
-            // Integer types — direct decode
-            case .int:
-                if let v = tdsData.int { result.append(String(v)) } else { result.append(nil) }
-            case .bigInt:
-                if let v = tdsData.int64 { result.append(String(v)) } else { result.append(nil) }
-            case .smallInt:
-                if let v = tdsData.int16 { result.append(String(v)) } else { result.append(nil) }
-            case .tinyInt:
-                if let v = tdsData.uint8 { result.append(String(v)) } else { result.append(nil) }
-            case .intn:
-                // Nullable integer — size determines width
-                if let v = tdsData.int64 { result.append(String(v)) }
-                else if let v = tdsData.int { result.append(String(v)) }
-                else { result.append(nil) }
-
-            // Bit
-            case .bit, .bitn:
-                if let v = tdsData.bool { result.append(v ? "1" : "0") } else { result.append(nil) }
-
-            // Float types
-            case .float, .real, .floatn:
-                if let v = tdsData.double { result.append(String(v)) } else { result.append(nil) }
-
-            // Date/time types — use cached formatter
-            case .datetime, .datetime2, .datetimen, .date, .smallDateTime:
-                if let d = tdsData.date { result.append(_sharedISO8601Formatter.string(from: d)) }
-                else { result.append(nil) }
-            case .time:
-                if let d = tdsData.date { result.append(_sharedISO8601Formatter.string(from: d)) }
-                else if let s = tdsData.string { result.append(s) }
-                else { result.append(nil) }
-            case .datetimeOffset:
-                if let d = tdsData.date { result.append(_sharedISO8601Formatter.string(from: d)) }
-                else { result.append(nil) }
-
-            // Decimal/money
-            case .decimal, .numeric, .decimalLegacy, .numericLegacy:
-                if let d = tdsData.decimal { result.append(NSDecimalNumber(decimal: d).stringValue) }
-                else { result.append(nil) }
-            case .money, .smallMoney, .moneyn:
-                if let d = tdsData.decimal { result.append(NSDecimalNumber(decimal: d).stringValue) }
-                else if let v = tdsData.double { result.append(String(v)) }
-                else { result.append(nil) }
-
-            // UUID
-            case .guid:
-                if let u = tdsData.uuid { result.append(u.uuidString) } else { result.append(nil) }
-
-            // Binary
-            case .varbinary, .varbinaryLegacy, .binary, .image:
-                if let bytes = tdsData.bytes {
-                    let hex = bytes.map { String(format: "%02X", $0) }.joined()
-                    result.append("0x\(hex)")
-                } else { result.append(nil) }
-
-            // SQL Variant
-            case .sqlVariant:
-                if let s = tdsData.string { result.append(s) }
-                else if let v = tdsData.int64 { result.append(String(v)) }
-                else if let v = tdsData.double { result.append(String(v)) }
-                else { result.append(nil) }
-
-            default:
-                // Unknown type / UDT — check hierarchyid/spatial, then string fallback
-                if let udtInfo = (metadata as? TDSTokens.ColMetadataToken.ColumnData)?.udtInfo {
-                    let typeName = udtInfo.typeName
-                    if typeName.caseInsensitiveCompare("hierarchyid") == .orderedSame,
-                       let bytes = tdsData.bytes,
-                       let hid = SQLServerHierarchyID.string(from: bytes) {
-                        result.append(hid)
-                        continue
-                    }
-                    if (typeName.caseInsensitiveCompare("geometry") == .orderedSame || 
-                        typeName.caseInsensitiveCompare("geography") == .orderedSame),
-                       var buf = base.columnData[i].data,
-                       let spatial = SQLServerSpatial.decode(from: &buf) {
-                        result.append(spatial.wkt)
-                        continue
-                    }
-                }
-                
-                if let s = tdsData.string { result.append(s) }
-                else { result.append(nil) }
-            }
+            result.append(Self.format(metadata: base.columnMetadata[i], buffer: buffer))
         }
         return result
+    }
+
+    /// The wire type of each column, for formatting spooled cells later with
+    /// `SQLServerCellFormatter`.
+    public var cellTypes: [SQLServerCellType] {
+        base.columnMetadata.map(SQLServerCellType.init(metadata:))
+    }
+
+    /// Formats one cell. Shared by `toStringArray()` and
+    /// `SQLServerCellFormatter`, so live and spooled cells cannot differ.
+    /// Direct type dispatch avoids a cascade of failed type conversions.
+    internal static func format(metadata: TDSTokens.ColMetadataToken.ColumnData, buffer: ByteBuffer) -> String? {
+        // Dates, times and money are formatted from the wire bytes: going
+        // through Date or Double loses fractional seconds, offsets and digits.
+        if let exact = SQLServerExactFormat.format(metadata: metadata, buffer: buffer) {
+            return exact
+        }
+        let tdsData = TDSData(metadata: metadata, value: buffer)
+        switch metadata.dataType {
+        // String types — direct decode
+        case .nvarchar, .nchar, .nText, .xml:
+            return tdsData.string
+        case .varchar, .varcharLegacy, .char, .text:
+            return tdsData.string
+
+        // Integer types — direct decode
+        case .int:
+            if let v = tdsData.int { return String(v) } else { return nil }
+        case .bigInt:
+            if let v = tdsData.int64 { return String(v) } else { return nil }
+        case .smallInt:
+            if let v = tdsData.int16 { return String(v) } else { return nil }
+        case .tinyInt:
+            if let v = tdsData.uint8 { return String(v) } else { return nil }
+        case .intn:
+            // Nullable integer — size determines width
+            if let v = tdsData.int64 { return String(v) }
+            else if let v = tdsData.int { return String(v) }
+            else { return nil }
+
+        // Bit
+        case .bit, .bitn:
+            if let v = tdsData.bool { return v ? "1" : "0" } else { return nil }
+
+        // Float types
+        case .float, .real, .floatn:
+            if let v = tdsData.double { return String(v) } else { return nil }
+
+        // Date/time types — use cached formatter
+        case .datetime, .datetime2, .datetimen, .date, .smallDateTime:
+            if let d = tdsData.date { return _sharedISO8601Formatter.string(from: d) }
+            else { return nil }
+        case .time:
+            if let d = tdsData.date { return _sharedISO8601Formatter.string(from: d) }
+            else if let s = tdsData.string { return s }
+            else { return nil }
+        case .datetimeOffset:
+            if let d = tdsData.date { return _sharedISO8601Formatter.string(from: d) }
+            else { return nil }
+
+        // Decimal/money
+        case .decimal, .numeric, .decimalLegacy, .numericLegacy:
+            if let d = tdsData.decimal { return NSDecimalNumber(decimal: d).stringValue }
+            else { return nil }
+        case .money, .smallMoney, .moneyn:
+            if let d = tdsData.decimal { return NSDecimalNumber(decimal: d).stringValue }
+            else if let v = tdsData.double { return String(v) }
+            else { return nil }
+
+        // UUID — use .string which applies the correct SQL Server mixed-endian byte swap
+        case .guid:
+            return tdsData.string
+
+        // Binary
+        case .varbinary, .varbinaryLegacy, .binary, .image:
+            if let bytes = tdsData.bytes {
+                let hex = bytes.map { String(format: "%02X", $0) }.joined()
+                return "0x\(hex)"
+            } else { return nil }
+
+        // SQL Variant
+        case .sqlVariant:
+            if let s = tdsData.string { return s }
+            else if let v = tdsData.int64 { return String(v) }
+            else if let v = tdsData.double { return String(v) }
+            else { return nil }
+
+        default:
+            // Unknown type / UDT — check hierarchyid/spatial, then string fallback
+            if let udtInfo = metadata.udtInfo {
+                let typeName = udtInfo.typeName
+                if typeName.caseInsensitiveCompare("hierarchyid") == .orderedSame,
+                   let bytes = tdsData.bytes,
+                   let hid = SQLServerHierarchyID.string(from: bytes) {
+                    return hid
+                }
+                if typeName.caseInsensitiveCompare("geometry") == .orderedSame ||
+                    typeName.caseInsensitiveCompare("geography") == .orderedSame {
+                    var spatialBuffer = buffer
+                    if let spatial = SQLServerSpatial.decode(from: &spatialBuffer) {
+                        // geography stores latitude first; WKT (and STAsText)
+                        // put longitude first.
+                        let isGeography = typeName.caseInsensitiveCompare("geography") == .orderedSame
+                        return (isGeography ? spatial.swappingAxes() : spatial).wkt
+                    }
+                }
+            }
+
+            if let s = tdsData.string { return s }
+            else { return nil }
+        }
     }
 
     /// Returns raw column ByteBuffers for zero-copy streaming. The caller stores
@@ -205,6 +219,8 @@ public struct SQLServerColumn: Sendable {
     public var precision: Int? { base.precision == 0 ? nil : Int(base.precision) }
     public var scale: Int? { base.scale == 0 ? nil : Int(base.scale) }
     public var flags: UInt16 { base.flags }
+    /// Always Encrypted: how the column is encrypted, on a connection with `columnEncryption`.
+    public var encryption: SQLServerColumnEncryption? { base.encryption.map(SQLServerColumnEncryption.init) }
     public var normalizedLength: Int? {
         guard base.length >= 0 else { return nil }
         switch base.dataType {

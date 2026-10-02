@@ -67,7 +67,10 @@ public final class SQLServerAdministrationClient: @unchecked Sendable {
         try await listServerRoles().get()
     }
 
-    internal static func escapeIdentifier(_ identifier: String) -> String {
-        "[\(identifier.replacingOccurrences(of: "]", with: "]]"))]"
+    /// Returns the server name (@@SERVERNAME).
+    @available(macOS 12.0, *)
+    public func getServerName() async throws -> String? {
+        let rows = try await client.query("SELECT @@SERVERNAME AS name")
+        return rows.first?.column("name")?.string
     }
 }

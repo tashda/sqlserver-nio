@@ -11,6 +11,8 @@ public enum MaskFunction: Sendable, Hashable {
     case datetime(part: String)
 
     /// The T-SQL expression used in `ALTER COLUMN ... ADD MASKED WITH (FUNCTION = '...')`.
+    /// The mask function as SQL Server writes it in `sys.masked_columns`. Strings inside it use double
+    /// quotes, because the whole expression is itself a string literal in `ADD MASKED WITH (FUNCTION = '...')`.
     public var sqlExpression: String {
         switch self {
         case .defaultMask:
@@ -20,11 +22,9 @@ public enum MaskFunction: Sendable, Hashable {
         case .random(let start, let end):
             return "random(\(start), \(end))"
         case .partial(let prefix, let padding, let suffix):
-            let escapedPadding = padding.replacingOccurrences(of: "'", with: "''")
-            return "partial(\(prefix), '\(escapedPadding)', \(suffix))"
+            return "partial(\(prefix), \"\(padding)\", \(suffix))"
         case .datetime(let part):
-            let escapedPart = part.replacingOccurrences(of: "'", with: "''")
-            return "datetime('\(escapedPart)')"
+            return "datetime(\"\(part)\")"
         }
     }
 

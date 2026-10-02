@@ -15,7 +15,7 @@ private let kGSS_C_DELEG_FLAG: OM_uint32 = 1
 // Thread-safe copies of GSS extern OID descriptors.
 // These are effectively constant after dyld initialization.
 private nonisolated(unsafe) var gssNTUserName = __gss_c_nt_user_name_oid_desc
-private nonisolated(unsafe) var gssNTHostBasedService = __gss_c_nt_hostbased_service_oid_desc
+private nonisolated(unsafe) var gssKrb5NTPrincipalName = __gss_krb5_nt_principal_name_oid_desc
 private nonisolated(unsafe) var gssKrb5Mechanism = __gss_krb5_mechanism_oid_desc
 private nonisolated(unsafe) var gssSPNEGOMechanism = __gss_spnego_mechanism_oid_desc
 
@@ -53,9 +53,27 @@ final class KerberosAuthenticator: TDSAuthenticator, @unchecked Sendable {
     private var credentials: gss_cred_id_t?
     private let logger: Logger
 
-    init(username: String, password: String, domain: String?, server: String, port: Int, logger: Logger) throws {
+    init(
+        username: String,
+        password: String,
+        domain: String?,
+        server: String,
+        port: Int,
+        servicePrincipalName: String? = nil,
+        logger: Logger
+    ) throws {
         self.logger = logger
-        self.servicePrincipalName = "MSSQLSvc/\(server):\(port)"
+        // Microsoft's drivers ask for MSSQLSvc/<host>:<port> as a Kerberos principal name, in the
+        // login's realm when one is given (otherwise the default realm). A configured SPN (ODBC's
+        // ServerSPN) replaces the name, for a server reached by another address than its own.
+        let spn = servicePrincipalName ?? "MSSQLSvc/\(server):\(port)"
+        if spn.contains("@") {
+            self.servicePrincipalName = spn
+        } else if let domain, !domain.isEmpty {
+            self.servicePrincipalName = "\(spn)@\(domain.uppercased())"
+        } else {
+            self.servicePrincipalName = spn
+        }
         logger.debug("Kerberos SPN: \(self.servicePrincipalName)")
 
         if !username.isEmpty && !password.isEmpty {
@@ -159,7 +177,9 @@ final class KerberosAuthenticator: TDSAuthenticator, @unchecked Sendable {
             return gss_import_name(
                 &minorStatus,
                 &serviceNameBuffer,
-                &gssNTHostBasedService,
+                // A principal name, not a host-based service name ("service@host"): importing
+                // "MSSQLSvc/host:port" as a host-based name makes GSS ask the KDC for another principal.
+                &gssKrb5NTPrincipalName,
                 &targetName
             )
         }
@@ -295,7 +315,15 @@ public enum KerberosError: Error, Sendable, CustomStringConvertible {
 }
 
 final class KerberosAuthenticator: TDSAuthenticator, @unchecked Sendable {
-    init(username: String, password: String, domain: String?, server: String, port: Int, logger: Logger) throws {
+    init(
+        username: String,
+        password: String,
+        domain: String?,
+        server: String,
+        port: Int,
+        servicePrincipalName: String? = nil,
+        logger: Logger
+    ) throws {
         throw KerberosError.unsupported
     }
 

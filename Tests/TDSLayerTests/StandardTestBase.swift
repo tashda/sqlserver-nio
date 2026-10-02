@@ -3,6 +3,7 @@ import Logging
 @testable import SQLServerTDS
 @testable import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 
 /// Standard base class for all SQLServer tests
 /// Provides consistent setup, teardown, and query execution patterns
@@ -22,7 +23,7 @@ open class StandardTestBase: XCTestCase, @unchecked Sendable {
     override open func setUp() async throws {
         _ = isLoggingConfigured
         // Load environment variables
-        TestEnvironmentManager.loadEnvironmentVariables()
+        try requireSQLServerTestServer()
 
         // Create configuration with no connection pooling to avoid cleanup issues
         var config = makeSQLServerClientConfiguration()

@@ -1,5 +1,6 @@
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 import XCTest
 
 final class SQLServerMetadataViewColumnsTests: XCTestCase, @unchecked Sendable {
@@ -7,7 +8,7 @@ final class SQLServerMetadataViewColumnsTests: XCTestCase, @unchecked Sendable {
 
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
+        try requireSQLServerTestServer(); // Load environment configuration
         client = try await SQLServerClient.connect(configuration: makeSQLServerClientConfiguration(), numberOfThreads: 1)
     }
 
@@ -78,7 +79,7 @@ final class SQLServerMetadataViewColumnsTests: XCTestCase, @unchecked Sendable {
     func testListColumnsAdventureWorksVEEmployeeLikeViews() async throws {
         let db: String
         do {
-            db = try await requireDatabaseNamedInEnvironment("TDS_AW_DATABASE", using: client)
+            db = try await requireAdventureWorks(using: client)
         } catch let error as SQLServerFixtureUnavailable {
             throw XCTSkip(error.message)
         }
@@ -99,7 +100,7 @@ final class SQLServerMetadataViewColumnsTests: XCTestCase, @unchecked Sendable {
     func testListColumnsAdventureWorksVJobCandidateDoesNotExecuteViewBody() async throws {
         let db: String
         do {
-            db = try await requireDatabaseNamedInEnvironment("TDS_AW_DATABASE", using: client)
+            db = try await requireAdventureWorks(using: client)
         } catch let error as SQLServerFixtureUnavailable {
             throw XCTSkip(error.message)
         }
@@ -116,7 +117,7 @@ final class SQLServerMetadataViewColumnsTests: XCTestCase, @unchecked Sendable {
     func testListColumnsAdventureWorksProductionCatalogView() async throws {
         let db: String
         do {
-            db = try await requireDatabaseNamedInEnvironment("TDS_AW_DATABASE", using: client)
+            db = try await requireAdventureWorks(using: client)
         } catch let error as SQLServerFixtureUnavailable {
             throw XCTSkip(error.message)
         }

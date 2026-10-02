@@ -9,7 +9,7 @@ extension SQLServerAdministrationClient {
     /// Alter a database option using ALTER DATABASE SET.
     @discardableResult
     public func alterDatabaseOption(name: String, option: SQLServerDatabaseOption) async throws -> [SQLServerStreamMessage] {
-        let escaped = Self.escapeIdentifier(name)
+        let escaped = SQLServerSQL.escapeIdentifier(name)
         let onOff: (Bool) -> String = { $0 ? "ON" : "OFF" }
         let setClause: String
 

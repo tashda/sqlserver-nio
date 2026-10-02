@@ -1,5 +1,6 @@
-@testable import SQLServerKit
+import SQLServerKit
 import SQLServerKitTesting
+import SQLServerKitXCTestSupport
 import XCTest
 import Logging
 
@@ -8,7 +9,7 @@ final class SQLServerTableDefinitionTests: XCTestCase, @unchecked Sendable {
 
     override func setUp() async throws {
         XCTAssertTrue(isLoggingConfigured)
-        TestEnvironmentManager.loadEnvironmentVariables(); // Load environment configuration
+        try requireSQLServerTestServer(); // Load environment configuration
 
         let config = makeSQLServerClientConfiguration()
         self.client = try await SQLServerClient.connect(configuration: config, numberOfThreads: 1)
@@ -72,9 +73,7 @@ final class SQLServerTableDefinitionTests: XCTestCase, @unchecked Sendable {
                 // Fetch scripted definition using the same DB-scoped client
                 let def = try await withRetry(attempts: 5) {
                     try await withTimeout(60) {
-                        try await dbClient.withConnection { conn in
-                            try await conn.objectDefinition(schema: "dbo", name: child, kind: .table)
-                        }
+                        try await dbClient.metadata.objectDefinition(schema: "dbo", name: child, kind: .table)
                     }
                 }
                 XCTAssertNotNil(def)
@@ -95,13 +94,15 @@ final class SQLServerTableDefinitionTests: XCTestCase, @unchecked Sendable {
             if let te = error as? AsyncTimeoutError {
                 throw XCTSkip("Skipping due to timeout during table definition test: \(te)")
             }
-            let norm = SQLServerError.normalize(error)
-            switch norm {
-            case .connectionClosed, .timeout:
-                throw XCTSkip("Skipping due to unstable server during table definition test: \(norm)")
-            default:
-                throw error
+            if let sqlError = error as? SQLServerError {
+                switch sqlError {
+                case .connectionClosed, .timeout:
+                    throw XCTSkip("Skipping due to unstable server during table definition test: \(sqlError)")
+                default:
+                    break
+                }
             }
+            throw error
         }
     }
 }
