@@ -78,6 +78,8 @@ extension SQLServerMetadataOperations {
                 if table.isView { viewStructures.append(structure) } else { tableStructures.append(structure) }
             }
             return SQLServerSchemaStructure(name: schema, tables: tableStructures, views: viewStructures, functions: functions, procedures: procedures, triggers: triggers, synonyms: synonyms)
+        }.flatMapErrorThrowing { error in
+            throw SQLServerError.translatingMissingDatabase(error, database: resolvedDatabase)
         }
     }
 
@@ -184,6 +186,9 @@ extension SQLServerMetadataOperations {
 
                 return SQLServerDatabaseStructure(database: resolvedDatabase, schemas: schemaStructures)
             }
+        }.flatMapErrorThrowing { error in
+            // A database dropped under the caller reads as such, not as a missing sys.schemas.
+            throw SQLServerError.translatingMissingDatabase(error, database: resolvedDatabase)
         }
     }
 

@@ -172,6 +172,35 @@ extension SQLServerError {
         return .sqlExecutionError(message: first.message, details: details)
     }
 
+    /// `.databaseDoesNotExist` when this error says `database` is not there, otherwise nil.
+    ///
+    /// SQL Server answers a query that names a missing database in two ways: error 911
+    /// ("Database 'x' does not exist") for `USE`, and error 208 ("Invalid object name
+    /// 'x.sys.schemas'") for a three-part catalog name such as `x.sys.schemas`. A catalog view
+    /// always exists in a database that does, so 208 on `x.sys.<view>` can only mean `x` is gone;
+    /// 208 on any other name is an ordinary missing object and stays as it is.
+    public func asMissingDatabase(_ database: String?) -> SQLServerError? {
+        guard let database, !database.isEmpty, let details = serverDetails else { return nil }
+        let name = database.lowercased()
+        for error in details.errors {
+            let text = error.message.lowercased()
+            switch error.number {
+            case 911 where text.contains("'\(name)'"):
+                return .databaseDoesNotExist(database)
+            case 208 where text.contains("'\(name).sys.") || text.contains("'[\(name)].sys."):
+                return .databaseDoesNotExist(database)
+            default:
+                continue
+            }
+        }
+        return nil
+    }
+
+    /// `error` as `.databaseDoesNotExist` when it says `database` is gone, otherwise unchanged.
+    public static func translatingMissingDatabase(_ error: Swift.Error, database: String?) -> Swift.Error {
+        (error as? SQLServerError)?.asMissingDatabase(database) ?? error
+    }
+
     /// Server error details when this error came from SQL Server.
     public var serverDetails: SQLServerErrorDetails? {
         switch self {

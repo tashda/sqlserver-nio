@@ -19,6 +19,39 @@ final class ErrorAndConfigurationContractTests: XCTestCase {
         XCTAssertFalse(error.isConnectionLost)
     }
 
+    private func serverError(_ number: Int32, _ text: String) throws -> SQLServerError {
+        let message = SQLServerStreamMessage(kind: .error, number: number, message: text, state: 1, severity: 16, serverName: "s", procedureName: "", lineNumber: 1)
+        return try XCTUnwrap(SQLServerError.fromServerMessages([message]))
+    }
+
+    func testCatalogViewOfAMissingDatabaseIsDatabaseDoesNotExist() throws {
+        let error = try serverError(208, "Invalid object name 'rpcd_3081904E4410.sys.schemas'.")
+        guard case .databaseDoesNotExist(let name)? = error.asMissingDatabase("rpcd_3081904E4410") else {
+            return XCTFail("208 on database.sys.schemas means the database is gone")
+        }
+        XCTAssertEqual(name, "rpcd_3081904E4410")
+        XCTAssertNotNil(error.asMissingDatabase("RPCD_3081904e4410"), "database names compare without case")
+        let translated = SQLServerError.translatingMissingDatabase(error, database: "rpcd_3081904E4410")
+        XCTAssertEqual((translated as? SQLServerError)?.description, "Database 'rpcd_3081904E4410' does not exist.")
+    }
+
+    func testMissingDatabaseIsNotGuessedFromOtherErrors() throws {
+        let missingTable = try serverError(208, "Invalid object name 'shop.dbo.orders'.")
+        XCTAssertNil(missingTable.asMissingDatabase("shop"), "a missing table in an existing database stays a missing table")
+        let otherDatabase = try serverError(208, "Invalid object name 'other.sys.schemas'.")
+        XCTAssertNil(otherDatabase.asMissingDatabase("shop"))
+        let permission = try serverError(229, "The SELECT permission was denied on the object 'schemas', database 'shop'.")
+        XCTAssertNil(permission.asMissingDatabase("shop"))
+        XCTAssertNil(missingTable.asMissingDatabase(nil))
+        let notSQL = SQLServerError.translatingMissingDatabase(SQLServerError.connectionClosed, database: "shop")
+        XCTAssertEqual((notSQL as? SQLServerError)?.description, SQLServerError.connectionClosed.description)
+    }
+
+    func testUseOfAMissingDatabaseIsDatabaseDoesNotExist() throws {
+        let error = try serverError(911, "Database 'shop' does not exist. Make sure that the name is entered correctly.")
+        guard case .databaseDoesNotExist? = error.asMissingDatabase("shop") else { return XCTFail("911 names the missing database") }
+    }
+
     func testInformationalMessagesAloneAreNotErrors() {
         XCTAssertNil(SQLServerError.fromServerMessages([message(5701, .info, severity: 0)]))
     }
