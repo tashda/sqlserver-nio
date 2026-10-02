@@ -15,7 +15,7 @@ class Category:
 
 
 REPO_CATEGORIES: dict[str, list[Category]] = {
-    "sqlserver-nio": [
+    "echo-sqlserver": [
         Category("TDS Protocol", ("Sources/SQLServerTDS/", "Tests/TDSLayerTests/")),
         Category("Client & Connections", ("Sources/SQLServerKit/Client/", "Sources/SQLServerKit/Connection/")),
         Category("Metadata & Admin APIs", ("Sources/SQLServerKit/Metadata/", "Sources/SQLServerKit/Admin/", "Sources/SQLServerKit/Schema/")),

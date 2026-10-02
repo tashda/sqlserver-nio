@@ -1,4 +1,4 @@
-# Testing sqlserver-nio
+# Testing echo-sqlserver
 
 Unit tests need nothing. Integration tests need a SQL Server and find it through one URL variable
 per setup; a test whose variable is not set is skipped, and the skip names the variable. Anyone

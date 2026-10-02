@@ -47,7 +47,7 @@ jobs:
             generate-documentation --target SQLServerKit \
             --disable-indexing \
             --transform-for-static-hosting \
-            --hosting-base-path sqlserver-nio \
+            --hosting-base-path echo-sqlserver \
             --output-path ./docs
 
       - name: Setup Pages

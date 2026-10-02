@@ -26,7 +26,7 @@ The project is divided into several key modules:
 To get started with SQLServerNIO, add it as a dependency in your `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/tashda/sqlserver-nio.git", from: "1.0.0")
+.package(url: "https://github.com/tashda/echo-sqlserver.git", from: "1.0.0")
 ```
 
 ### Basic Usage

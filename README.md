@@ -21,7 +21,7 @@ SQLServerNIO is a non-blocking Swift client for Microsoft SQL Server built on Sw
 Add the dependency to `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/tashda/sqlserver-nio.git", from: "0.1.0")
+.package(url: "https://github.com/tashda/echo-sqlserver.git", from: "0.1.0")
 ```
 
 Then add the product to your target:
@@ -30,7 +30,7 @@ Then add the product to your target:
 .target(
     name: "MyApp",
     dependencies: [
-        .product(name: "SQLServerKit", package: "sqlserver-nio")
+        .product(name: "SQLServerKit", package: "echo-sqlserver")
     ]
 )
 ```

@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "sqlserver-nio",
+    name: "echo-sqlserver",
     platforms: [
         .macOS(.v10_15),
     ],
